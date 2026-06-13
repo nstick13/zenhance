@@ -1,0 +1,969 @@
+"use client";
+
+import { useMemo, useState, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { hierarchy, tree, type HierarchyPointNode } from "d3-hierarchy";
+import { linkRadial } from "d3-shape";
+import type { OrgUnit, Person, Assignment } from "@/lib/db/schema";
+import { moveAssignment } from "@/lib/data/actions";
+import {
+  indexById,
+  childUnitsByParent,
+  assignmentsByUnit,
+  rootUnits,
+  pathToRoot,
+  overAllocatedPersonIds,
+  unitStaffing,
+  allocationByPerson,
+  tenureYears,
+} from "@/lib/org/model";
+import { computeRollup, type UnitRollup } from "@/lib/analytics/rollup";
+import { computeGaps, type UnitGap } from "@/lib/analytics/gaps";
+import { computeOrgSummary, type OrgSummary } from "@/lib/analytics/allocation";
+
+type OverlayType = "none" | "allocation" | "gaps" | "cost";
+
+type NodeDatum = {
+  key: string;
+  kind: "unit" | "member";
+  name: string;
+  unit?: OrgUnit;
+  assignment?: Assignment;
+  person?: Person | null;
+  isOpenRole?: boolean;
+  memberCount?: number;
+  childUnitCount?: number;
+  overAllocated?: boolean;
+  isCenter?: boolean;
+};
+
+const WIDTH = 1040;
+const HEIGHT = 760;
+const CX = WIDTH / 2;
+const CY = HEIGHT / 2;
+const INNER_RADIUS = 185;
+const OUTER_RADIUS = Math.min(CX, CY) - 36;
+const DROP_RADIUS = 34;
+
+function pointRadial(angle: number, r: number): [number, number] {
+  const a = angle - Math.PI / 2;
+  return [Math.cos(a) * r, Math.sin(a) * r];
+}
+
+function arcPath(r: number, startDeg: number, endDeg: number): string {
+  const a0 = (startDeg * Math.PI) / 180;
+  const a1 = (endDeg * Math.PI) / 180;
+  const x0 = Math.cos(a0) * r;
+  const y0 = Math.sin(a0) * r;
+  const x1 = Math.cos(a1) * r;
+  const y1 = Math.sin(a1) * r;
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
+}
+
+export function RadialOrg({
+  people,
+  units,
+  assignments,
+}: {
+  people: Person[];
+  units: OrgUnit[];
+  assignments: Assignment[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  // Scenario planning: `moves` overlays assignment -> new orgUnitId without
+  // touching the server until Apply (or, in live mode, persists immediately).
+  const [scenario, setScenario] = useState(false);
+  const [moves, setMoves] = useState<Map<string, string>>(new Map());
+
+  // Apply only *active* moves — ones the server hasn't caught up to yet. This
+  // makes live mode self-cleaning after router.refresh (the move equals server
+  // state, so it drops out) with no setState-in-effect.
+  const { effAssignments, activeMoveCount } = useMemo(() => {
+    if (moves.size === 0) return { effAssignments: assignments, activeMoveCount: 0 };
+    let count = 0;
+    const eff = assignments.map((a) => {
+      const target = moves.get(a.id);
+      if (target && target !== a.orgUnitId) {
+        count++;
+        return { ...a, orgUnitId: target };
+      }
+      return a;
+    });
+    return { effAssignments: eff, activeMoveCount: count };
+  }, [assignments, moves]);
+
+  const [overlayType, setOverlayType] = useState<OverlayType>("none");
+
+  const unitsById = useMemo(() => indexById(units), [units]);
+  const peopleById = useMemo(() => indexById(people), [people]);
+  const childByParent = useMemo(() => childUnitsByParent(units), [units]);
+  const asgByUnit = useMemo(() => assignmentsByUnit(effAssignments), [effAssignments]);
+  const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
+  const allocByPerson = useMemo(() => allocationByPerson(effAssignments), [effAssignments]);
+  const roots = useMemo(() => rootUnits(units), [units]);
+
+  const effSnapshot = useMemo(
+    () => ({ people, units, assignments: effAssignments }),
+    [people, units, effAssignments],
+  );
+  const rollupMap = useMemo(() => computeRollup(effSnapshot), [effSnapshot]);
+  const gapsMap = useMemo(() => computeGaps(effSnapshot), [effSnapshot]);
+  const orgSummary = useMemo(() => computeOrgSummary(effSnapshot), [effSnapshot]);
+  const maxUnitCost = useMemo(() => {
+    let max = 1;
+    for (const r of rollupMap.values()) if (r.totalCost > max) max = r.totalCost;
+    return max;
+  }, [rollupMap]);
+
+  const defaultFocusId = useMemo(() => {
+    let cur = roots[0];
+    if (!cur) return "";
+    for (;;) {
+      const kids = childByParent.get(cur.id) ?? [];
+      if (kids.length === 1 && kids[0].kind === "group") cur = kids[0];
+      else break;
+    }
+    return cur.id;
+  }, [roots, childByParent]);
+
+  const [focusId, setFocusId] = useState<string>(defaultFocusId);
+  const [selectedPersonKey, setSelectedPersonKey] = useState<string | null>(null);
+  const [showPanel, setShowPanel] = useState(false);
+  const focusUnit = unitsById.get(focusId) ?? unitsById.get(defaultFocusId) ?? roots[0];
+
+  // --- drag state ---------------------------------------------------------
+  const gRef = useRef<SVGGElement | null>(null);
+  const pendingRef = useRef<{
+    startX: number;
+    startY: number;
+    key: string;
+    assignmentId?: string;
+    name: string;
+    dragged: boolean;
+  } | null>(null);
+  const [drag, setDrag] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
+
+  const { nodes, links } = useMemo(() => {
+    if (!focusUnit) return { nodes: [], links: [] as PointLink[] };
+
+    const memberData = (unitId: string): NodeDatum[] =>
+      (asgByUnit.get(unitId) ?? []).map((a) => {
+        const person = a.personId ? peopleById.get(a.personId) ?? null : null;
+        return {
+          key: a.id,
+          kind: "member",
+          name: a.isOpenRole ? "Open role" : person?.name ?? "Unknown",
+          assignment: a,
+          person,
+          isOpenRole: a.isOpenRole,
+          overAllocated: !!person && overAlloc.has(person.id),
+        };
+      });
+
+    const unitDatum = (u: OrgUnit, isCenter = false): NodeDatum => {
+      const kids = childByParent.get(u.id) ?? [];
+      return {
+        key: u.id,
+        kind: "unit",
+        name: u.name,
+        unit: u,
+        childUnitCount: kids.length,
+        memberCount: (asgByUnit.get(u.id) ?? []).length,
+        isCenter,
+      };
+    };
+
+    const childrenAccessor = (d: NodeDatum): NodeDatum[] | null => {
+      if (d.kind === "member" || !d.unit) return null;
+      if (d.unit.id !== focusUnit.id) return null;
+      const kids = childByParent.get(d.unit.id) ?? [];
+      return kids.length ? kids.map((k) => unitDatum(k)) : memberData(d.unit.id);
+    };
+
+    const h = hierarchy<NodeDatum>(unitDatum(focusUnit, true), childrenAccessor);
+    const layout = tree<NodeDatum>()
+      .size([2 * Math.PI, h.height === 0 ? 1 : INNER_RADIUS])
+      .separation((a, b) => (a.parent === b.parent ? 1 : 1.6) / Math.max(1, a.depth));
+    const root = layout(h);
+
+    const link = linkRadial<unknown, HierarchyPointNode<NodeDatum>>()
+      .angle((d) => d.x)
+      .radius((d) => d.y);
+    const pointLinks: PointLink[] = root.links().map((l) => ({
+      path: link({ source: l.source, target: l.target }) ?? "",
+      key: `${l.source.data.key}->${l.target.data.key}`,
+    }));
+    return { nodes: root.descendants(), links: pointLinks };
+  }, [focusUnit, childByParent, asgByUnit, peopleById, overAlloc]);
+
+  const context = useMemo(() => {
+    if (!focusUnit) return [] as ContextNode[];
+    const parent = focusUnit.parentId ? unitsById.get(focusUnit.parentId) ?? null : null;
+    const siblings = parent
+      ? (childByParent.get(parent.id) ?? []).filter((u) => u.id !== focusUnit.id)
+      : [];
+    const list: { unit: OrgUnit; role: "parent" | "sibling" }[] = [];
+    if (parent) list.push({ unit: parent, role: "parent" });
+    for (const s of siblings) list.push({ unit: s, role: "sibling" });
+    const n = list.length;
+    return list.map((item, i) => {
+      const angle = n > 0 ? (i / n) * 2 * Math.PI : 0;
+      const [x, y] = pointRadial(angle, OUTER_RADIUS);
+      return { ...item, x, y };
+    });
+  }, [focusUnit, unitsById, childByParent]);
+
+  const breadcrumb = focusUnit ? pathToRoot(focusUnit.id, unitsById) : [];
+  const selectedNode = nodes.find((n) => n.data.key === selectedPersonKey) ?? null;
+  const canZoomOut = !!(focusUnit?.parentId && unitsById.has(focusUnit.parentId));
+  const pendingCount = activeMoveCount;
+
+  function focusOn(id: string) {
+    setSelectedPersonKey(null);
+    setFocusId(id);
+  }
+
+  function performMove(assignmentId: string, targetUnitId: string) {
+    const current = effAssignments.find((a) => a.id === assignmentId);
+    if (!current || current.orgUnitId === targetUnitId) return;
+    setMoves((prev) => {
+      const next = new Map(prev);
+      next.set(assignmentId, targetUnitId);
+      return next;
+    });
+    if (!scenario) {
+      startTransition(async () => {
+        await moveAssignment(assignmentId, targetUnitId);
+        router.refresh();
+      });
+    }
+  }
+
+  function applyScenario() {
+    const entries = [...moves.entries()];
+    startTransition(async () => {
+      for (const [id, target] of entries) await moveAssignment(id, target);
+      setMoves(new Map());
+      setScenario(false);
+      router.refresh();
+    });
+  }
+  function discardScenario() {
+    setMoves(new Map());
+  }
+  function toggleScenario() {
+    if (scenario) {
+      setMoves(new Map());
+      setScenario(false);
+    } else {
+      setScenario(true);
+    }
+  }
+
+  // --- pointer / drag handlers -------------------------------------------
+  function clientToLocal(clientX: number, clientY: number): [number, number] {
+    const ctm = gRef.current?.getScreenCTM();
+    if (!ctm) return [0, 0];
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return [pt.x, pt.y];
+  }
+
+  function beginMemberPointer(e: React.PointerEvent, datum: NodeDatum) {
+    pendingRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      key: datum.key,
+      assignmentId: datum.assignment?.id,
+      name: datum.name,
+      dragged: false,
+    };
+  }
+
+  function onSvgPointerMove(e: React.PointerEvent) {
+    const p = pendingRef.current;
+    if (!p) return;
+    const dx = e.clientX - p.startX;
+    const dy = e.clientY - p.startY;
+    if (!p.dragged && Math.hypot(dx, dy) > 5) p.dragged = true;
+    if (!p.dragged) return;
+    const [lx, ly] = clientToLocal(e.clientX, e.clientY);
+    setDrag({ name: p.name, x: lx, y: ly });
+    let nearest: string | null = null;
+    let best = DROP_RADIUS;
+    for (const c of context) {
+      const d = Math.hypot(c.x - lx, c.y - ly);
+      if (d < best) {
+        best = d;
+        nearest = c.unit.id;
+      }
+    }
+    setHoverId(nearest);
+  }
+
+  function onSvgPointerUp() {
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    if (!p) return;
+    if (p.dragged) {
+      if (hoverId && p.assignmentId) performMove(p.assignmentId, hoverId);
+    } else {
+      setSelectedPersonKey(p.key);
+    }
+    setDrag(null);
+    setHoverId(null);
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <SummaryBar summary={orgSummary} overlayType={overlayType} onOverlay={setOverlayType} />
+      <div className="flex min-h-0 flex-1">
+      <div className="relative flex-1" style={drag ? { userSelect: "none" } : undefined}>
+        {/* Breadcrumb */}
+        <div className="absolute left-4 top-3 z-10 flex items-center gap-1 text-sm text-slate-400">
+          {breadcrumb.map((u, i) => (
+            <span key={u.id} className="flex items-center gap-1">
+              {i > 0 && <span className="text-slate-600">/</span>}
+              <button
+                onClick={() => focusOn(u.id)}
+                className={u.id === focusId ? "text-fuchsia-300" : "hover:text-slate-100"}
+              >
+                {u.name}
+              </button>
+            </span>
+          ))}
+        </div>
+
+        {/* Scenario controls + mobile panel toggle */}
+        <div className="absolute right-4 top-3 z-10 flex items-center gap-2 text-sm">
+          {scenario && pendingCount > 0 && (
+            <>
+              <span className="rounded bg-sky-500/15 px-2 py-1 text-xs text-sky-300">
+                {pendingCount} pending move{pendingCount === 1 ? "" : "s"}
+              </span>
+              <button
+                onClick={applyScenario}
+                disabled={isPending}
+                className="rounded-md bg-emerald-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {isPending ? "Applying…" : "Apply"}
+              </button>
+              <button
+                onClick={discardScenario}
+                className="rounded-md border border-slate-700 px-2.5 py-1 text-xs hover:bg-slate-800"
+              >
+                Discard
+              </button>
+            </>
+          )}
+          <button
+            onClick={toggleScenario}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+              scenario
+                ? "bg-sky-500 text-white hover:bg-sky-400"
+                : "border border-slate-700 text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            {scenario ? "Scenario: on" : "Scenario mode"}
+          </button>
+          <button
+            onClick={() => setShowPanel((v) => !v)}
+            className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 lg:hidden"
+            aria-label="Toggle detail panel"
+          >
+            {showPanel ? "Close" : "Details"}
+          </button>
+        </div>
+
+        <svg
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          className="h-full w-full"
+          style={{ maxHeight: "calc(100vh - 57px)", touchAction: "none" }}
+          onPointerMove={onSvgPointerMove}
+          onPointerUp={onSvgPointerUp}
+          onPointerLeave={onSvgPointerUp}
+        >
+          <defs>
+            <radialGradient id="sphere" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stopColor="#f5d0fe" />
+              <stop offset="45%" stopColor="#c084fc" />
+              <stop offset="100%" stopColor="#4f46e5" />
+            </radialGradient>
+            <radialGradient id="sphereTeam" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stopColor="#cffafe" />
+              <stop offset="50%" stopColor="#60a5fa" />
+              <stop offset="100%" stopColor="#4338ca" />
+            </radialGradient>
+            <radialGradient id="member" cx="35%" cy="30%" r="80%">
+              <stop offset="0%" stopColor="#e0e7ff" />
+              <stop offset="100%" stopColor="#818cf8" />
+            </radialGradient>
+            <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="6" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <radialGradient id="heat" cx="35%" cy="30%" r="75%">
+              <stop offset="0%" stopColor="#fdba74" />
+              <stop offset="100%" stopColor="#dc2626" />
+            </radialGradient>
+          </defs>
+
+          <g ref={gRef} transform={`translate(${CX},${CY})`}>
+            {/* Faint links to context satellites */}
+            <g fill="none">
+              {context.map((c) => (
+                <line
+                  key={`cl-${c.unit.id}`}
+                  x1={0}
+                  y1={0}
+                  x2={c.x}
+                  y2={c.y}
+                  stroke="#64748b"
+                  strokeOpacity={0.12}
+                  strokeWidth={1.5}
+                  strokeDasharray="2 5"
+                />
+              ))}
+            </g>
+
+            {context.map((c) => (
+              <ContextSatellite
+                key={c.unit.id}
+                node={c}
+                highlight={hoverId === c.unit.id}
+                dropMode={!!drag}
+                onClick={() => focusOn(c.unit.id)}
+              />
+            ))}
+
+            <g fill="none">
+              {links.map((l) => (
+                <path
+                  key={l.key}
+                  d={l.path}
+                  stroke="url(#sphere)"
+                  strokeOpacity={0.25}
+                  strokeWidth={6}
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+
+            {nodes.map((n) => {
+              const [x, y] = pointRadial(n.x, n.y);
+              const outwardDeg = (n.x * 180) / Math.PI - 90;
+              const isDragged = drag && pendingRef.current?.key === n.data.key;
+              const ov = getOverlayProps(
+                n.data, overlayType, overAlloc, allocByPerson, gapsMap, rollupMap, maxUnitCost,
+              );
+              return (
+                <RadarNode
+                  key={n.data.key}
+                  datum={n.data}
+                  x={x}
+                  y={y}
+                  outwardDeg={outwardDeg}
+                  canZoomOut={n.data.isCenter ? canZoomOut : false}
+                  selected={n.data.key === selectedPersonKey}
+                  ghosted={!!isDragged}
+                  overlay={ov}
+                  onClick={n.data.kind === "unit" ? () => onUnitClick(n.data) : undefined}
+                  onPointerDown={
+                    n.data.kind === "member"
+                      ? (e) => beginMemberPointer(e, n.data)
+                      : undefined
+                  }
+                />
+              );
+            })}
+
+            {/* Drag ghost */}
+            {drag && (
+              <g transform={`translate(${drag.x},${drag.y})`} style={{ pointerEvents: "none" }}>
+                <circle r={9} fill="url(#member)" opacity={0.9} />
+                <text y={-14} textAnchor="middle" className="fill-slate-100" style={{ fontSize: 11 }}>
+                  {drag.name}
+                </text>
+              </g>
+            )}
+          </g>
+        </svg>
+
+        {/* Hint */}
+        <div className="absolute bottom-3 left-4 text-xs text-slate-600">
+          Drag a member onto a faint team to reassign them
+          {scenario ? " (changes held until you Apply)." : "."}
+        </div>
+      </div>
+
+      {/* On desktop: inline aside. On mobile: slide-over overlay when showPanel=true */}
+      <aside
+        className={`
+          w-80 shrink-0 border-l border-slate-800 p-4 overflow-y-auto
+          lg:relative lg:flex lg:flex-col
+          ${showPanel
+            ? "absolute inset-y-0 right-0 z-20 flex flex-col bg-slate-950"
+            : "hidden lg:flex"}
+        `}
+      >
+        {selectedNode ? (
+          <PersonPanel
+            datum={selectedNode.data}
+            teamCount={
+              selectedNode.data.person
+                ? allocByPerson.get(selectedNode.data.person.id)?.teamCount ?? 1
+                : 0
+            }
+          />
+        ) : focusUnit ? (
+          <UnitPanel
+            unit={focusUnit}
+            assignments={asgByUnit.get(focusUnit.id) ?? []}
+            lead={focusUnit.leadPersonId ? peopleById.get(focusUnit.leadPersonId) ?? null : null}
+            canZoomOut={canZoomOut}
+            hasChildUnits={(childByParent.get(focusUnit.id) ?? []).length > 0}
+          />
+        ) : null}
+      </aside>
+      </div>
+    </div>
+  );
+
+  function onUnitClick(d: NodeDatum) {
+    if (!d.unit) return;
+    if (d.unit.id === focusUnit.id) {
+      if (d.unit.parentId && unitsById.has(d.unit.parentId)) focusOn(d.unit.parentId);
+      return;
+    }
+    focusOn(d.unit.id);
+  }
+}
+
+type PointLink = { path: string; key: string };
+type ContextNode = { unit: OrgUnit; role: "parent" | "sibling"; x: number; y: number };
+
+type NodeOverlay = {
+  dimmed: boolean;
+  badge: string | null;
+  heatPct: number;   // 0–1 for cost heat fill
+  roiLabel: string | null;
+};
+
+function getOverlayProps(
+  datum: NodeDatum,
+  overlayType: OverlayType,
+  overAlloc: Set<string>,
+  allocByPerson: Map<string, { teamCount: number; totalPct: number }>,
+  gapsMap: Map<string, UnitGap>,
+  rollupMap: Map<string, UnitRollup>,
+  maxCost: number,
+): NodeOverlay {
+  const none: NodeOverlay = { dimmed: false, badge: null, heatPct: 0, roiLabel: null };
+  if (overlayType === "none") return none;
+
+  if (overlayType === "allocation") {
+    if (datum.kind === "member" && !datum.isOpenRole && datum.person) {
+      const isOver = overAlloc.has(datum.person.id);
+      const alloc = allocByPerson.get(datum.person.id);
+      return {
+        dimmed: !isOver,
+        badge: isOver && alloc ? `${alloc.teamCount} teams` : null,
+        heatPct: 0,
+        roiLabel: null,
+      };
+    }
+    return { ...none, dimmed: true };
+  }
+
+  if (overlayType === "gaps") {
+    if (datum.kind === "unit" && datum.unit) {
+      const gap = gapsMap.get(datum.unit.id);
+      const hasGap = !!gap && gap.gap > 0;
+      return {
+        dimmed: !hasGap,
+        badge: hasGap ? `${gap.gap} open` : null,
+        heatPct: 0,
+        roiLabel: null,
+      };
+    }
+    return { ...none, dimmed: true };
+  }
+
+  if (overlayType === "cost") {
+    if (datum.kind === "unit" && datum.unit) {
+      const r = rollupMap.get(datum.unit.id);
+      const cost = r?.totalCost ?? 0;
+      const heatPct = maxCost > 0 ? cost / maxCost : 0;
+      const isGroup = datum.unit.kind === "group";
+      const roi = r?.totalRoi ?? 0;
+      return {
+        dimmed: false,
+        badge: cost > 0 ? `$${Math.round(cost / 1000)}k/mo` : null,
+        heatPct,
+        roiLabel: isGroup && roi > 0 ? `ROI $${(roi / 1_000_000).toFixed(1)}M` : null,
+      };
+    }
+    return none;
+  }
+
+  return none;
+}
+
+function ContextSatellite({
+  node,
+  highlight,
+  dropMode,
+  onClick,
+}: {
+  node: ContextNode;
+  highlight: boolean;
+  dropMode: boolean;
+  onClick: () => void;
+}) {
+  const isGroup = node.unit.kind === "group";
+  const isParent = node.role === "parent";
+  return (
+    <g
+      transform={`translate(${node.x},${node.y})`}
+      onClick={onClick}
+      style={{ cursor: "pointer", opacity: highlight ? 1 : dropMode ? 0.7 : 0.45 }}
+    >
+      {highlight && <circle r={DROP_RADIUS} fill="#34d399" opacity={0.12} />}
+      <circle
+        r={isParent ? 13 : 11}
+        fill={isGroup ? "url(#sphere)" : "url(#sphereTeam)"}
+        stroke={highlight ? "#34d399" : undefined}
+        strokeWidth={highlight ? 2 : 0}
+      />
+      <text
+        y={isParent ? -20 : 22}
+        textAnchor="middle"
+        className="fill-slate-300"
+        style={{ fontSize: 11, fontWeight: isParent ? 600 : 400 }}
+      >
+        {isParent ? `↑ ${node.unit.name}` : node.unit.name}
+      </text>
+    </g>
+  );
+}
+
+function RadarNode({
+  datum,
+  x,
+  y,
+  outwardDeg,
+  canZoomOut,
+  selected,
+  ghosted,
+  overlay,
+  onClick,
+  onPointerDown,
+}: {
+  datum: NodeDatum;
+  x: number;
+  y: number;
+  outwardDeg: number;
+  canZoomOut: boolean;
+  selected: boolean;
+  ghosted: boolean;
+  overlay: NodeOverlay;
+  onClick?: () => void;
+  onPointerDown?: (e: React.PointerEvent) => void;
+}) {
+  const isUnit = datum.kind === "unit";
+  const isGroup = datum.unit?.kind === "group";
+  const isCenter = !!datum.isCenter;
+  const sphereR = isCenter ? 24 : isUnit ? 16 : datum.isOpenRole ? 7 : 8;
+  const fill = datum.isOpenRole
+    ? "none"
+    : isUnit
+      ? isGroup || isCenter
+        ? "url(#sphere)"
+        : "url(#sphereTeam)"
+      : "url(#member)";
+
+  const baseOpacity = ghosted ? 0.3 : overlay.dimmed ? 0.18 : 1;
+
+  return (
+    <g
+      transform={`translate(${x},${y})`}
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      style={{ cursor: "pointer", opacity: baseOpacity }}
+    >
+      {isUnit && (
+        <g transform={`rotate(${outwardDeg})`} fill="none">
+          {[sphereR + 6, sphereR + 12, sphereR + 18].map((r, i) => (
+            <path
+              key={r}
+              d={arcPath(r, -52, 52)}
+              stroke={["#38bdf8", "#818cf8", "#e879f9"][i]}
+              strokeOpacity={0.8}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+            />
+          ))}
+        </g>
+      )}
+
+      {/* Cost heat tint — rendered behind the sphere */}
+      {overlay.heatPct > 0 && (
+        <circle r={sphereR + 10} fill="url(#heat)" opacity={overlay.heatPct * 0.55} />
+      )}
+
+      {datum.isOpenRole ? (
+        <circle r={sphereR} fill="none" stroke="#f59e0b" strokeWidth={2} strokeDasharray="3 3" />
+      ) : (
+        <circle r={sphereR} fill={fill} filter={isUnit ? "url(#glow)" : undefined} />
+      )}
+
+      {datum.overAllocated && <circle r={sphereR + 4} fill="none" stroke="#fbbf24" strokeWidth={2} />}
+      {selected && <circle r={sphereR + 6} fill="none" stroke="#f0abfc" strokeWidth={2} />}
+
+      {/* Gaps overlay: dashed ring on units with open seats */}
+      {overlay.badge && !datum.isOpenRole && isUnit && (
+        <circle r={sphereR + 5} fill="none" stroke="#f97316" strokeWidth={1.5} strokeDasharray="3 2" />
+      )}
+
+      <text
+        y={isUnit ? sphereR + 34 : sphereR + 14}
+        textAnchor="middle"
+        className="fill-slate-200"
+        style={{ fontSize: isCenter ? 15 : isUnit ? 13 : 11, fontWeight: isUnit ? 600 : 400 }}
+      >
+        {datum.name}
+      </text>
+
+      {/* Overlay badge label */}
+      {overlay.badge && (
+        <text
+          y={isUnit ? -(sphereR + 8) : -(sphereR + 6)}
+          textAnchor="middle"
+          style={{ fontSize: 10, fill: isUnit ? "#fb923c" : "#fbbf24", fontWeight: 600 }}
+        >
+          {overlay.badge}
+        </text>
+      )}
+
+      {/* ROI label for cost overlay on group nodes */}
+      {overlay.roiLabel && (
+        <text
+          y={isUnit ? sphereR + 48 : sphereR + 26}
+          textAnchor="middle"
+          style={{ fontSize: 10, fill: "#34d399" }}
+        >
+          {overlay.roiLabel}
+        </text>
+      )}
+
+      {isCenter && canZoomOut && (
+        <text y={-(sphereR + 12)} textAnchor="middle" className="fill-slate-500" style={{ fontSize: 10 }}>
+          ↑ click to zoom out
+        </text>
+      )}
+
+      {isUnit && !isCenter && datum.childUnitCount === 0 && (datum.memberCount ?? 0) > 0 && (
+        <text y={sphereR + 50} textAnchor="middle" className="fill-slate-500" style={{ fontSize: 10 }}>
+          {datum.memberCount} member{datum.memberCount === 1 ? "" : "s"} ›
+        </text>
+      )}
+      {isUnit && !isCenter && (datum.childUnitCount ?? 0) > 0 && (
+        <text y={sphereR + 50} textAnchor="middle" className="fill-indigo-300/70" style={{ fontSize: 10 }}>
+          {datum.childUnitCount} team{datum.childUnitCount === 1 ? "" : "s"} ›
+        </text>
+      )}
+    </g>
+  );
+}
+
+function fmtMoney(v: string | null): string {
+  if (!v) return "—";
+  return `$${Number(v).toLocaleString()}`;
+}
+
+function UnitPanel({
+  unit,
+  assignments,
+  lead,
+  canZoomOut,
+  hasChildUnits,
+}: {
+  unit: OrgUnit;
+  assignments: Assignment[];
+  lead: Person | null;
+  canZoomOut: boolean;
+  hasChildUnits: boolean;
+}) {
+  const staffing = unitStaffing(unit, assignments);
+  return (
+    <div>
+      <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">
+        {unit.kind === "group" ? "Group" : "Team"}
+        {unit.isExternal && ` · ${unit.vendorName ?? "External"}`}
+      </div>
+      <h2 className="text-lg font-semibold">{unit.name}</h2>
+      {lead && (
+        <p className="mt-1 text-sm text-slate-400">
+          Lead: <span className="text-slate-200">{lead.name}</span>
+        </p>
+      )}
+      <dl className="mt-4 space-y-2 text-sm">
+        <Row label="Members" value={`${staffing.filled}`} />
+        {staffing.target != null && <Row label="Target" value={`${staffing.target}`} />}
+        <Row
+          label="Open roles"
+          value={staffing.open > 0 ? <span className="text-amber-400">{staffing.open}</span> : "0"}
+        />
+        <Row label="Expected ROI" value={fmtMoney(unit.expectedRoi)} />
+        <Row label="Unit cost / mo" value={fmtMoney(unit.costPerMonth)} />
+      </dl>
+      <p className="mt-6 text-xs text-slate-500">
+        {hasChildUnits ? "Click a team to focus it." : "Click a member for details."}
+        {canZoomOut && " Faint nodes around the edge are the parent and sibling teams — click to jump."}
+      </p>
+    </div>
+  );
+}
+
+function PersonPanel({ datum, teamCount }: { datum: NodeDatum; teamCount: number }) {
+  if (datum.isOpenRole) {
+    return (
+      <div>
+        <div className="mb-1 text-xs uppercase tracking-wide text-amber-500">Open role</div>
+        <h2 className="text-lg font-semibold">{datum.assignment?.roleOnTeam ?? "Open role"}</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          This seat is unfilled
+          {datum.assignment?.allocationPct ? ` (${datum.assignment.allocationPct}% allocation)` : ""}.
+        </p>
+      </div>
+    );
+  }
+  const p = datum.person;
+  if (!p) return null;
+  const years = tenureYears(p.startDate);
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-3">
+        <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-300 to-indigo-600" />
+        <div>
+          <h2 className="text-lg font-semibold leading-tight">{p.name}</h2>
+          <p className="text-sm text-slate-400">{p.title ?? "—"}</p>
+        </div>
+      </div>
+      <dl className="mt-3 space-y-2 text-sm">
+        {datum.assignment?.roleOnTeam && <Row label="Role on team" value={datum.assignment.roleOnTeam} />}
+        {datum.assignment && datum.assignment.allocationPct !== 100 && (
+          <Row label="Allocation" value={`${datum.assignment.allocationPct}%`} />
+        )}
+        <Row label="Cost / mo" value={fmtMoney(p.costPerMonth)} />
+        {years != null && <Row label="Tenure" value={`${years.toFixed(1)} yrs`} />}
+        {p.growthFocus && <Row label="Growth focus" value={p.growthFocus} />}
+        <Row
+          label="On teams"
+          value={
+            teamCount > 1 ? (
+              <span className="text-amber-400">{teamCount} (multiple allocation)</span>
+            ) : (
+              `${teamCount}`
+            )
+          }
+        />
+      </dl>
+      {(p.skills ?? []).length > 0 && (
+        <div className="mt-4">
+          <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">Skills</div>
+          <div className="flex flex-wrap gap-1.5">
+            {p.skills.map((s) => (
+              <span key={s} className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="text-right text-slate-200">{value}</dd>
+    </div>
+  );
+}
+
+const OVERLAY_OPTIONS: { type: OverlayType; label: string }[] = [
+  { type: "none", label: "Overview" },
+  { type: "allocation", label: "Allocation" },
+  { type: "gaps", label: "Gaps" },
+  { type: "cost", label: "Cost / ROI" },
+];
+
+function SummaryBar({
+  summary,
+  overlayType,
+  onOverlay,
+}: {
+  summary: OrgSummary;
+  overlayType: OverlayType;
+  onOverlay: (t: OverlayType) => void;
+}) {
+  const fmtCost = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : `$${Math.round(n / 1000)}k`;
+  const fmtRoi = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : n > 0 ? `$${Math.round(n / 1000)}k` : "—";
+
+  return (
+    <div className="flex shrink-0 items-center gap-0 border-b border-slate-800 bg-slate-900/80 px-4 text-sm">
+      {/* Overlay toggles */}
+      <div className="flex items-center gap-1 border-r border-slate-800 pr-4 py-2">
+        {OVERLAY_OPTIONS.map((o) => (
+          <button
+            key={o.type}
+            onClick={() => onOverlay(o.type)}
+            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              overlayType === o.type
+                ? "bg-fuchsia-500/20 text-fuchsia-300"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Metrics */}
+      <div className="flex items-center gap-6 px-4 py-2">
+        <Metric label="Cost / mo" value={fmtCost(summary.totalCostPerMonth)} />
+        <Metric label="Expected ROI" value={fmtRoi(summary.totalRoi)} />
+        <Metric
+          label="Open roles"
+          value={String(summary.openRoles)}
+          alert={summary.openRoles > 0}
+        />
+        <Metric
+          label="Over-allocated"
+          value={String(summary.overAllocatedCount)}
+          alert={summary.overAllocatedCount > 0}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-[10px] uppercase tracking-wide text-slate-600">{label}</span>
+      <span className={alert ? "font-semibold text-amber-400" : "text-slate-300"}>{value}</span>
+    </div>
+  );
+}
