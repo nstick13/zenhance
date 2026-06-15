@@ -1,9 +1,12 @@
 "use client";
 
-import { useMemo, useState, useRef, useTransition } from "react";
+import { useMemo, useState, useRef, useEffect, useCallback, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { hierarchy, tree, type HierarchyPointNode } from "d3-hierarchy";
 import { linkRadial } from "d3-shape";
+import { zoom as d3Zoom, zoomIdentity, type ZoomBehavior, type D3ZoomEvent } from "d3-zoom";
+import { select } from "d3-selection";
+import "d3-transition";
 import type { OrgUnit, Person, Assignment } from "@/lib/db/schema";
 import { moveAssignment } from "@/lib/data/actions";
 import {
@@ -134,6 +137,59 @@ export function RadialOrg({
   const [showPanel, setShowPanel] = useState(false);
   const focusUnit = unitsById.get(focusId) ?? unitsById.get(defaultFocusId) ?? roots[0];
 
+  // --- zoom state ----------------------------------------------------------
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const [zoomTransform, setZoomTransform] = useState({ x: 0, y: 0, k: 1 });
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const zoomBehavior = d3Zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.3, 3])
+      .filter((event: Event) => {
+        if (event.type === "wheel") return true;
+        if (event.type === "dblclick") return false;
+        const te = event as TouchEvent;
+        if (te.touches && te.touches.length >= 2) return true;
+        const target = event.target as Element;
+        if (target.closest("[data-draggable]")) return false;
+        if ((event as MouseEvent).button) return false;
+        return true;
+      })
+      .on("zoom", (event: D3ZoomEvent<SVGSVGElement, unknown>) => {
+        const t = event.transform;
+        setZoomTransform({ x: t.x, y: t.y, k: t.k });
+      });
+
+    zoomRef.current = zoomBehavior;
+    select(svg).call(zoomBehavior);
+    select(svg).call(zoomBehavior.transform, zoomIdentity);
+
+    return () => {
+      select(svg).on(".zoom", null);
+    };
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    const svg = svgRef.current;
+    const z = zoomRef.current;
+    if (svg && z) select(svg).transition().duration(250).call(z.scaleBy, 1.4);
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    const svg = svgRef.current;
+    const z = zoomRef.current;
+    if (svg && z) select(svg).transition().duration(250).call(z.scaleBy, 1 / 1.4);
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    const svg = svgRef.current;
+    const z = zoomRef.current;
+    if (svg && z) select(svg).transition().duration(300).call(z.transform, zoomIdentity);
+  }, []);
+
   // --- drag state ---------------------------------------------------------
   const gRef = useRef<SVGGElement | null>(null);
   const pendingRef = useRef<{
@@ -146,6 +202,13 @@ export function RadialOrg({
   } | null>(null);
   const [drag, setDrag] = useState<{ name: string; x: number; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+
+  // --- semantic zoom (Google Maps-style level of detail) -------------------
+  const DETAIL_START = 2.0;
+  const DETAIL_FULL = 3.0;
+  const detailOpacity = Math.max(0, Math.min(1,
+    (zoomTransform.k - DETAIL_START) / (DETAIL_FULL - DETAIL_START),
+  ));
 
   const { nodes, links } = useMemo(() => {
     if (!focusUnit) return { nodes: [], links: [] as PointLink[] };
@@ -200,6 +263,51 @@ export function RadialOrg({
     return { nodes: root.descendants(), links: pointLinks };
   }, [focusUnit, childByParent, asgByUnit, peopleById, overAlloc]);
 
+  // Which team is the viewport zooming toward?
+  const zoomFocusTeamId = useMemo(() => {
+    if (detailOpacity <= 0) return null;
+    const vcx = (WIDTH / 2 - zoomTransform.x) / zoomTransform.k - CX;
+    const vcy = (HEIGHT / 2 - zoomTransform.y) / zoomTransform.k - CY;
+    let bestDist = Infinity;
+    let bestId: string | null = null;
+    for (const n of nodes) {
+      if (n.data.kind !== "unit" || n.data.isCenter) continue;
+      const [nx, ny] = pointRadial(n.x, n.y);
+      const d = Math.hypot(nx - vcx, ny - vcy);
+      if (d < bestDist) { bestDist = d; bestId = n.data.key; }
+    }
+    return bestId;
+  }, [detailOpacity, nodes, zoomTransform]);
+
+  // Members of the focused team, arranged in a ring around its node
+  const detailMembers = useMemo(() => {
+    if (!zoomFocusTeamId) return [];
+    const teamNode = nodes.find((n) => n.data.key === zoomFocusTeamId);
+    if (!teamNode) return [];
+    const members = asgByUnit.get(zoomFocusTeamId) ?? [];
+    if (members.length === 0) return [];
+
+    const [cx, cy] = pointRadial(teamNode.x, teamNode.y);
+    const ringR = 90;
+
+    return members.map((a, i) => {
+      const angle = (2 * Math.PI * i) / members.length - Math.PI / 2;
+      const person = a.personId ? peopleById.get(a.personId) ?? null : null;
+      return {
+        key: a.id,
+        x: cx + Math.cos(angle) * ringR,
+        y: cy + Math.sin(angle) * ringR,
+        cx,
+        cy,
+        name: a.isOpenRole ? "Open role" : person?.name ?? "Unknown",
+        isOpenRole: a.isOpenRole,
+        person,
+        assignment: a,
+        overAllocated: !!person && overAlloc.has(person.id),
+      };
+    });
+  }, [zoomFocusTeamId, nodes, asgByUnit, peopleById, overAlloc]);
+
   const context = useMemo(() => {
     if (!focusUnit) return [] as ContextNode[];
     const parent = focusUnit.parentId ? unitsById.get(focusUnit.parentId) ?? null : null;
@@ -219,12 +327,33 @@ export function RadialOrg({
 
   const breadcrumb = focusUnit ? pathToRoot(focusUnit.id, unitsById) : [];
   const selectedNode = nodes.find((n) => n.data.key === selectedPersonKey) ?? null;
-  const canZoomOut = !!(focusUnit?.parentId && unitsById.has(focusUnit.parentId));
+  const selectedDetailMember = !selectedNode && selectedPersonKey
+    ? detailMembers.find((m) => m.key === selectedPersonKey) ?? null
+    : null;
+  const selectedDatum: NodeDatum | null = selectedNode
+    ? selectedNode.data
+    : selectedDetailMember
+      ? {
+          key: selectedDetailMember.key,
+          kind: "member",
+          name: selectedDetailMember.name,
+          assignment: selectedDetailMember.assignment,
+          person: selectedDetailMember.person,
+          isOpenRole: selectedDetailMember.isOpenRole,
+          overAllocated: selectedDetailMember.overAllocated,
+        }
+      : null;
+  const isZoomedIn = zoomTransform.k > 1.05 || Math.abs(zoomTransform.x) > 5 || Math.abs(zoomTransform.y) > 5;
+  const hasParent = !!(focusUnit?.parentId && unitsById.has(focusUnit.parentId));
+  const canZoomOut = isZoomedIn || hasParent;
   const pendingCount = activeMoveCount;
 
   function focusOn(id: string) {
     setSelectedPersonKey(null);
     setFocusId(id);
+    const svg = svgRef.current;
+    const z = zoomRef.current;
+    if (svg && z) select(svg).transition().duration(300).call(z.transform, zoomIdentity);
   }
 
   function performMove(assignmentId: string, targetUnitId: string) {
@@ -329,7 +458,7 @@ export function RadialOrg({
               {i > 0 && <span className="text-slate-600">/</span>}
               <button
                 onClick={() => focusOn(u.id)}
-                className={u.id === focusId ? "text-fuchsia-300" : "hover:text-slate-100"}
+                className={u.id === focusId ? "accent-text" : "hover:text-slate-100"}
               >
                 {u.name}
               </button>
@@ -379,6 +508,7 @@ export function RadialOrg({
         </div>
 
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           className="h-full w-full"
           style={{ maxHeight: "calc(100vh - 57px)", touchAction: "none" }}
@@ -388,18 +518,18 @@ export function RadialOrg({
         >
           <defs>
             <radialGradient id="sphere" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stopColor="#f5d0fe" />
-              <stop offset="45%" stopColor="#c084fc" />
-              <stop offset="100%" stopColor="#4f46e5" />
+              <stop offset="0%"   style={{ stopColor: "var(--sphere-0)" }} />
+              <stop offset="45%"  style={{ stopColor: "var(--sphere-1)" }} />
+              <stop offset="100%" style={{ stopColor: "var(--sphere-2)" }} />
             </radialGradient>
             <radialGradient id="sphereTeam" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stopColor="#cffafe" />
-              <stop offset="50%" stopColor="#60a5fa" />
-              <stop offset="100%" stopColor="#4338ca" />
+              <stop offset="0%"   style={{ stopColor: "var(--sphere-team-0)" }} />
+              <stop offset="50%"  style={{ stopColor: "var(--sphere-team-1)" }} />
+              <stop offset="100%" style={{ stopColor: "var(--sphere-team-2)" }} />
             </radialGradient>
             <radialGradient id="member" cx="35%" cy="30%" r="80%">
-              <stop offset="0%" stopColor="#e0e7ff" />
-              <stop offset="100%" stopColor="#818cf8" />
+              <stop offset="0%"   style={{ stopColor: "var(--sphere-member-0)" }} />
+              <stop offset="100%" style={{ stopColor: "var(--sphere-member-1)" }} />
             </radialGradient>
             <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
               <feGaussianBlur stdDeviation="6" result="b" />
@@ -409,11 +539,12 @@ export function RadialOrg({
               </feMerge>
             </filter>
             <radialGradient id="heat" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stopColor="#fdba74" />
+              <stop offset="0%"   stopColor="#fdba74" />
               <stop offset="100%" stopColor="#dc2626" />
             </radialGradient>
           </defs>
 
+          <g transform={`translate(${zoomTransform.x},${zoomTransform.y}) scale(${zoomTransform.k})`}>
           <g ref={gRef} transform={`translate(${CX},${CY})`}>
             {/* Faint links to context satellites */}
             <g fill="none">
@@ -473,6 +604,7 @@ export function RadialOrg({
                   selected={n.data.key === selectedPersonKey}
                   ghosted={!!isDragged}
                   overlay={ov}
+                  membersRevealed={detailOpacity > 0 && n.data.key === zoomFocusTeamId}
                   onClick={n.data.kind === "unit" ? () => onUnitClick(n.data) : undefined}
                   onPointerDown={
                     n.data.kind === "member"
@@ -482,6 +614,64 @@ export function RadialOrg({
                 />
               );
             })}
+
+            {/* Semantic zoom: members bloom around the focused team */}
+            {detailOpacity > 0 && detailMembers.length > 0 && (
+              <g opacity={detailOpacity} style={{ transition: "opacity 150ms" }}>
+                {detailMembers.map((m) => (
+                  <line
+                    key={`dl-${m.key}`}
+                    x1={m.cx}
+                    y1={m.cy}
+                    x2={m.x}
+                    y2={m.y}
+                    stroke="#94a3b8"
+                    strokeOpacity={0.2}
+                    strokeWidth={1.5}
+                  />
+                ))}
+                {detailMembers.map((m) => {
+                  const labelBelow = m.y < m.cy;
+                  return (
+                    <g
+                      key={`dm-${m.key}`}
+                      transform={`translate(${m.x},${m.y})`}
+                      style={{ cursor: "pointer" }}
+                      data-draggable=""
+                      onClick={() => setSelectedPersonKey(m.key)}
+                      onPointerDown={(e) =>
+                        beginMemberPointer(e, {
+                          key: m.key,
+                          kind: "member",
+                          name: m.name,
+                          assignment: m.assignment,
+                          person: m.person,
+                          isOpenRole: m.isOpenRole,
+                          overAllocated: m.overAllocated,
+                        })
+                      }
+                    >
+                      {m.isOpenRole ? (
+                        <circle r={7} fill="none" stroke="#f59e0b" strokeWidth={2} strokeDasharray="3 3" />
+                      ) : (
+                        <circle r={8} fill="url(#member)" />
+                      )}
+                      {m.overAllocated && (
+                        <circle r={12} fill="none" stroke="#fbbf24" strokeWidth={2} />
+                      )}
+                      <text
+                        y={labelBelow ? 20 : -12}
+                        textAnchor="middle"
+                        className="fill-slate-200"
+                        style={{ fontSize: 10 }}
+                      >
+                        {m.name}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            )}
 
             {/* Drag ghost */}
             {drag && (
@@ -493,7 +683,35 @@ export function RadialOrg({
               </g>
             )}
           </g>
+          </g>
         </svg>
+
+        {/* Zoom controls */}
+        <div className="absolute bottom-14 right-4 z-10 flex flex-col gap-1">
+          <button
+            onClick={handleZoomIn}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900/90 text-lg text-slate-300 shadow-md backdrop-blur hover:bg-slate-800 hover:text-white"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900/90 text-lg text-slate-300 shadow-md backdrop-blur hover:bg-slate-800 hover:text-white"
+            aria-label="Zoom out"
+          >
+            −
+          </button>
+          {(Math.abs(zoomTransform.k - 1) > 0.01 || Math.abs(zoomTransform.x) > 1 || Math.abs(zoomTransform.y) > 1) && (
+            <button
+              onClick={handleZoomReset}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900/90 text-[10px] text-slate-400 shadow-md backdrop-blur hover:bg-slate-800 hover:text-white"
+              aria-label="Reset zoom"
+            >
+              1:1
+            </button>
+          )}
+        </div>
 
         {/* Hint */}
         <div className="absolute bottom-3 left-4 text-xs text-slate-600">
@@ -512,12 +730,12 @@ export function RadialOrg({
             : "hidden lg:flex"}
         `}
       >
-        {selectedNode ? (
+        {selectedDatum ? (
           <PersonPanel
-            datum={selectedNode.data}
+            datum={selectedDatum}
             teamCount={
-              selectedNode.data.person
-                ? allocByPerson.get(selectedNode.data.person.id)?.teamCount ?? 1
+              selectedDatum.person
+                ? allocByPerson.get(selectedDatum.person.id)?.teamCount ?? 1
                 : 0
             }
           />
@@ -538,7 +756,15 @@ export function RadialOrg({
   function onUnitClick(d: NodeDatum) {
     if (!d.unit) return;
     if (d.unit.id === focusUnit.id) {
-      if (d.unit.parentId && unitsById.has(d.unit.parentId)) focusOn(d.unit.parentId);
+      // Phase 1: if visually zoomed in, reset the camera first (stay on same focus)
+      if (isZoomedIn) {
+        const svg = svgRef.current;
+        const z = zoomRef.current;
+        if (svg && z) select(svg).transition().duration(300).call(z.transform, zoomIdentity);
+        return;
+      }
+      // Phase 2: at default zoom, navigate up to parent
+      if (hasParent) focusOn(focusUnit.parentId!);
       return;
     }
     focusOn(d.unit.id);
@@ -662,6 +888,7 @@ function RadarNode({
   selected,
   ghosted,
   overlay,
+  membersRevealed,
   onClick,
   onPointerDown,
 }: {
@@ -673,6 +900,7 @@ function RadarNode({
   selected: boolean;
   ghosted: boolean;
   overlay: NodeOverlay;
+  membersRevealed?: boolean;
   onClick?: () => void;
   onPointerDown?: (e: React.PointerEvent) => void;
 }) {
@@ -695,6 +923,7 @@ function RadarNode({
       transform={`translate(${x},${y})`}
       onClick={onClick}
       onPointerDown={onPointerDown}
+      data-draggable={onPointerDown ? "" : undefined}
       style={{ cursor: "pointer", opacity: baseOpacity }}
     >
       {isUnit && (
@@ -703,7 +932,7 @@ function RadarNode({
             <path
               key={r}
               d={arcPath(r, -52, 52)}
-              stroke={["#38bdf8", "#818cf8", "#e879f9"][i]}
+              style={{ stroke: `var(--arc-${i})` }}
               strokeOpacity={0.8}
               strokeWidth={2.5}
               strokeLinecap="round"
@@ -724,7 +953,7 @@ function RadarNode({
       )}
 
       {datum.overAllocated && <circle r={sphereR + 4} fill="none" stroke="#fbbf24" strokeWidth={2} />}
-      {selected && <circle r={sphereR + 6} fill="none" stroke="#f0abfc" strokeWidth={2} />}
+      {selected && <circle r={sphereR + 6} fill="none" style={{ stroke: "var(--accent-ring)" }} strokeWidth={2} />}
 
       {/* Gaps overlay: dashed ring on units with open seats */}
       {overlay.badge && !datum.isOpenRole && isUnit && (
@@ -768,7 +997,7 @@ function RadarNode({
         </text>
       )}
 
-      {isUnit && !isCenter && datum.childUnitCount === 0 && (datum.memberCount ?? 0) > 0 && (
+      {isUnit && !isCenter && !membersRevealed && datum.childUnitCount === 0 && (datum.memberCount ?? 0) > 0 && (
         <text y={sphereR + 50} textAnchor="middle" className="fill-slate-500" style={{ fontSize: 10 }}>
           {datum.memberCount} member{datum.memberCount === 1 ? "" : "s"} ›
         </text>
@@ -850,7 +1079,10 @@ function PersonPanel({ datum, teamCount }: { datum: NodeDatum; teamCount: number
   return (
     <div>
       <div className="mb-2 flex items-center gap-3">
-        <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-300 to-indigo-600" />
+        <div
+          className="h-12 w-12 rounded-full"
+          style={{ background: "linear-gradient(to bottom right, var(--sphere-member-0), var(--sphere-member-1))" }}
+        />
         <div>
           <h2 className="text-lg font-semibold leading-tight">{p.name}</h2>
           <p className="text-sm text-slate-400">{p.title ?? "—"}</p>
@@ -931,7 +1163,7 @@ function SummaryBar({
             onClick={() => onOverlay(o.type)}
             className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
               overlayType === o.type
-                ? "bg-fuchsia-500/20 text-fuchsia-300"
+                ? "accent-active"
                 : "text-slate-500 hover:text-slate-300"
             }`}
           >

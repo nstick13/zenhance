@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import { isClerkEnabled } from "@/lib/auth/currentUser";
+import { PaletteSwitcher } from "@/components/PaletteSwitcher";
 
 /**
  * Protected app shell. `requireWorkspace()` enforces auth (redirecting to
@@ -18,7 +19,7 @@ export default async function AppLayout({
       <header className="flex items-center justify-between border-b border-slate-800 px-6 py-3">
         <div className="flex items-center gap-6">
           <Link href="/org" className="text-lg font-semibold tracking-tight">
-            <span className="text-fuchsia-400">Zen</span>hance
+            <span style={{ color: "var(--accent-text)" }}>Zen</span>hance
           </Link>
           <nav className="flex items-center gap-4 text-sm text-slate-400">
             <Link href="/org" className="hover:text-slate-100">
@@ -36,6 +37,7 @@ export default async function AppLayout({
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm text-slate-400">
+          <PaletteSwitcher />
           <span>{workspace.name}</span>
           {isClerkEnabled() ? (
             <UserButtonSlot />

@@ -24,3 +24,102 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ── Color palettes ─────────────────────────────────────────────────────── */
+
+:root,
+[data-palette="cosmic"] {
+  --accent-text:        #e879f9;
+  --accent-bg:          rgba(232, 121, 249, 0.15);
+  --accent-ring:        #f0abfc;
+  --sphere-0:           #f5d0fe;
+  --sphere-1:           #c084fc;
+  --sphere-2:           #4f46e5;
+  --sphere-team-0:      #cffafe;
+  --sphere-team-1:      #60a5fa;
+  --sphere-team-2:      #4338ca;
+  --sphere-member-0:    #e0e7ff;
+  --sphere-member-1:    #818cf8;
+  --arc-0:              #38bdf8;
+  --arc-1:              #818cf8;
+  --arc-2:              #e879f9;
+}
+
+[data-palette="forest"] {
+  --accent-text:        #4ade80;
+  --accent-bg:          rgba(74, 222, 128, 0.15);
+  --accent-ring:        #86efac;
+  --sphere-0:           #d1fae5;
+  --sphere-1:           #34d399;
+  --sphere-2:           #064e3b;
+  --sphere-team-0:      #ccfbf1;
+  --sphere-team-1:      #2dd4bf;
+  --sphere-team-2:      #0f766e;
+  --sphere-member-0:    #d1fae5;
+  --sphere-member-1:    #4ade80;
+  --arc-0:              #a3e635;
+  --arc-1:              #34d399;
+  --arc-2:              #2dd4bf;
+}
+
+[data-palette="crimson"] {
+  --accent-text:        #fb7185;
+  --accent-bg:          rgba(251, 113, 133, 0.15);
+  --accent-ring:        #fda4af;
+  --sphere-0:           #ffe4e6;
+  --sphere-1:           #fb7185;
+  --sphere-2:           #7f1d1d;
+  --sphere-team-0:      #fce7f3;
+  --sphere-team-1:      #f472b6;
+  --sphere-team-2:      #831843;
+  --sphere-member-0:    #ffe4e6;
+  --sphere-member-1:    #f87171;
+  --arc-0:              #f87171;
+  --arc-1:              #fb7185;
+  --arc-2:              #f472b6;
+}
+
+[data-palette="ocean"] {
+  --accent-text:        #38bdf8;
+  --accent-bg:          rgba(56, 189, 248, 0.15);
+  --accent-ring:        #7dd3fc;
+  --sphere-0:           #e0f2fe;
+  --sphere-1:           #38bdf8;
+  --sphere-2:           #0c4a6e;
+  --sphere-team-0:      #ede9fe;
+  --sphere-team-1:      #818cf8;
+  --sphere-team-2:      #312e81;
+  --sphere-member-0:    #e0f2fe;
+  --sphere-member-1:    #7dd3fc;
+  --arc-0:              #22d3ee;
+  --arc-1:              #38bdf8;
+  --arc-2:              #818cf8;
+}
+
+[data-palette="ember"] {
+  --accent-text:        #fbbf24;
+  --accent-bg:          rgba(251, 191, 36, 0.15);
+  --accent-ring:        #fde68a;
+  --sphere-0:           #fef3c7;
+  --sphere-1:           #fbbf24;
+  --sphere-2:           #78350f;
+  --sphere-team-0:      #fef9c3;
+  --sphere-team-1:      #facc15;
+  --sphere-team-2:      #713f12;
+  --sphere-member-0:    #fef3c7;
+  --sphere-member-1:    #fcd34d;
+  --arc-0:              #fde68a;
+  --arc-1:              #fbbf24;
+  --arc-2:              #f59e0b;
+}
+
+/* ── Accent utilities ────────────────────────────────────────────────────── */
+
+.accent-text {
+  color: var(--accent-text);
+}
+
+.accent-active {
+  background-color: var(--accent-bg);
+  color: var(--accent-text);
+}
