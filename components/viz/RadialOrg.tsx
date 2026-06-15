@@ -147,7 +147,7 @@ export function RadialOrg({
     if (!svg) return;
 
     const zoomBehavior = d3Zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 3])
+      .scaleExtent([0.3, 5])
       .filter((event: Event) => {
         if (event.type === "wheel") return true;
         if (event.type === "dblclick") return false;
@@ -308,6 +308,79 @@ export function RadialOrg({
     });
   }, [zoomFocusTeamId, nodes, asgByUnit, peopleById, overAlloc]);
 
+  // Whether the zoom-focused node is a group (has sub-units rather than members)
+  const zoomFocusIsGroup = useMemo(() => {
+    if (!zoomFocusTeamId) return false;
+    return (childByParent.get(zoomFocusTeamId) ?? []).length > 0;
+  }, [zoomFocusTeamId, childByParent]);
+
+  // Detail sub-teams shown in a ring when zoomed into a group node
+  const detailSubTeams = useMemo(() => {
+    if (!zoomFocusTeamId || !zoomFocusIsGroup) return [];
+    const teamNode = nodes.find((n) => n.data.key === zoomFocusTeamId);
+    if (!teamNode) return [];
+    const kids = childByParent.get(zoomFocusTeamId) ?? [];
+    if (kids.length === 0) return [];
+    const [cx, cy] = pointRadial(teamNode.x, teamNode.y);
+    const ringR = 90;
+    return kids.map((u, i) => {
+      const angle = (2 * Math.PI * i) / kids.length - Math.PI / 2;
+      return {
+        key: u.id,
+        x: cx + Math.cos(angle) * ringR,
+        y: cy + Math.sin(angle) * ringR,
+        cx, cy,
+        unit: u,
+        memberCount: (asgByUnit.get(u.id) ?? []).length,
+      };
+    });
+  }, [zoomFocusTeamId, zoomFocusIsGroup, nodes, childByParent, asgByUnit]);
+
+  // Second-level semantic zoom: members bloom around the nearest detail sub-team
+  const DETAIL2_START = 3.0;
+  const DETAIL2_FULL = 4.0;
+  const detail2Opacity = Math.max(0, Math.min(1,
+    (zoomTransform.k - DETAIL2_START) / (DETAIL2_FULL - DETAIL2_START),
+  ));
+
+  const zoomFocusSubTeamId = useMemo(() => {
+    if (detailSubTeams.length === 0 || detail2Opacity <= 0) return null;
+    const vcx = (WIDTH / 2 - zoomTransform.x) / zoomTransform.k - CX;
+    const vcy = (HEIGHT / 2 - zoomTransform.y) / zoomTransform.k - CY;
+    let bestDist = Infinity;
+    let bestId: string | null = null;
+    for (const t of detailSubTeams) {
+      const d = Math.hypot(t.x - vcx, t.y - vcy);
+      if (d < bestDist) { bestDist = d; bestId = t.key; }
+    }
+    return bestId;
+  }, [detailSubTeams, detail2Opacity, zoomTransform]);
+
+  const detail2Members = useMemo(() => {
+    if (!zoomFocusSubTeamId) return [];
+    const subTeam = detailSubTeams.find((t) => t.key === zoomFocusSubTeamId);
+    if (!subTeam) return [];
+    const members = asgByUnit.get(zoomFocusSubTeamId) ?? [];
+    if (members.length === 0) return [];
+    const ringR = 55;
+    return members.map((a, i) => {
+      const angle = (2 * Math.PI * i) / members.length - Math.PI / 2;
+      const person = a.personId ? peopleById.get(a.personId) ?? null : null;
+      return {
+        key: a.id,
+        x: subTeam.x + Math.cos(angle) * ringR,
+        y: subTeam.y + Math.sin(angle) * ringR,
+        cx: subTeam.x,
+        cy: subTeam.y,
+        name: a.isOpenRole ? "Open role" : person?.name ?? "Unknown",
+        isOpenRole: a.isOpenRole,
+        person,
+        assignment: a,
+        overAllocated: !!person && overAlloc.has(person.id),
+      };
+    });
+  }, [zoomFocusSubTeamId, detailSubTeams, asgByUnit, peopleById, overAlloc]);
+
   const context = useMemo(() => {
     if (!focusUnit) return [] as ContextNode[];
     const parent = focusUnit.parentId ? unitsById.get(focusUnit.parentId) ?? null : null;
@@ -328,7 +401,9 @@ export function RadialOrg({
   const breadcrumb = focusUnit ? pathToRoot(focusUnit.id, unitsById) : [];
   const selectedNode = nodes.find((n) => n.data.key === selectedPersonKey) ?? null;
   const selectedDetailMember = !selectedNode && selectedPersonKey
-    ? detailMembers.find((m) => m.key === selectedPersonKey) ?? null
+    ? detailMembers.find((m) => m.key === selectedPersonKey)
+      ?? detail2Members.find((m) => m.key === selectedPersonKey)
+      ?? null
     : null;
   const selectedDatum: NodeDatum | null = selectedNode
     ? selectedNode.data
@@ -428,6 +503,22 @@ export function RadialOrg({
       if (d < best) {
         best = d;
         nearest = c.unit.id;
+      }
+    }
+    for (const n of nodes) {
+      if (n.data.kind !== "unit" || n.data.isCenter) continue;
+      const [nx, ny] = pointRadial(n.x, n.y);
+      const d = Math.hypot(nx - lx, ny - ly);
+      if (d < best) {
+        best = d;
+        nearest = n.data.key;
+      }
+    }
+    for (const t of detailSubTeams) {
+      const d = Math.hypot(t.x - lx, t.y - ly);
+      if (d < best) {
+        best = d;
+        nearest = t.key;
       }
     }
     setHoverId(nearest);
@@ -605,6 +696,7 @@ export function RadialOrg({
                   ghosted={!!isDragged}
                   overlay={ov}
                   membersRevealed={detailOpacity > 0 && n.data.key === zoomFocusTeamId}
+                  dropHighlight={!!drag && hoverId === n.data.key}
                   onClick={n.data.kind === "unit" ? () => onUnitClick(n.data) : undefined}
                   onPointerDown={
                     n.data.kind === "member"
@@ -635,6 +727,115 @@ export function RadialOrg({
                   return (
                     <g
                       key={`dm-${m.key}`}
+                      transform={`translate(${m.x},${m.y})`}
+                      style={{ cursor: "pointer" }}
+                      data-draggable=""
+                      onClick={() => setSelectedPersonKey(m.key)}
+                      onPointerDown={(e) =>
+                        beginMemberPointer(e, {
+                          key: m.key,
+                          kind: "member",
+                          name: m.name,
+                          assignment: m.assignment,
+                          person: m.person,
+                          isOpenRole: m.isOpenRole,
+                          overAllocated: m.overAllocated,
+                        })
+                      }
+                    >
+                      {m.isOpenRole ? (
+                        <circle r={7} fill="none" stroke="#f59e0b" strokeWidth={2} strokeDasharray="3 3" />
+                      ) : (
+                        <circle r={8} fill="url(#member)" />
+                      )}
+                      {m.overAllocated && (
+                        <circle r={12} fill="none" stroke="#fbbf24" strokeWidth={2} />
+                      )}
+                      <text
+                        y={labelBelow ? 20 : -12}
+                        textAnchor="middle"
+                        className="fill-slate-200"
+                        style={{ fontSize: 10 }}
+                      >
+                        {m.name}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            )}
+
+            {/* Semantic zoom: sub-teams bloom around a focused group */}
+            {detailOpacity > 0 && detailSubTeams.length > 0 && (
+              <g opacity={detailOpacity} style={{ transition: "opacity 150ms" }}>
+                {detailSubTeams.map((t) => (
+                  <line
+                    key={`stl-${t.key}`}
+                    x1={t.cx}
+                    y1={t.cy}
+                    x2={t.x}
+                    y2={t.y}
+                    stroke="#94a3b8"
+                    strokeOpacity={0.2}
+                    strokeWidth={1.5}
+                  />
+                ))}
+                {detailSubTeams.map((t) => {
+                  const isDropTarget = !!drag && hoverId === t.key;
+                  return (
+                    <g
+                      key={`st-${t.key}`}
+                      transform={`translate(${t.x},${t.y})`}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => focusOn(t.key)}
+                    >
+                      {isDropTarget && <circle r={DROP_RADIUS} fill="#34d399" opacity={0.12} />}
+                      <circle
+                        r={14}
+                        fill="url(#sphereTeam)"
+                        filter="url(#glow)"
+                        stroke={isDropTarget ? "#34d399" : undefined}
+                        strokeWidth={isDropTarget ? 2 : 0}
+                      />
+                      <text
+                        y={24}
+                        textAnchor="middle"
+                        className="fill-slate-200"
+                        style={{ fontSize: 11, fontWeight: 600 }}
+                      >
+                        {t.unit.name}
+                      </text>
+                      {t.memberCount > 0 && !(detail2Opacity > 0 && t.key === zoomFocusSubTeamId) && (
+                        <text y={38} textAnchor="middle" className="fill-slate-500" style={{ fontSize: 10 }}>
+                          {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            )}
+
+            {/* Second-level semantic zoom: members bloom around the focused sub-team */}
+            {detail2Opacity > 0 && detail2Members.length > 0 && (
+              <g opacity={detail2Opacity} style={{ transition: "opacity 150ms" }}>
+                {detail2Members.map((m) => (
+                  <line
+                    key={`d2l-${m.key}`}
+                    x1={m.cx}
+                    y1={m.cy}
+                    x2={m.x}
+                    y2={m.y}
+                    stroke="#94a3b8"
+                    strokeOpacity={0.2}
+                    strokeWidth={1.5}
+                  />
+                ))}
+                {detail2Members.map((m) => {
+                  const labelBelow = m.y < m.cy;
+                  return (
+                    <g
+                      key={`d2m-${m.key}`}
                       transform={`translate(${m.x},${m.y})`}
                       style={{ cursor: "pointer" }}
                       data-draggable=""
@@ -889,6 +1090,7 @@ function RadarNode({
   ghosted,
   overlay,
   membersRevealed,
+  dropHighlight,
   onClick,
   onPointerDown,
 }: {
@@ -901,6 +1103,7 @@ function RadarNode({
   ghosted: boolean;
   overlay: NodeOverlay;
   membersRevealed?: boolean;
+  dropHighlight?: boolean;
   onClick?: () => void;
   onPointerDown?: (e: React.PointerEvent) => void;
 }) {
@@ -954,6 +1157,12 @@ function RadarNode({
 
       {datum.overAllocated && <circle r={sphereR + 4} fill="none" stroke="#fbbf24" strokeWidth={2} />}
       {selected && <circle r={sphereR + 6} fill="none" style={{ stroke: "var(--accent-ring)" }} strokeWidth={2} />}
+      {dropHighlight && (
+        <>
+          <circle r={DROP_RADIUS} fill="#34d399" opacity={0.12} />
+          <circle r={sphereR + 2} fill="none" stroke="#34d399" strokeWidth={2} />
+        </>
+      )}
 
       {/* Gaps overlay: dashed ring on units with open seats */}
       {overlay.badge && !datum.isOpenRole && isUnit && (
@@ -1002,7 +1211,7 @@ function RadarNode({
           {datum.memberCount} member{datum.memberCount === 1 ? "" : "s"} ›
         </text>
       )}
-      {isUnit && !isCenter && (datum.childUnitCount ?? 0) > 0 && (
+      {isUnit && !isCenter && !membersRevealed && (datum.childUnitCount ?? 0) > 0 && (
         <text y={sphereR + 50} textAnchor="middle" className="fill-indigo-300/70" style={{ fontSize: 10 }}>
           {datum.childUnitCount} team{datum.childUnitCount === 1 ? "" : "s"} ›
         </text>

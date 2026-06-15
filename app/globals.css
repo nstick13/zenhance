@@ -27,7 +27,29 @@ body {
 
 /* ── Color palettes ─────────────────────────────────────────────────────── */
 
-:root,
+/* These tokens are consumed almost entirely by inline styles in the SVG viz
+   (see RadialOrg.tsx, e.g. stopColor: "var(--sphere-0)"), never via var() in
+   this stylesheet. Tailwind v4 / Lightning CSS tree-shakes custom properties it
+   considers unused, which blanks the gradients to black. `@theme static` forces
+   every token in this block to be emitted regardless of usage; the per-palette
+   overrides below reuse the same names, so they survive too. */
+@theme static {
+  --accent-text:        #e879f9;
+  --accent-bg:          rgba(232, 121, 249, 0.15);
+  --accent-ring:        #f0abfc;
+  --sphere-0:           #f5d0fe;
+  --sphere-1:           #c084fc;
+  --sphere-2:           #4f46e5;
+  --sphere-team-0:      #cffafe;
+  --sphere-team-1:      #60a5fa;
+  --sphere-team-2:      #4338ca;
+  --sphere-member-0:    #e0e7ff;
+  --sphere-member-1:    #818cf8;
+  --arc-0:              #38bdf8;
+  --arc-1:              #818cf8;
+  --arc-2:              #e879f9;
+}
+
 [data-palette="cosmic"] {
   --accent-text:        #e879f9;
   --accent-bg:          rgba(232, 121, 249, 0.15);
