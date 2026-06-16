@@ -29,6 +29,11 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > Foundational — several Analytics stories depend on these. Worth seeing in the demo org early.
 
 - **User-defined / custom fields** — let a workspace add its own fields to people and/or units (beyond the fixed schema), and surface them in panels, filters, and import mapping. Touches `lib/db/schema.ts`, the import column-mapping, and the detail panels.
+- **People roles & job function** *(discuss — Data Model + Analytics)* — capture *what a person does*: developer, QA, scrum master, etc. **Current state:** `person.title`, `person.skills[]`, `person.growthFocus`, and `assignment.roleOnTeam` are all **free text** — nothing structured. Open questions:
+  - Is "role" a person's **discipline/job** (global to the person) vs their **role on a specific team** (`assignment.roleOnTeam`)? Probably both — a developer can be a tech lead on one team and an IC on another.
+  - **How flexible:** free text vs a structured taxonomy (enum / workspace-defined role list) vs tags. Structure enables analytics (count developers, find teams with no QA, role-based gaps); free text is easier but un-analyzable. Likely a workspace-defined list (ties into custom fields above).
+  - **Manual editing UX:** how does a user create/rename/assign roles and edit a person's data inline — in the person panel, the People CRUD page, or both? This is the "let me just fix this person" flow that has to feel effortless.
+  - Payoff for Analytics: filter/group/colour the map by role, role-coverage gaps, and richer search than name-only (relates to the scrapped search/filter + cross-cutting roles notes under Analytics).
 - **Sub-groups (teams-of-teams nesting)** — deeper hierarchy than the current group→team→members. *"Need to see this in the demo"* — extend `lib/db/seed.ts` / `demoSeed.ts` so the demo org actually shows multi-level nesting, then confirm the viz + zoom handle it.
 - **Lifecycle status (active / on-hold)?** — the field the scrapped search filter assumed. Decide here whether units/people get a status concept (and whether it's a fixed enum or just a custom field via the story above).
 
