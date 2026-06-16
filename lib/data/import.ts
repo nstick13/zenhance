@@ -21,6 +21,7 @@ export type ImportPersonRow = {
   startDate?: string;
   growthFocus?: string;
   lastVacationAt?: string;
+  manager?: string; // manager name → resolved to managerId
 };
 
 export type ImportTeamRow = {
@@ -76,7 +77,7 @@ export async function importOrg(payload: ImportPayload): Promise<ImportResult> {
     });
     if (!parsed.success)
       errors.push({ sheet: "People", row: i + 2, message: parsed.error.issues[0].message });
-    return parsed.success ? parsed.data : null;
+    return parsed.success ? { data: parsed.data, manager: r.manager } : null;
   });
 
   const validTeams = payload.teams.map((r, i) => {
@@ -125,27 +126,37 @@ export async function importOrg(payload: ImportPayload): Promise<ImportResult> {
       const personIdByName = new Map(existingPeople.map((p) => [p.name.toLowerCase(), p.id]));
       const unitIdByName = new Map(existingUnits.map((u) => [u.name.toLowerCase(), u.id]));
 
-      // People
+      // People — insert first, then wire managerId in a second pass so
+      // forward-references resolve regardless of row order in the sheet.
       let createdPeople = 0;
       for (const v of validPeople) {
         if (!v) continue;
-        if (personIdByName.has(v.name.toLowerCase())) continue;
+        if (personIdByName.has(v.data.name.toLowerCase())) continue;
         const [row] = await tx
           .insert(people)
           .values({
             workspaceId: wid,
-            name: v.name,
-            title: v.title,
-            startDate: v.startDate,
-            costPerMonth: v.costPerMonth?.toString() ?? null,
-            skills: v.skills,
-            growthFocus: v.growthFocus,
-            photoUrl: v.photoUrl,
-            lastVacationAt: v.lastVacationAt,
+            name: v.data.name,
+            title: v.data.title,
+            startDate: v.data.startDate,
+            costPerMonth: v.data.costPerMonth?.toString() ?? null,
+            skills: v.data.skills,
+            growthFocus: v.data.growthFocus,
+            photoUrl: v.data.photoUrl,
+            lastVacationAt: v.data.lastVacationAt,
           })
           .returning({ id: people.id });
-        personIdByName.set(v.name.toLowerCase(), row.id);
+        personIdByName.set(v.data.name.toLowerCase(), row.id);
         createdPeople++;
+      }
+      // Second pass: resolve manager by name now that all people exist.
+      for (const v of validPeople) {
+        if (!v?.manager?.trim()) continue;
+        const personId = personIdByName.get(v.data.name.toLowerCase());
+        const managerId = personIdByName.get(v.manager.trim().toLowerCase()) ?? null;
+        if (personId && managerId) {
+          await tx.update(people).set({ managerId }).where(eq(people.id, personId));
+        }
       }
 
       // Teams (create first, then wire parent/lead by name)

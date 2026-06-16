@@ -102,6 +102,7 @@ export function RadialOrg({
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [showFindings, setShowFindings] = useState(false);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"delivery" | "formal">("delivery");
 
   const unitsById = useMemo(() => indexById(units), [units]);
   const peopleById = useMemo(() => indexById(people), [people]);
@@ -289,6 +290,54 @@ export function RadialOrg({
     return m;
   }, [nodes]);
 
+  // Formal reporting tree — person-nodes connected by managerId instead of
+  // team membership. Computed lazily; empty when viewMode = "delivery".
+  const { formalNodes, formalLinks } = useMemo(() => {
+    if (viewMode !== "formal" || people.length === 0) {
+      return { formalNodes: [] as typeof nodes, formalLinks: [] as PointLink[] };
+    }
+    const personIds = new Set(people.map((p) => p.id));
+    const childrenByManager = new Map<string, Person[]>();
+    for (const person of people) {
+      const key = person.managerId && personIds.has(person.managerId) ? person.managerId : "__root__";
+      if (!childrenByManager.has(key)) childrenByManager.set(key, []);
+      childrenByManager.get(key)!.push(person);
+    }
+    const roots = childrenByManager.get("__root__") ?? people;
+    const root = [...roots].sort(
+      (a, b) => (childrenByManager.get(b.id)?.length ?? 0) - (childrenByManager.get(a.id)?.length ?? 0),
+    )[0];
+    if (!root) return { formalNodes: [], formalLinks: [] };
+
+    const toDatum = (person: Person, isCenter = false): NodeDatum => ({
+      key: person.id,
+      kind: "member",
+      name: person.name,
+      person,
+      isCenter,
+    });
+    const childrenAcc = (d: NodeDatum): NodeDatum[] | null => {
+      if (!d.person) return null;
+      const kids = childrenByManager.get(d.person.id) ?? [];
+      return kids.length > 0 ? kids.map((k) => toDatum(k)) : null;
+    };
+    const h = hierarchy<NodeDatum>(toDatum(root, true), childrenAcc);
+    const layout = tree<NodeDatum>()
+      .size([2 * Math.PI, h.height === 0 ? 1 : INNER_RADIUS])
+      .separation((a, b) => (a.parent === b.parent ? 1 : 1.6) / Math.max(1, a.depth));
+    const r = layout(h);
+    const link = linkRadial<unknown, HierarchyPointNode<NodeDatum>>()
+      .angle((d) => d.x)
+      .radius((d) => d.y);
+    return {
+      formalNodes: r.descendants(),
+      formalLinks: r.links().map((l) => ({
+        path: link({ source: l.source, target: l.target }) ?? "",
+        key: `${l.source.data.key}->${l.target.data.key}`,
+      })),
+    };
+  }, [viewMode, people]);
+
   // Which team is the viewport zooming toward?
   const zoomFocusTeamId = useMemo(() => {
     if (detailOpacity <= 0) return null;
@@ -424,8 +473,11 @@ export function RadialOrg({
     });
   }, [focusUnit, unitsById, childByParent]);
 
+  const displayNodes = viewMode === "formal" ? formalNodes : nodes;
+  const displayLinks = viewMode === "formal" ? formalLinks : links;
+
   const breadcrumb = focusUnit ? pathToRoot(focusUnit.id, unitsById) : [];
-  const selectedNode = nodes.find((n) => n.data.key === selectedPersonKey) ?? null;
+  const selectedNode = displayNodes.find((n) => n.data.key === selectedPersonKey) ?? null;
   const selectedDetailMember = !selectedNode && selectedPersonKey
     ? detailMembers.find((m) => m.key === selectedPersonKey)
       ?? detail2Members.find((m) => m.key === selectedPersonKey)
@@ -572,23 +624,32 @@ export function RadialOrg({
         findingsCount={findings.length}
         showFindings={showFindings}
         onToggleFindings={toggleFindings}
+        viewMode={viewMode}
+        onViewMode={setViewMode}
       />
       <div className="flex min-h-0 flex-1">
       <div className="relative flex-1" style={drag ? { userSelect: "none" } : undefined}>
-        {/* Breadcrumb */}
-        <div className="absolute left-4 top-3 z-10 flex items-center gap-1 text-sm text-slate-400">
-          {breadcrumb.map((u, i) => (
-            <span key={u.id} className="flex items-center gap-1">
-              {i > 0 && <span className="text-slate-600">/</span>}
-              <button
-                onClick={() => focusOn(u.id)}
-                className={u.id === focusId ? "accent-text" : "hover:text-slate-100"}
-              >
-                {u.name}
-              </button>
-            </span>
-          ))}
-        </div>
+        {/* Breadcrumb — delivery mode only */}
+        {viewMode === "delivery" && (
+          <div className="absolute left-4 top-3 z-10 flex items-center gap-1 text-sm text-slate-400">
+            {breadcrumb.map((u, i) => (
+              <span key={u.id} className="flex items-center gap-1">
+                {i > 0 && <span className="text-slate-600">/</span>}
+                <button
+                  onClick={() => focusOn(u.id)}
+                  className={u.id === focusId ? "accent-text" : "hover:text-slate-100"}
+                >
+                  {u.name}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {viewMode === "formal" && (
+          <div className="absolute left-4 top-3 z-10 text-sm text-slate-500">
+            Formal reporting structure
+          </div>
+        )}
 
         {/* Scenario controls + mobile panel toggle */}
         <div className="absolute right-4 top-3 z-10 flex items-center gap-2 text-sm">
@@ -670,35 +731,35 @@ export function RadialOrg({
 
           <g transform={`translate(${zoomTransform.x},${zoomTransform.y}) scale(${zoomTransform.k})`}>
           <g ref={gRef} transform={`translate(${CX},${CY})`}>
-            {/* Faint links to context satellites */}
-            <g fill="none">
-              {context.map((c) => (
-                <line
-                  key={`cl-${c.unit.id}`}
-                  x1={0}
-                  y1={0}
-                  x2={c.x}
-                  y2={c.y}
-                  stroke="#64748b"
-                  strokeOpacity={0.12}
-                  strokeWidth={1.5}
-                  strokeDasharray="2 5"
-                />
-              ))}
-            </g>
+            {/* Context satellites — delivery mode only */}
+            {viewMode === "delivery" && (
+              <>
+                <g fill="none">
+                  {context.map((c) => (
+                    <line
+                      key={`cl-${c.unit.id}`}
+                      x1={0} y1={0} x2={c.x} y2={c.y}
+                      stroke="#64748b"
+                      strokeOpacity={0.12}
+                      strokeWidth={1.5}
+                      strokeDasharray="2 5"
+                    />
+                  ))}
+                </g>
+                {context.map((c) => (
+                  <ContextSatellite
+                    key={c.unit.id}
+                    node={c}
+                    highlight={hoverId === c.unit.id}
+                    dropMode={!!drag}
+                    onClick={() => focusOn(c.unit.id)}
+                  />
+                ))}
+              </>
+            )}
 
-            {context.map((c) => (
-              <ContextSatellite
-                key={c.unit.id}
-                node={c}
-                highlight={hoverId === c.unit.id}
-                dropMode={!!drag}
-                onClick={() => focusOn(c.unit.id)}
-              />
-            ))}
-
             <g fill="none">
-              {links.map((l) => (
+              {displayLinks.map((l) => (
                 <path
                   key={l.key}
                   d={l.path}
@@ -710,7 +771,7 @@ export function RadialOrg({
               ))}
             </g>
 
-            {nodes.map((n) => {
+            {displayNodes.map((n) => {
               const [x, y] = pointRadial(n.x, n.y);
               const outwardDeg = (n.x * 180) / Math.PI - 90;
               const isDragged = drag && pendingRef.current?.key === n.data.key;
@@ -736,15 +797,23 @@ export function RadialOrg({
                   x={x}
                   y={y}
                   outwardDeg={outwardDeg}
-                  canZoomOut={n.data.isCenter ? canZoomOut : false}
+                  canZoomOut={viewMode === "delivery" && n.data.isCenter ? canZoomOut : false}
                   selected={n.data.key === selectedPersonKey}
                   ghosted={!!isDragged}
                   overlay={effectiveOverlay}
-                  membersRevealed={detailOpacity > 0 && n.data.key === zoomFocusTeamId}
-                  dropHighlight={!!drag && hoverId === n.data.key}
-                  onClick={n.data.kind === "unit" ? () => onUnitClick(n.data) : undefined}
+                  membersRevealed={viewMode === "delivery" && detailOpacity > 0 && n.data.key === zoomFocusTeamId}
+                  dropHighlight={viewMode === "delivery" && !!drag && hoverId === n.data.key}
+                  onClick={
+                    viewMode === "formal"
+                      ? n.data.person
+                        ? () => { setSelectedPersonKey(n.data.key); setShowPanel(true); }
+                        : undefined
+                      : n.data.kind === "unit"
+                      ? () => onUnitClick(n.data)
+                      : undefined
+                  }
                   onPointerDown={
-                    n.data.kind === "member"
+                    viewMode === "delivery" && n.data.kind === "member"
                       ? (e) => beginMemberPointer(e, n.data)
                       : undefined
                   }
@@ -752,8 +821,8 @@ export function RadialOrg({
               );
             })}
 
-            {/* ── Findings: ambient presence dots ── */}
-            {showFindings && !selectedFinding && nodes.map((n) => {
+            {/* ── Findings: ambient presence dots (delivery mode only) ── */}
+            {viewMode === "delivery" && showFindings && !selectedFinding && nodes.map((n) => {
               if (n.data.kind !== "unit" || !n.data.unit || n.data.isCenter) return null;
               const unitFindings = findings.filter((f) =>
                 f.involvedUnitIds.includes(n.data.unit!.id),
@@ -781,8 +850,8 @@ export function RadialOrg({
               );
             })}
 
-            {/* ── Findings: spotlight on selected finding ── */}
-            {showFindings && selectedFinding && (() => {
+            {/* ── Findings: spotlight on selected finding (delivery mode only) ── */}
+            {viewMode === "delivery" && showFindings && selectedFinding && (() => {
               const color = selectedFinding.color;
               if (selectedFinding.spotlightType === "hub") {
                 return (
@@ -825,8 +894,8 @@ export function RadialOrg({
               return null;
             })()}
 
-            {/* Pulse rings on involved units when a finding is focused */}
-            {showFindings && selectedFinding &&
+            {/* Pulse rings on involved units when a finding is focused — delivery only */}
+            {viewMode === "delivery" && showFindings && selectedFinding &&
               selectedFinding.involvedUnitIds.map((uid) => {
                 const pos = unitNodePositions.get(uid);
                 if (!pos) return null;
@@ -844,8 +913,8 @@ export function RadialOrg({
               })
             }
 
-            {/* Semantic zoom: members bloom around the focused team */}
-            {detailOpacity > 0 && detailMembers.length > 0 && (
+            {/* Semantic zoom: members bloom around the focused team — delivery only */}
+            {viewMode === "delivery" && detailOpacity > 0 && detailMembers.length > 0 && (
               <g opacity={detailOpacity} style={{ transition: "opacity 150ms" }}>
                 {detailMembers.map((m) => (
                   <line
@@ -902,8 +971,8 @@ export function RadialOrg({
               </g>
             )}
 
-            {/* Semantic zoom: sub-teams bloom around a focused group */}
-            {detailOpacity > 0 && detailSubTeams.length > 0 && (
+            {/* Semantic zoom: sub-teams bloom around a focused group — delivery only */}
+            {viewMode === "delivery" && detailOpacity > 0 && detailSubTeams.length > 0 && (
               <g opacity={detailOpacity} style={{ transition: "opacity 150ms" }}>
                 {detailSubTeams.map((t) => (
                   <line
@@ -1500,6 +1569,8 @@ function SummaryBar({
   findingsCount,
   showFindings,
   onToggleFindings,
+  viewMode,
+  onViewMode,
 }: {
   summary: OrgSummary;
   overlayType: OverlayType;
@@ -1507,6 +1578,8 @@ function SummaryBar({
   findingsCount: number;
   showFindings: boolean;
   onToggleFindings: () => void;
+  viewMode: "delivery" | "formal";
+  onViewMode: (m: "delivery" | "formal") => void;
 }) {
   const fmtCost = (n: number) =>
     n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : `$${Math.round(n / 1000)}k`;
@@ -1515,34 +1588,51 @@ function SummaryBar({
 
   return (
     <div className="flex shrink-0 items-center gap-0 border-b border-slate-800 bg-slate-900/80 px-4 text-sm">
-      {/* Overlay toggles */}
+      {/* View mode toggle */}
       <div className="flex items-center gap-1 border-r border-slate-800 pr-4 py-2">
-        {OVERLAY_OPTIONS.map((o) => (
+        {(["delivery", "formal"] as const).map((m) => (
           <button
-            key={o.type}
-            onClick={() => onOverlay(o.type)}
-            className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-              overlayType === o.type
-                ? "accent-active"
-                : "text-slate-500 hover:text-slate-300"
+            key={m}
+            onClick={() => onViewMode(m)}
+            className={`rounded px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+              viewMode === m ? "accent-active" : "text-slate-500 hover:text-slate-300"
             }`}
           >
-            {o.label}
+            {m}
           </button>
         ))}
       </div>
 
-      {/* Findings toggle */}
-      <div className="flex items-center border-r border-slate-800 px-3 py-2">
-        <button
-          onClick={onToggleFindings}
-          className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-            showFindings ? "accent-active" : "text-slate-500 hover:text-slate-300"
-          }`}
-        >
-          Findings{findingsCount > 0 ? ` (${findingsCount})` : ""}
-        </button>
-      </div>
+      {/* Overlay toggles + Findings — delivery mode only */}
+      {viewMode === "delivery" && (
+        <>
+          <div className="flex items-center gap-1 border-r border-slate-800 pr-4 py-2">
+            {OVERLAY_OPTIONS.map((o) => (
+              <button
+                key={o.type}
+                onClick={() => onOverlay(o.type)}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                  overlayType === o.type
+                    ? "accent-active"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center border-r border-slate-800 px-3 py-2">
+            <button
+              onClick={onToggleFindings}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                showFindings ? "accent-active" : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              Findings{findingsCount > 0 ? ` (${findingsCount})` : ""}
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Metrics */}
       <div className="flex items-center gap-6 px-4 py-2">

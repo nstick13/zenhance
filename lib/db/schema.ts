@@ -70,6 +70,9 @@ export const people = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     title: text("title"),
+    managerId: uuid("manager_id").references((): AnyPgColumn => people.id, {
+      onDelete: "set null",
+    }), // self-ref formal reporting line; null = no manager in this workspace
     startDate: date("start_date"), // tenure
     costPerMonth: numeric("cost_per_month", { precision: 12, scale: 2 }),
     skills: text("skills").array().notNull().default([]),
@@ -79,7 +82,10 @@ export const people = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("people_workspace_idx").on(t.workspaceId)],
+  (t) => [
+    index("people_workspace_idx").on(t.workspaceId),
+    index("people_manager_idx").on(t.managerId),
+  ],
 );
 
 // --- org units (the delivery tree: groups and teams) ----------------------
@@ -152,6 +158,12 @@ export const peopleRelations = relations(people, ({ one, many }) => ({
     fields: [people.workspaceId],
     references: [workspaces.id],
   }),
+  manager: one(people, {
+    fields: [people.managerId],
+    references: [people.id],
+    relationName: "person_manager",
+  }),
+  reports: many(people, { relationName: "person_manager" }),
   assignments: many(assignments),
 }));
 

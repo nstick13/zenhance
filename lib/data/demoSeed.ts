@@ -149,6 +149,28 @@ export async function seedDemoOrg(workspaceId: string): Promise<void> {
     isOpenRole,
   });
 
+  // Formal reporting lines — diverge from delivery teams intentionally.
+  // Richard & Priya: formally under Aaron (Ops) but deliver on Moonlight.
+  // Sofia: formally under Aimee (Dev) but delivers on Earthlight.
+  const reportsTo: Array<[string, string]> = [
+    ["Aimee Bradford",    "Sarah Reeve"],
+    ["Aaron Richter",     "Sarah Reeve"],
+    ["Thomas Le",         "Aimee Bradford"],
+    ["Angela Smith",      "Aimee Bradford"],
+    ["Areline De Lisle",  "Aimee Bradford"],
+    ["Sofia Marchetti",   "Aimee Bradford"],
+    ["Marcus Webb",       "Aaron Richter"],
+    ["Lena Ortiz",        "Aaron Richter"],
+    ["Richard Stewartson","Aaron Richter"],
+    ["Priya Nair",        "Aaron Richter"],
+  ];
+  for (const [name, mgr] of reportsTo) {
+    await db
+      .update(people)
+      .set({ managerId: byName[mgr] })
+      .where(eq(people.id, byName[name]));
+  }
+
   await db.insert(assignments).values([
     assign("Aimee Bradford", team["Starlight"], "Team Lead"),
     assign("Thomas Le", team["Starlight"], "Senior Engineer"),
