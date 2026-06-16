@@ -208,6 +208,29 @@ async function main() {
     assign(null, team["Infosys Contractors"], "Contractor", 100, true),
   ]);
 
+  // Wire formal reporting lines (managerId). These deliberately diverge from
+  // the delivery teams to show the formal-vs-delivery delta:
+  //   - Richard & Priya formally report to Aaron (Ops) but deliver on Moonlight
+  //   - Sofia formally reports to Aimee (Dev) but delivers on Earthlight
+  const reportsTo: Array<[string, string]> = [
+    ["Aimee Bradford",    "Sarah Reeve"],
+    ["Aaron Richter",     "Sarah Reeve"],
+    ["Thomas Le",         "Aimee Bradford"],
+    ["Angela Smith",      "Aimee Bradford"],
+    ["Areline De Lisle",  "Aimee Bradford"],
+    ["Sofia Marchetti",   "Aimee Bradford"], // formal: Dev chain; delivery: Earthlight
+    ["Marcus Webb",       "Aaron Richter"],
+    ["Lena Ortiz",        "Aaron Richter"],
+    ["Richard Stewartson","Aaron Richter"], // formal: Ops chain; delivery: Moonlight
+    ["Priya Nair",        "Aaron Richter"], // formal: Ops chain; delivery: Moonlight
+  ];
+  for (const [name, mgr] of reportsTo) {
+    await db
+      .update(schema.people)
+      .set({ managerId: byName[mgr] })
+      .where(eq(schema.people.id, byName[name]));
+  }
+
   const counts = {
     people: p.length,
     units: 2 + teams.length,

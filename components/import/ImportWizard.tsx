@@ -22,6 +22,7 @@ const TARGETS: Record<EntityKey, { field: string; label: string; required?: bool
     { field: "startDate", label: "Start date", aliases: ["startdate", "start", "hiredate", "tenure"] },
     { field: "growthFocus", label: "Growth focus", aliases: ["growth", "growthfocus", "development"] },
     { field: "lastVacationAt", label: "Last vacation", aliases: ["lastvacation", "vacation", "pto"] },
+    { field: "manager", label: "Manager (by name)", aliases: ["manager", "reportsto", "reportsTo", "boss", "supervisor"] },
   ],
   teams: [
     { field: "name", label: "Name", required: true, aliases: ["name", "team", "unit", "group"] },
