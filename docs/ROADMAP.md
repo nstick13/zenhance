@@ -8,6 +8,7 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 - **Version 0.1.2**, deployed to **production** on Vercel.
 - **Infra is fully live: Neon Postgres + Clerk auth + Vercel.** The old "create Clerk/Neon accounts" blocker is **resolved** — production deploy is no longer gated on Nate provisioning anything.
 - **Foundations shipped (v1 core):** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + person/team panels; drag-to-reassign + scenario mode; analytics overlays (allocation / gaps / cost-ROI) + summary bar; palette switcher (5 themes); zoom & pan (F1); multi-level group zoom + drag-in-zoom (F2).
+- **Marketing site shipped (2026-06-16):** public Home / Features / Pricing / About at https://zenhance.vercel.app (see Backlog).
 
 ---
 
@@ -19,6 +20,7 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
   - The originally-specced "active / on-hold" status filter **has no backing data** — see Data Model. Decide the data question before rebuilding this.
   - Open design Qs: fuzzy vs substring; how matches behave across zoom/bloom levels; whether filter narrows the *layout* (hide) or just *emphasis* (dim).
 - **Burnout risk overlay** — schema already has `person.last_vacation_at`; combine with tenure for a risk heat/badge overlay (parallels the cost overlay pattern in `getOverlayProps`).
+- **Cross-cutting / shared roles** *(discuss in the Analytics chat)* — model and visualize people who support **across** the structure rather than sitting inside one team: e.g. someone covering security or compliance for an entire release train / "delivery group," or an IT function that serves many teams. Today the demo data treats people as members of specific teams; we need to represent a person whose support spans a whole group (or multiple groups) and decide how that reads in the radial map — a satellite around the group? an edge to every team they touch? a separate "function" layer? This ties directly into the multiple-allocation analytics (these people are *the* over-allocated, shared resources) and into the Data Model (sub-groups, edge types). Bring real examples (security/compliance/release-train support) to the discussion.
 - **More viz stories — TBD.** The bigger "what analytics does the living structure unlock?" exploration lands here after the design chat.
 
 ---
@@ -48,7 +50,7 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 - **Edge-type layer toggles** — separate visibility for "reporting" vs "project assignment" edges (Greg's layer concept; needs edge-type modeling → relates to Data Model).
 - **Workspace invites & roles** — Clerk Organizations already supports it; v2.
 - **Live data connectors** — Jira / ADO / HRIS import; v2+.
-- **Marketing landing page** — `app/(marketing)/`; build when the product is demo-ready.
+- ✅ **Marketing site** — **shipped & deployed to prod 2026-06-16** (commit `a69edeb`). Multi-page site under `app/(marketing)/` (Home / Features / Pricing / About) with shared header/footer in `components/marketing/`. Live at https://zenhance.vercel.app. *Follow-up: pricing numbers are introductory placeholders ($29/mo Team) — replace with real pricing when decided.*
 
 ---
 
