@@ -12,6 +12,23 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ---
 
+## ▶ Next build (start here) — design is done, this session ships code
+> Don't re-open the design. The *why* is settled in [PRODUCT.md](PRODUCT.md); the *feel* is built in `app/lab/analytics` (see [LAB.md](LAB.md)); code locations are in [CODEMAP.md](CODEMAP.md). Two tracks, do **Track 1 first** (ships value on existing data, low risk).
+
+**Track 1 — Analytics "findings" UI (productionize the lab).** No schema change.
+- Findings math = **pure functions** in `lib/analytics/*` + Vitest fixtures (house pattern). Ship the two that need **only existing data**: **over-allocation** (`overAlloc` already computed in `RadialOrg.tsx` ~101–122) and **shared-person coupling** (team↔team, `GROUP BY` over `assignments`).
+- Build the **findings rail + ambient/focus map interaction** per `app/lab/analytics`: ambient = presence dots (equal weight, category colour, no severity); focus = spotlight + card **Signal→Narrative**. Wire into `RadialOrg` overlays (`getOverlayProps`, ~985) + a side rail.
+- When it lands: **archive** `app/lab/analytics` → `app/lab/_archive/` and update the [LAB.md](LAB.md) registry.
+
+**Track 2 — `reports_to` + formal layer** (bigger; can be its own session).
+- **Schema:** `people.managerId` self-ref, nullable, workspace-scoped + migration (`lib/db/schema.ts`).
+- **Import:** extend `ImportWizard` column-mapping for `manager`; add the **three-door entry picker** (delivery / formal / by-hand).
+- **Render:** formal **mode** reusing `tree`/`linkRadial` in `RadialOrg.tsx` ~213–264 (person-nodes by `managerId`).
+- **Demo data:** extend `seed.ts` / `demoSeed.ts` with a `reports_to` chain that **diverges** from teams + contractors + time zones — the mess *is* the pitch; the delta can't demo without it.
+- **New fields** for the fuller analytics menu (separate, after): `employment_type`, `timezone`, structured `role`.
+
+---
+
 ## Feature: Analytics  🧭 *design-first*
 > **Do not start coding these without a design pass first.** This whole feature gets a separate, non-coding discussion (the "what should the visualization reveal?" conversation). Stories below are seeds, not specs.
 
@@ -27,6 +44,9 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ## Feature: Data Model  🔜
 > Foundational — several Analytics stories depend on these. Worth seeing in the demo org early.
+
+### ⭐ Decision (2026-06-16): add `reports_to` — Zenhance is a *formal-vs-delivery* product
+**The why, the personas, the analytics design language, and packaging now live in [PRODUCT.md](PRODUCT.md) — read that, not a re-derivation here.** TL;DR for this feature: add `people.managerId` (formal layer) alongside the existing delivery layer; the **delta** between them is the moat, **delivery analytics** are the headline. Concrete build steps are in **▶ Next build** at the top of this file.
 
 - **User-defined / custom fields** — let a workspace add its own fields to people and/or units (beyond the fixed schema), and surface them in panels, filters, and import mapping. Touches `lib/db/schema.ts`, the import column-mapping, and the detail panels.
 - **People roles & job function** *(discuss — Data Model + Analytics)* — capture *what a person does*: developer, QA, scrum master, etc. **Current state:** `person.title`, `person.skills[]`, `person.growthFocus`, and `assignment.roleOnTeam` are all **free text** — nothing structured. Open questions:

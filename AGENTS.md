@@ -10,9 +10,11 @@ This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. *
 3. A whole-file or whole-tree read is sometimes correct — but make it a deliberate choice the map justifies, not a reflex.
 
 ## Where things live
-- **Roadmap & what's next:** [docs/ROADMAP.md](docs/ROADMAP.md) — Features → Stories. **Analytics is design-first: discuss before coding.**
+- **What to build next:** [docs/ROADMAP.md](docs/ROADMAP.md) — start at **▶ Next build**. Features → Stories. **Analytics is design-first: discuss before coding.**
+- **Product/design *why* (personas, formal-vs-delivery, analytics design language, packaging):** [docs/PRODUCT.md](docs/PRODUCT.md). Read once; don't re-derive it in chat.
 - **Codebase map:** [docs/CODEMAP.md](docs/CODEMAP.md).
-- **Durable facts** (run locally, design decisions, gotchas): agent memory index at `~/.claude/projects/-Users-natetgreat-zenhance/memory/MEMORY.md`.
+- **Design sandboxes (feel studies) + archive convention:** [docs/LAB.md](docs/LAB.md).
+- **Durable facts** (run locally, gotchas): agent memory index at `~/.claude/projects/-Users-natetgreat-zenhance/memory/MEMORY.md`.
 
 ## House rules
 - **Branch per story** (`<feature>-<slug>`), squash-merge to `main`. Patch-bump `package.json` per merge; minor bump when a Feature completes.
