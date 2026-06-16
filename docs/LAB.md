@@ -18,4 +18,4 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
-| `analytics` | **active → feeds next build** | The "analytics as places" feel is locked here: **ambient = presence-not-priority** (count dots, category colour, no severity verdict); **focus = spotlight + Signal→Narrative card**. Productionize per ROADMAP next-build, then **archive**. Design rationale: `PRODUCT.md` § Analytics design language. |
+| `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
