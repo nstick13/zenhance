@@ -23,6 +23,7 @@ import {
 import { computeRollup, type UnitRollup } from "@/lib/analytics/rollup";
 import { computeGaps, type UnitGap } from "@/lib/analytics/gaps";
 import { computeOrgSummary, type OrgSummary } from "@/lib/analytics/allocation";
+import { computeAllFindings, type Finding } from "@/lib/analytics/findings";
 
 type OverlayType = "none" | "allocation" | "gaps" | "cost";
 
@@ -99,6 +100,8 @@ export function RadialOrg({
   }, [assignments, moves]);
 
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
+  const [showFindings, setShowFindings] = useState(false);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
 
   const unitsById = useMemo(() => indexById(units), [units]);
   const peopleById = useMemo(() => indexById(people), [people]);
@@ -115,6 +118,7 @@ export function RadialOrg({
   const rollupMap = useMemo(() => computeRollup(effSnapshot), [effSnapshot]);
   const gapsMap = useMemo(() => computeGaps(effSnapshot), [effSnapshot]);
   const orgSummary = useMemo(() => computeOrgSummary(effSnapshot), [effSnapshot]);
+  const findings = useMemo(() => computeAllFindings(effSnapshot), [effSnapshot]);
   const maxUnitCost = useMemo(() => {
     let max = 1;
     for (const r of rollupMap.values()) if (r.totalCost > max) max = r.totalCost;
@@ -170,6 +174,13 @@ export function RadialOrg({
     return () => {
       select(svg).on(".zoom", null);
     };
+  }, []);
+
+  const toggleFindings = useCallback(() => {
+    setShowFindings((v) => {
+      if (v) setSelectedFindingId(null);
+      return !v;
+    });
   }, []);
 
   const handleZoomIn = useCallback(() => {
@@ -262,6 +273,21 @@ export function RadialOrg({
     }));
     return { nodes: root.descendants(), links: pointLinks };
   }, [focusUnit, childByParent, asgByUnit, peopleById, overAlloc]);
+
+  const selectedFinding = useMemo(
+    () => findings.find((f) => f.id === selectedFindingId) ?? null,
+    [findings, selectedFindingId],
+  );
+
+  const unitNodePositions = useMemo(() => {
+    const m = new Map<string, [number, number]>();
+    for (const n of nodes) {
+      if (n.data.kind === "unit" && n.data.unit) {
+        m.set(n.data.unit.id, pointRadial(n.x, n.y));
+      }
+    }
+    return m;
+  }, [nodes]);
 
   // Which team is the viewport zooming toward?
   const zoomFocusTeamId = useMemo(() => {
@@ -539,7 +565,14 @@ export function RadialOrg({
 
   return (
     <div className="flex h-full flex-col">
-      <SummaryBar summary={orgSummary} overlayType={overlayType} onOverlay={setOverlayType} />
+      <SummaryBar
+        summary={orgSummary}
+        overlayType={overlayType}
+        onOverlay={setOverlayType}
+        findingsCount={findings.length}
+        showFindings={showFindings}
+        onToggleFindings={toggleFindings}
+      />
       <div className="flex min-h-0 flex-1">
       <div className="relative flex-1" style={drag ? { userSelect: "none" } : undefined}>
         {/* Breadcrumb */}
@@ -684,6 +717,18 @@ export function RadialOrg({
               const ov = getOverlayProps(
                 n.data, overlayType, overAlloc, allocByPerson, gapsMap, rollupMap, maxUnitCost,
               );
+              const effectiveOverlay: NodeOverlay = showFindings && selectedFinding
+                ? {
+                    dimmed: n.data.kind === "unit" && n.data.unit
+                      ? !selectedFinding.involvedUnitIds.includes(n.data.unit.id)
+                      : n.data.kind === "member" && n.data.person
+                      ? !selectedFinding.involvedPersonIds.includes(n.data.person.id)
+                      : true,
+                    badge: null,
+                    heatPct: 0,
+                    roiLabel: null,
+                  }
+                : ov;
               return (
                 <RadarNode
                   key={n.data.key}
@@ -694,7 +739,7 @@ export function RadialOrg({
                   canZoomOut={n.data.isCenter ? canZoomOut : false}
                   selected={n.data.key === selectedPersonKey}
                   ghosted={!!isDragged}
-                  overlay={ov}
+                  overlay={effectiveOverlay}
                   membersRevealed={detailOpacity > 0 && n.data.key === zoomFocusTeamId}
                   dropHighlight={!!drag && hoverId === n.data.key}
                   onClick={n.data.kind === "unit" ? () => onUnitClick(n.data) : undefined}
@@ -706,6 +751,98 @@ export function RadialOrg({
                 />
               );
             })}
+
+            {/* ── Findings: ambient presence dots ── */}
+            {showFindings && !selectedFinding && nodes.map((n) => {
+              if (n.data.kind !== "unit" || !n.data.unit || n.data.isCenter) return null;
+              const unitFindings = findings.filter((f) =>
+                f.involvedUnitIds.includes(n.data.unit!.id),
+              );
+              if (unitFindings.length === 0) return null;
+              const pos = unitNodePositions.get(n.data.unit.id);
+              if (!pos) return null;
+              const spread = 14;
+              const total = (unitFindings.length - 1) * spread;
+              return (
+                <g key={`amb-${n.data.key}`}>
+                  {unitFindings.map((f, i) => (
+                    <circle
+                      key={`dot-${f.id}`}
+                      cx={pos[0] - total / 2 + i * spread}
+                      cy={pos[1] - 34}
+                      r={4.5}
+                      fill={f.color}
+                      stroke="#070a12"
+                      strokeWidth={1.5}
+                      style={{ animation: "findingAmbientPulse 3s ease-in-out infinite" }}
+                    />
+                  ))}
+                </g>
+              );
+            })}
+
+            {/* ── Findings: spotlight on selected finding ── */}
+            {showFindings && selectedFinding && (() => {
+              const color = selectedFinding.color;
+              if (selectedFinding.spotlightType === "hub") {
+                return (
+                  <>
+                    {selectedFinding.involvedUnitIds.map((uid) => {
+                      const pos = unitNodePositions.get(uid);
+                      if (!pos) return null;
+                      return (
+                        <line
+                          key={`hub-${uid}`}
+                          x1={0} y1={0} x2={pos[0]} y2={pos[1]}
+                          stroke={color} strokeWidth={3} strokeOpacity={0.85}
+                          strokeDasharray="6 6"
+                          style={{ animation: "findingDash 1s linear infinite" }}
+                        />
+                      );
+                    })}
+                    <circle cx={0} cy={0} r={18} fill={color} opacity={0.9} />
+                    <circle
+                      cx={0} cy={0} r={18} fill="none" stroke={color} strokeWidth={2}
+                      style={{ animation: "findingPulseRing 1.6s ease-out infinite", transformOrigin: "0px 0px" }}
+                    />
+                  </>
+                );
+              }
+              if (selectedFinding.spotlightType === "ribbon" && selectedFinding.involvedUnitIds.length === 2) {
+                const posA = unitNodePositions.get(selectedFinding.involvedUnitIds[0]);
+                const posB = unitNodePositions.get(selectedFinding.involvedUnitIds[1]);
+                if (!posA || !posB) return null;
+                return (
+                  <path
+                    d={`M ${posA[0]} ${posA[1]} Q 0 0 ${posB[0]} ${posB[1]}`}
+                    fill="none"
+                    stroke={color} strokeWidth={5} strokeOpacity={0.85}
+                    strokeDasharray="6 6"
+                    style={{ animation: "findingDash 1s linear infinite" }}
+                  />
+                );
+              }
+              return null;
+            })()}
+
+            {/* Pulse rings on involved units when a finding is focused */}
+            {showFindings && selectedFinding &&
+              selectedFinding.involvedUnitIds.map((uid) => {
+                const pos = unitNodePositions.get(uid);
+                if (!pos) return null;
+                return (
+                  <circle
+                    key={`ring-${uid}`}
+                    cx={pos[0]} cy={pos[1]} r={22} fill="none"
+                    stroke={selectedFinding.color} strokeWidth={2.5}
+                    style={{
+                      animation: "findingPulseRing 1.8s ease-out infinite",
+                      transformOrigin: `${pos[0]}px ${pos[1]}px`,
+                    }}
+                  />
+                );
+              })
+            }
 
             {/* Semantic zoom: members bloom around the focused team */}
             {detailOpacity > 0 && detailMembers.length > 0 && (
@@ -924,14 +1061,22 @@ export function RadialOrg({
       {/* On desktop: inline aside. On mobile: slide-over overlay when showPanel=true */}
       <aside
         className={`
-          w-80 shrink-0 border-l border-slate-800 p-4 overflow-y-auto
+          w-80 shrink-0 border-l border-slate-800 overflow-y-auto
           lg:relative lg:flex lg:flex-col
-          ${showPanel
+          ${showPanel || showFindings
             ? "absolute inset-y-0 right-0 z-20 flex flex-col bg-slate-950"
             : "hidden lg:flex"}
         `}
       >
-        {selectedDatum ? (
+        {showFindings ? (
+          <FindingsRail
+            findings={findings}
+            selectedId={selectedFindingId}
+            onSelect={(id) =>
+              setSelectedFindingId((cur) => (cur === id ? null : id))
+            }
+          />
+        ) : selectedDatum ? (
           <PersonPanel
             datum={selectedDatum}
             teamCount={
@@ -1352,10 +1497,16 @@ function SummaryBar({
   summary,
   overlayType,
   onOverlay,
+  findingsCount,
+  showFindings,
+  onToggleFindings,
 }: {
   summary: OrgSummary;
   overlayType: OverlayType;
   onOverlay: (t: OverlayType) => void;
+  findingsCount: number;
+  showFindings: boolean;
+  onToggleFindings: () => void;
 }) {
   const fmtCost = (n: number) =>
     n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : `$${Math.round(n / 1000)}k`;
@@ -1381,6 +1532,18 @@ function SummaryBar({
         ))}
       </div>
 
+      {/* Findings toggle */}
+      <div className="flex items-center border-r border-slate-800 px-3 py-2">
+        <button
+          onClick={onToggleFindings}
+          className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+            showFindings ? "accent-active" : "text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          Findings{findingsCount > 0 ? ` (${findingsCount})` : ""}
+        </button>
+      </div>
+
       {/* Metrics */}
       <div className="flex items-center gap-6 px-4 py-2">
         <Metric label="Cost / mo" value={fmtCost(summary.totalCostPerMonth)} />
@@ -1396,6 +1559,103 @@ function SummaryBar({
           alert={summary.overAllocatedCount > 0}
         />
       </div>
+    </div>
+  );
+}
+
+const FINDING_KIND_LABELS: Record<string, string> = {
+  "over-allocation": "Over-allocation",
+  coupling: "Hidden coupling",
+};
+
+function FindingsRail({
+  findings,
+  selectedId,
+  onSelect,
+}: {
+  findings: Finding[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="flex h-full flex-col gap-3 p-4">
+      <div className="text-sm font-bold tracking-wide">
+        What we found
+        <span className="ml-1 font-normal text-slate-500">· {findings.length}</span>
+      </div>
+
+      {findings.length === 0 && (
+        <p className="mt-2 text-sm text-slate-500">No findings — org looks clean.</p>
+      )}
+
+      <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto">
+        {findings.map((f) => {
+          const on = selectedId === f.id;
+          return (
+            <button
+              key={f.id}
+              onClick={() => onSelect(f.id)}
+              className="rounded-xl border p-3.5 text-left transition-colors"
+              style={{
+                borderColor: on ? f.color : "#1d2740",
+                background: on ? "rgba(20,27,46,.9)" : "rgba(14,20,36,.6)",
+                boxShadow: on
+                  ? `0 0 0 1px ${f.color}33, 0 8px 30px -12px ${f.color}66`
+                  : "none",
+              }}
+            >
+              {/* Signal row — always shown */}
+              <div className="flex items-center gap-3">
+                <div className="min-w-[52px]">
+                  <div
+                    className="text-2xl font-extrabold leading-none"
+                    style={{ color: f.color }}
+                  >
+                    {f.stat}
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <div className="mb-0.5 flex items-center gap-1.5">
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ background: f.color }}
+                    />
+                    <span className="text-xs font-bold text-slate-100">
+                      {FINDING_KIND_LABELS[f.kind] ?? f.kind}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400">{f.statSub}</div>
+                </div>
+                <span
+                  className="inline-block text-xs transition-transform duration-200"
+                  style={{
+                    color: f.color,
+                    opacity: 0.6,
+                    transform: on ? "rotate(90deg)" : undefined,
+                  }}
+                >
+                  ›
+                </span>
+              </div>
+
+              {/* Narrative — revealed on focus */}
+              {on && (
+                <div
+                  className="mt-3 pt-3 text-sm leading-relaxed text-slate-300"
+                  style={{ borderTop: `1px solid ${f.color}22` }}
+                >
+                  {f.narrativeText}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="pt-2 text-xs leading-relaxed text-slate-600">
+        Ambient: all findings on the map, equal weight, colour by category. Click to
+        focus.
+      </p>
     </div>
   );
 }
