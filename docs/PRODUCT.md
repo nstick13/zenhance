@@ -50,5 +50,22 @@ The map is the hero; analytics **annotate** it, never a separate dashboard.
 - **Derived, never stored:** team↔team coupling, and every "delta" insight.
 - **Ingest greedily, display selectively:** take every column; only visualize what the current lens needs.
 
+## The delivery org has never had a system of record
+
+Formal reporting lines live in Workday. Delivery org structure (squads, trains, dependencies) lives in slides and tribal knowledge. **Zenhance's core mission: be the authoritative source for the delivery org** — the artifact that stays true across meetings and over time.
+
+This is not "org chart storage" (Workday already owns that). It's the **structure that actually ships:** who's on which squad, where delivery work flows, what's open or at risk, the gaps between formal and delivery reality.
+
+The three-layer publication model makes this possible:
+
+1. **Draft** — working state, freely edited by configurers, never published.
+2. **Proposal** — a snapshot of structure + spatial arrangement, frozen, named, dated. Published for review and discussion. Any team member can create proposals (e.g., "Atlas cutover option B"); many exist in parallel.
+3. **Org of Record** — a Proposal marked approved (attribution: who approved, when). *Exactly one exists at a time.* When a better Proposal is approved, the pointer moves; history is just the pointer's visit list. Re-approval is possible if an earlier decision needs to be undone.
+
+**Why this matters for v2:** The radial map computed positions every render (spatial memory impossible). The canvas *persists* positions (spatial memory essential). But positions must be frozen at publication — otherwise the Record looks different to everyone who views it, and shared understanding dies. The three-layer model keeps positions yoked to structure: only edits to org structure (or deliberate, documented re-arrangement) produce new versions. Cosmetic nudging on the Record isn't a thing — positions *relate* to org data, never decorative.
+
+**Why this matters for the product:** Zenhance stops being "visualization of your Excel." It becomes **the place the delivery org lives.** It's the Workday for delivery.
+
 ## Decisions log (one line each, newest first)
+- **2026-08-25** — Three-layer publication model (Draft → Proposal → Org of Record); approval is attribution-only. Positions are always data-driven (structure + deliberate arrangement), never cosmetic. This is *the* system of record for delivery orgs, not just a vis tool.
 - **2026-06-16** — Add `reports_to`; Zenhance is a formal-vs-delivery product. Analytics design language locked ("analytics as places", ambient = presence-not-priority, Signal→Narrative). Build superset / gate down. *(captured from the biz-analysis chat that produced this doc)*
