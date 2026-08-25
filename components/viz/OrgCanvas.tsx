@@ -6,7 +6,16 @@ import { Stage, Layer, Group, Circle, Text } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
-import { saveMapNodePosition, moveAssignment } from "@/lib/data/actions";
+import {
+  saveMapNodePosition,
+  moveAssignment,
+  createPerson,
+  updatePerson,
+  deletePerson,
+  createOrgUnit,
+  updateOrgUnit,
+  deleteOrgUnit,
+} from "@/lib/data/actions";
 import {
   buildCanvasMap,
   positionsFromRows,
@@ -14,6 +23,7 @@ import {
   type CanvasNode,
   type CanvasSquad,
   type CanvasPerson,
+  type CanvasTrain,
 } from "@/lib/canvas/buildCanvasMap";
 import { overAllocatedPersonIds, allocationByPerson } from "@/lib/org/model";
 import { computeGaps } from "@/lib/analytics/gaps";
@@ -175,6 +185,8 @@ export function OrgCanvas({
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -185,6 +197,7 @@ export function OrgCanvas({
   const squads = useMemo(() => nodes.filter((n): n is CanvasSquad => n.kind === "squad"), [nodes]);
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const realTrains = useMemo(() => trains.filter((t) => t.id !== CROSS_CUTTING_ID), [trains]);
 
   // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
   const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
@@ -499,6 +512,25 @@ export function OrgCanvas({
     setMoves(new Map());
   }
 
+  // --- panel: select / edit / create -----------------------------------------
+  function selectNode(id: string) {
+    setSelectedId(id);
+    setEditing(false);
+    setCreating(null);
+  }
+
+  function closePanel() {
+    setSelectedId(null);
+    setEditing(false);
+    setCreating(null);
+  }
+
+  function startCreate(kind: "person" | "squad") {
+    setSelectedId(null);
+    setEditing(false);
+    setCreating(kind);
+  }
+
   const showHover = useCallback((id: string) => {
     const stage = stageRef.current;
     const p = stage?.getPointerPosition();
@@ -508,6 +540,7 @@ export function OrgCanvas({
 
   const selected = selectedId ? byId.get(selectedId) : null;
   const hovered = hover ? byId.get(hover.id) : null;
+  const panelOpen = !!selected || !!creating;
 
   const showSquads = lod !== "trains";
   const showPeople = lod === "people" || lod === "roles";
@@ -551,6 +584,14 @@ export function OrgCanvas({
             {scenario ? "Scenario: on" : "Scenario mode"}
           </button>
         </div>
+        <div style={S.overlayGroup}>
+          <button style={S.btn} onClick={() => startCreate("person")}>
+            + Person
+          </button>
+          <button style={S.btn} onClick={() => startCreate("squad")}>
+            + Squad
+          </button>
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button style={S.btn} onClick={() => zoomBy(1.45)} aria-label="Zoom in">
             +
@@ -575,7 +616,7 @@ export function OrgCanvas({
           onTouchEnd={onTouchEnd}
           style={{ cursor: "grab" }}
           onClick={(e) => {
-            if (e.target === e.target.getStage()) setSelectedId(null);
+            if (e.target === e.target.getStage()) closePanel();
           }}
         >
           <Layer listening={false}>
@@ -671,8 +712,8 @@ export function OrgCanvas({
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
                     onMouseEnter={() => showHover(s.id)}
                     onMouseLeave={() => setHover(null)}
-                    onClick={() => setSelectedId(s.id)}
-                    onTap={() => setSelectedId(s.id)}
+                    onClick={() => selectNode(s.id)}
+                    onTap={() => selectNode(s.id)}
                   >
                     {dropTargetId === s.id && <Circle radius={92} fill="#34d399" opacity={0.18} listening={false} />}
                     <Circle
@@ -731,8 +772,8 @@ export function OrgCanvas({
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
                     onMouseEnter={() => showHover(p.id)}
                     onMouseLeave={() => setHover(null)}
-                    onClick={() => setSelectedId(p.id)}
-                    onTap={() => setSelectedId(p.id)}
+                    onClick={() => selectNode(p.id)}
+                    onTap={() => selectNode(p.id)}
                   >
                     <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={shared ? 5 : 3.5} dash={shared ? [5, 3] : undefined} />
                     {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
@@ -810,23 +851,60 @@ export function OrgCanvas({
         )}
       </div>
 
-      <aside style={{ ...S.panel, transform: selected ? "translateX(0)" : "translateX(105%)" }}>
-        {selected && (
+      <aside style={{ ...S.panel, transform: panelOpen ? "translateX(0)" : "translateX(105%)" }}>
+        {panelOpen && (
           <>
             <div style={S.panelHead}>
               <div>
-                <div style={S.panelType}>{selected.kind === "person" ? "Person" : "Squad"}</div>
-                <h2 style={{ margin: "2px 0 0", fontSize: 19 }}>{selected.name}</h2>
+                <div style={S.panelType}>
+                  {creating ? `New ${creating}` : selected?.kind === "person" ? "Person" : "Squad"}
+                </div>
+                <h2 style={{ margin: "2px 0 0", fontSize: 19 }}>
+                  {creating ? (creating === "person" ? "Add person" : "Add squad") : selected?.name}
+                </h2>
               </div>
-              <button style={S.close} onClick={() => setSelectedId(null)} aria-label="Close">
+              <button style={S.close} onClick={closePanel} aria-label="Close">
                 ✕
               </button>
             </div>
             <div style={S.panelBody}>
-              {selected.kind === "person" ? (
-                <PersonBody person={selected} byId={byId} onSelect={setSelectedId} />
-              ) : (
-                <SquadBody squad={selected} stats={squadStats.get(selected.id)} people={people} onSelect={setSelectedId} />
+              {creating === "person" && (
+                <PersonForm mode="create" onSaved={closePanel} onCancel={closePanel} />
+              )}
+              {creating === "squad" && (
+                <SquadForm mode="create" trains={realTrains} people={people} onSaved={closePanel} onCancel={closePanel} />
+              )}
+              {!creating && selected?.kind === "person" && !editing && (
+                <PersonBody person={selected} byId={byId} onSelect={selectNode} onEdit={() => setEditing(true)} />
+              )}
+              {!creating && selected?.kind === "person" && editing && (
+                <PersonForm
+                  mode="edit"
+                  person={selected}
+                  onSaved={() => setEditing(false)}
+                  onCancel={() => setEditing(false)}
+                  onDeleted={closePanel}
+                />
+              )}
+              {!creating && selected?.kind === "squad" && !editing && (
+                <SquadBody
+                  squad={selected}
+                  stats={squadStats.get(selected.id)}
+                  people={people}
+                  onSelect={selectNode}
+                  onEdit={() => setEditing(true)}
+                />
+              )}
+              {!creating && selected?.kind === "squad" && editing && (
+                <SquadForm
+                  mode="edit"
+                  squad={selected}
+                  trains={realTrains}
+                  people={people}
+                  onSaved={() => setEditing(false)}
+                  onCancel={() => setEditing(false)}
+                  onDeleted={closePanel}
+                />
               )}
             </div>
           </>
@@ -841,16 +919,23 @@ function PersonBody({
   person,
   byId,
   onSelect,
+  onEdit,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
   onSelect: (id: string) => void;
+  onEdit: () => void;
 }) {
   const u = utilOf(person);
   const mgr = person.managerId ? byId.get(person.managerId) : null;
   return (
     <>
-      <div style={{ color: C.inkSoft, fontSize: 13 }}>{person.title}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ color: C.inkSoft, fontSize: 13 }}>{person.title}</div>
+        <button style={S.editBtn} onClick={onEdit}>
+          Edit
+        </button>
+      </div>
       <Meter label="Delivery load" value={u} />
       <Section title="Allocations">
         {person.allocations.length === 0 ? (
@@ -897,20 +982,29 @@ function SquadBody({
   stats,
   people,
   onSelect,
+  onEdit,
 }: {
   squad: CanvasSquad;
   stats: SquadStats | undefined;
   people: CanvasPerson[];
   onSelect: (id: string) => void;
+  onEdit: () => void;
 }) {
   const members = squad.isCrossCutting
     ? people.filter((p) => p.homeId === squad.id)
     : people.filter((p) => p.allocations.some((a) => a.unitId === squad.id));
   return (
     <>
-      <div style={{ color: C.inkSoft, fontSize: 13 }}>
-        {squad.trainName}
-        {squad.vendorName ? ` · ${squad.vendorName}` : ""}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ color: C.inkSoft, fontSize: 13 }}>
+          {squad.trainName}
+          {squad.vendorName ? ` · ${squad.vendorName}` : ""}
+        </div>
+        {!squad.isCrossCutting && (
+          <button style={S.editBtn} onClick={onEdit}>
+            Edit
+          </button>
+        )}
       </div>
       <Section title="Facts">
         <div style={S.facts}>
@@ -938,6 +1032,327 @@ function SquadBody({
           })}
         </ul>
       </Section>
+    </>
+  );
+}
+
+// --- panel forms: create/edit person or squad -------------------------------
+type PersonFormState = {
+  name: string;
+  title: string;
+  costPerMonth: string;
+  skills: string;
+  startDate: string;
+  lastVacationAt: string;
+  growthFocus: string;
+};
+
+const emptyPersonForm: PersonFormState = {
+  name: "",
+  title: "",
+  costPerMonth: "",
+  skills: "",
+  startDate: "",
+  lastVacationAt: "",
+  growthFocus: "",
+};
+
+function personToForm(p: CanvasPerson): PersonFormState {
+  return {
+    name: p.name,
+    title: p.title ?? "",
+    costPerMonth: p.costPerMonth ? String(p.costPerMonth) : "",
+    skills: p.skills.join(", "),
+    startDate: p.startDate ?? "",
+    lastVacationAt: p.lastVacationAt ?? "",
+    growthFocus: p.growthFocus ?? "",
+  };
+}
+
+function PersonForm({
+  mode,
+  person,
+  onSaved,
+  onCancel,
+  onDeleted,
+}: {
+  mode: "create" | "edit";
+  person?: CanvasPerson;
+  onSaved: () => void;
+  onCancel: () => void;
+  onDeleted?: () => void;
+}) {
+  const router = useRouter();
+  const [form, setForm] = useState<PersonFormState>(person ? personToForm(person) : emptyPersonForm);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    setError(null);
+    startTransition(async () => {
+      const res =
+        mode === "edit" && person ? await updatePerson(person.id, form) : await createPerson(form);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+      onSaved();
+    });
+  }
+
+  function remove() {
+    if (!person) return;
+    if (!confirm("Delete this person? Their assignments are removed too.")) return;
+    startTransition(async () => {
+      await deletePerson(person.id);
+      router.refresh();
+      onDeleted?.();
+    });
+  }
+
+  return (
+    <>
+      <label style={S.formLabel}>Name *</label>
+      <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+      <label style={S.formLabel}>Title</label>
+      <input style={S.formInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <label style={S.formLabel}>Cost / month ($)</label>
+      <input
+        style={S.formInput}
+        inputMode="decimal"
+        value={form.costPerMonth}
+        onChange={(e) => setForm({ ...form, costPerMonth: e.target.value })}
+      />
+      <label style={S.formLabel}>Skills (comma separated)</label>
+      <input style={S.formInput} value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} />
+      <label style={S.formLabel}>Start date (YYYY-MM-DD)</label>
+      <input
+        style={S.formInput}
+        placeholder="YYYY-MM-DD"
+        value={form.startDate}
+        onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+      />
+      <label style={S.formLabel}>Last vacation (YYYY-MM-DD)</label>
+      <input
+        style={S.formInput}
+        placeholder="YYYY-MM-DD"
+        value={form.lastVacationAt}
+        onChange={(e) => setForm({ ...form, lastVacationAt: e.target.value })}
+      />
+      <label style={S.formLabel}>Growth focus</label>
+      <input
+        style={S.formInput}
+        value={form.growthFocus}
+        onChange={(e) => setForm({ ...form, growthFocus: e.target.value })}
+      />
+
+      {error && <p style={S.formError}>{error}</p>}
+
+      <div style={S.formActions}>
+        <button style={S.applyBtn} onClick={submit} disabled={pending}>
+          {pending ? "Saving…" : mode === "edit" ? "Save changes" : "Create person"}
+        </button>
+        <button style={S.discardBtn} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      {mode === "edit" && (
+        <button style={S.dangerBtn} onClick={remove} disabled={pending}>
+          Delete person
+        </button>
+      )}
+    </>
+  );
+}
+
+type SquadFormState = {
+  name: string;
+  trainId: string;
+  leadPersonId: string;
+  targetHeadcount: string;
+  costPerMonth: string;
+  expectedRoi: string;
+  isExternal: boolean;
+  vendorName: string;
+};
+
+function emptySquadForm(trains: CanvasTrain[]): SquadFormState {
+  return {
+    name: "",
+    trainId: trains[0]?.id ?? "",
+    leadPersonId: "",
+    targetHeadcount: "",
+    costPerMonth: "",
+    expectedRoi: "",
+    isExternal: false,
+    vendorName: "",
+  };
+}
+
+// Assumes the squad's real parentId is its train directly — true today (the
+// demo org has no sub-group nesting between train and team; see the "Sub-groups"
+// story in docs/ROADMAP.md). Revisit if that nesting lands.
+function squadToForm(s: CanvasSquad): SquadFormState {
+  return {
+    name: s.name,
+    trainId: s.trainId,
+    leadPersonId: s.leadPersonId ?? "",
+    targetHeadcount: s.targetHeadcount != null ? String(s.targetHeadcount) : "",
+    costPerMonth: s.costPerMonth != null ? String(s.costPerMonth) : "",
+    expectedRoi: s.expectedRoi != null ? String(s.expectedRoi) : "",
+    isExternal: s.isExternal,
+    vendorName: s.vendorName ?? "",
+  };
+}
+
+function SquadForm({
+  mode,
+  squad,
+  trains,
+  people,
+  onSaved,
+  onCancel,
+  onDeleted,
+}: {
+  mode: "create" | "edit";
+  squad?: CanvasSquad;
+  trains: CanvasTrain[];
+  people: CanvasPerson[];
+  onSaved: () => void;
+  onCancel: () => void;
+  onDeleted?: () => void;
+}) {
+  const router = useRouter();
+  const [form, setForm] = useState<SquadFormState>(squad ? squadToForm(squad) : emptySquadForm(trains));
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    if (!form.trainId) {
+      setError("Choose a train");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const payload = {
+        name: form.name,
+        kind: "team" as const,
+        parentId: form.trainId,
+        leadPersonId: form.leadPersonId,
+        targetHeadcount: form.targetHeadcount,
+        costPerMonth: form.costPerMonth,
+        expectedRoi: form.expectedRoi,
+        isExternal: form.isExternal,
+        vendorName: form.vendorName,
+      };
+      const res =
+        mode === "edit" && squad ? await updateOrgUnit(squad.id, payload) : await createOrgUnit(payload);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+      onSaved();
+    });
+  }
+
+  function remove() {
+    if (!squad) return;
+    if (!confirm(`Delete "${squad.name}" and its assignments?`)) return;
+    startTransition(async () => {
+      await deleteOrgUnit(squad.id);
+      router.refresh();
+      onDeleted?.();
+    });
+  }
+
+  return (
+    <>
+      <label style={S.formLabel}>Name *</label>
+      <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+      <label style={S.formLabel}>Train *</label>
+      <select
+        style={S.formInput}
+        value={form.trainId}
+        onChange={(e) => setForm({ ...form, trainId: e.target.value })}
+      >
+        {trains.length === 0 && <option value="">No trains yet</option>}
+        {trains.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </select>
+      <label style={S.formLabel}>Lead</label>
+      <select
+        style={S.formInput}
+        value={form.leadPersonId}
+        onChange={(e) => setForm({ ...form, leadPersonId: e.target.value })}
+      >
+        <option value="">— none —</option>
+        {people.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <label style={S.formLabel}>Target headcount</label>
+      <input
+        style={S.formInput}
+        inputMode="numeric"
+        value={form.targetHeadcount}
+        onChange={(e) => setForm({ ...form, targetHeadcount: e.target.value })}
+      />
+      <label style={S.formLabel}>Unit cost / month ($)</label>
+      <input
+        style={S.formInput}
+        inputMode="decimal"
+        value={form.costPerMonth}
+        onChange={(e) => setForm({ ...form, costPerMonth: e.target.value })}
+      />
+      <label style={S.formLabel}>Expected ROI ($)</label>
+      <input
+        style={S.formInput}
+        inputMode="decimal"
+        value={form.expectedRoi}
+        onChange={(e) => setForm({ ...form, expectedRoi: e.target.value })}
+      />
+      <div style={S.formCheckboxRow}>
+        <input
+          type="checkbox"
+          id="squad-external"
+          checked={form.isExternal}
+          onChange={(e) => setForm({ ...form, isExternal: e.target.checked })}
+        />
+        <label htmlFor="squad-external">External / vendor team</label>
+      </div>
+      {form.isExternal && (
+        <>
+          <label style={S.formLabel}>Vendor name</label>
+          <input
+            style={S.formInput}
+            value={form.vendorName}
+            onChange={(e) => setForm({ ...form, vendorName: e.target.value })}
+          />
+        </>
+      )}
+
+      {error && <p style={S.formError}>{error}</p>}
+
+      <div style={S.formActions}>
+        <button style={S.applyBtn} onClick={submit} disabled={pending}>
+          {pending ? "Saving…" : mode === "edit" ? "Save changes" : "Create squad"}
+        </button>
+        <button style={S.discardBtn} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      {mode === "edit" && (
+        <button style={S.dangerBtn} onClick={remove} disabled={pending}>
+          Delete squad
+        </button>
+      )}
     </>
   );
 }
@@ -1085,6 +1500,72 @@ const S = {
     border: `1px solid ${C.line}`,
     background: "transparent",
     color: C.ink,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  editBtn: {
+    height: 30,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: `1px solid ${C.line}`,
+    background: C.white,
+    color: C.ink,
+    fontFamily: FONT,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  formLabel: {
+    display: "block",
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    color: C.inkSoft,
+    marginTop: 14,
+    marginBottom: 5,
+  },
+  formInput: {
+    width: "100%",
+    borderRadius: 8,
+    border: `1px solid ${C.line}`,
+    background: C.paper,
+    padding: "8px 10px",
+    fontSize: 13.5,
+    fontFamily: FONT,
+    color: C.ink,
+    outline: "none",
+    boxSizing: "border-box" as const,
+  },
+  formCheckboxRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 16,
+    fontSize: 13,
+    color: C.ink,
+  },
+  formError: {
+    marginTop: 12,
+    fontSize: 12.5,
+    color: "#dc2626",
+  },
+  formActions: {
+    display: "flex",
+    gap: 8,
+    marginTop: 20,
+  },
+  dangerBtn: {
+    marginTop: 14,
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 8,
+    border: "1px solid #fecaca",
+    background: "transparent",
+    color: "#dc2626",
     fontFamily: FONT,
     fontSize: 12.5,
     fontWeight: 600,

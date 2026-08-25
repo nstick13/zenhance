@@ -32,8 +32,10 @@ export type CanvasSquad = {
   y: number;
   trainId: string;
   trainName: string;
+  leadPersonId: string | null;
   leadName: string | null;
   targetHeadcount: number | null;
+  costPerMonth: number | null;
   expectedRoi: number | null;
   openRoles: number;
   isExternal: boolean;
@@ -54,6 +56,7 @@ export type CanvasPerson = {
   lastVacationAt: string | null;
   startDate: string | null;
   skills: string[];
+  growthFocus: string | null;
   allocations: CanvasAllocation[];
 };
 
@@ -194,8 +197,10 @@ export function buildCanvasMap(
         y: pos.y,
         trainId: CROSS_CUTTING_ID,
         trainName: CROSS_CUTTING_NAME,
+        leadPersonId: null,
         leadName: null,
         targetHeadcount: null,
+        costPerMonth: null,
         expectedRoi: null,
         openRoles: 0,
         isExternal: false,
@@ -219,8 +224,10 @@ export function buildCanvasMap(
         y: pos.y,
         trainId: t.id,
         trainName: t.name,
+        leadPersonId: team.leadPersonId,
         leadName: team.leadPersonId ? (peopleById.get(team.leadPersonId)?.name ?? null) : null,
         targetHeadcount: team.targetHeadcount,
+        costPerMonth: team.costPerMonth != null ? Number(team.costPerMonth) : null,
         expectedRoi: team.expectedRoi != null ? Number(team.expectedRoi) : null,
         openRoles,
         isExternal: team.isExternal,
@@ -264,6 +271,7 @@ export function buildCanvasMap(
         lastVacationAt: p.lastVacationAt,
         startDate: p.startDate,
         skills: p.skills,
+        growthFocus: p.growthFocus,
         allocations,
       });
     });
