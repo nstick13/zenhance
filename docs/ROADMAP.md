@@ -20,8 +20,9 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > staged plan (V2.0 viewport → V2.1 parity → V2.2 new capabilities → V2.3 touch polish). The feel study is
 > built and verified at `app/lab/canvas` (`/lab/canvas`).
 >
-> **V2.0 (viewport) is shipped** — live at `/org?view=canvas`. **Next: V2.1 (parity)** — port overlays, the
-> findings rail, scenario mode, drag-to-reassign, and search onto canvas, then make it the default.
+> **V2.0 (viewport) is shipped and accepted (S1, v0.1.8)** — live at `/org?view=canvas`. **Next: V2.1
+> (parity) = S2** — port overlays, the findings rail, scenario mode, drag-to-reassign, and search onto
+> canvas, then make it the default.
 >
 > Track 2 below (`reports_to` + formal layer) is **still wanted** and now has a home: it is the *Reporting*
 > layer toggle in the canvas map. Track 1 (analytics findings UI) **already shipped** — porting it onto
