@@ -14,6 +14,9 @@ import {
   type CanvasSquad,
   type CanvasPerson,
 } from "@/lib/canvas/buildCanvasMap";
+import { overAllocatedPersonIds, allocationByPerson } from "@/lib/org/model";
+import { computeGaps } from "@/lib/analytics/gaps";
+import { computeRollup } from "@/lib/analytics/rollup";
 
 /**
  * v2 canvas map — V2.0 "viewport" (docs/V2.md). Adapted from the verified
@@ -21,8 +24,8 @@ import {
  * snapshot instead of mock data, with positions persisted to `map_nodes` on
  * drag end.
  *
- * Deliberately NOT in this pass — staged for V2.1/V2.2 per the roadmap:
- * analytics overlays, the findings rail, scenario mode, drag-to-reassign,
+ * V2.1 (parity) — analytics overlays ported here. Still staged for later
+ * V2.1/V2.2 passes: the findings rail, scenario mode, drag-to-reassign,
  * search, zones, delivery/reporting layer toggles.
  */
 
@@ -39,6 +42,7 @@ const C = {
   utilOk: "#22c55e",
   utilWarn: "#eab308",
   utilOver: "#ef4444",
+  heat: "#dc2626",
 };
 
 const FONT =
@@ -52,6 +56,18 @@ const LOD_LABELS: [Lod, string][] = [
   ["people", "People"],
   ["roles", "Roles"],
 ];
+
+type OverlayType = "none" | "allocation" | "gaps" | "cost";
+
+const OVERLAY_OPTIONS: { type: OverlayType; label: string }[] = [
+  { type: "none", label: "Overview" },
+  { type: "allocation", label: "Allocation" },
+  { type: "gaps", label: "Gaps" },
+  { type: "cost", label: "Cost / ROI" },
+];
+
+type NodeOverlay = { dimmed: boolean; badge: string | null; heatPct: number };
+const NO_OVERLAY: NodeOverlay = { dimmed: false, badge: null, heatPct: 0 };
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3;
@@ -116,6 +132,7 @@ export function OrgCanvas({
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [overlayType, setOverlayType] = useState<OverlayType>("none");
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -126,6 +143,72 @@ export function OrgCanvas({
   const squads = useMemo(() => nodes.filter((n): n is CanvasSquad => n.kind === "squad"), [nodes]);
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+
+  // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
+  const overAlloc = useMemo(() => overAllocatedPersonIds(assignments), [assignments]);
+  const allocByPerson = useMemo(() => allocationByPerson(assignments), [assignments]);
+  const gapsMap = useMemo(
+    () => computeGaps({ units, people: peopleRows, assignments }),
+    [units, peopleRows, assignments],
+  );
+  const rollupMap = useMemo(
+    () => computeRollup({ units, people: peopleRows, assignments }),
+    [units, peopleRows, assignments],
+  );
+  const maxUnitCost = useMemo(() => {
+    let max = 0;
+    for (const r of rollupMap.values()) if (r.totalCost > max) max = r.totalCost;
+    return max;
+  }, [rollupMap]);
+
+  const squadOverlay = useCallback(
+    (squad: CanvasSquad): NodeOverlay => {
+      if (overlayType === "none") return NO_OVERLAY;
+      if (overlayType === "allocation") return { ...NO_OVERLAY, dimmed: true };
+      if (overlayType === "gaps") {
+        const gap = gapsMap.get(squad.id);
+        const hasGap = !!gap && gap.gap > 0;
+        return { dimmed: !hasGap, badge: hasGap ? `${gap!.gap} open` : null, heatPct: 0 };
+      }
+      const cost = rollupMap.get(squad.id)?.totalCost ?? 0;
+      return {
+        dimmed: false,
+        badge: cost > 0 ? `${money(cost)}/mo` : null,
+        heatPct: maxUnitCost > 0 ? cost / maxUnitCost : 0,
+      };
+    },
+    [overlayType, gapsMap, rollupMap, maxUnitCost],
+  );
+
+  const personOverlay = useCallback(
+    (person: CanvasPerson): NodeOverlay => {
+      if (overlayType === "none") return NO_OVERLAY;
+      if (overlayType === "allocation") {
+        const isOver = overAlloc.has(person.id);
+        const alloc = allocByPerson.get(person.id);
+        return { dimmed: !isOver, badge: isOver && alloc ? `${alloc.teamCount} teams` : null, heatPct: 0 };
+      }
+      return { ...NO_OVERLAY, dimmed: true };
+    },
+    [overlayType, overAlloc, allocByPerson],
+  );
+
+  const trainOverlay = useCallback(
+    (trainId: string, openRoles: number, cost: number): NodeOverlay => {
+      if (overlayType === "none") return NO_OVERLAY;
+      if (overlayType === "allocation") return { ...NO_OVERLAY, dimmed: true };
+      if (overlayType === "gaps") {
+        return { dimmed: openRoles === 0, badge: openRoles > 0 ? `${openRoles} open` : null, heatPct: 0 };
+      }
+      const roi = rollupMap.get(trainId)?.totalRoi ?? 0;
+      return {
+        dimmed: false,
+        badge: roi > 0 ? `ROI ${money(roi)}` : null,
+        heatPct: maxUnitCost > 0 ? cost / maxUnitCost : 0,
+      };
+    },
+    [overlayType, rollupMap, maxUnitCost],
+  );
 
   const squadStats = useMemo(() => {
     const m = new Map<string, SquadStats>();
@@ -321,6 +404,17 @@ export function OrgCanvas({
         <a style={S.viewLink} href="/org">
           ⟲ Radial view
         </a>
+        <div style={S.overlayGroup}>
+          {OVERLAY_OPTIONS.map((o) => (
+            <button
+              key={o.type}
+              style={S.overlayBtn(overlayType === o.type)}
+              onClick={() => setOverlayType(o.type)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button style={S.btn} onClick={() => zoomBy(1.45)} aria-label="Zoom in">
             +
@@ -379,37 +473,64 @@ export function OrgCanvas({
 
           <Layer>
             {!showSquads &&
-              trainAgg.map((t) => (
-                <Group key={t.id} x={t.x} y={t.y} onMouseEnter={() => showHover(t.id)} onMouseLeave={() => setHover(null)}>
-                  <Circle radius={150} fill={C.white} stroke={C.ink} strokeWidth={5} />
-                  <Text text={t.name} x={-140} y={-42} width={280} align="center" fontSize={34} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
-                  <Text
-                    text={`${t.heads} people · ${money(t.cost)}/mo`}
-                    x={-140}
-                    y={4}
-                    width={280}
-                    align="center"
-                    fontSize={20}
-                    fontFamily={FONT}
-                    fill={C.inkSoft}
-                    listening={false}
-                  />
-                  {t.openRoles > 0 && (
-                    <Text text={`${t.openRoles} open`} x={-140} y={32} width={280} align="center" fontSize={19} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
-                  )}
-                </Group>
-              ))}
+              trainAgg.map((t) => {
+                const ov = trainOverlay(t.id, t.openRoles, t.cost);
+                return (
+                  <Group
+                    key={t.id}
+                    x={t.x}
+                    y={t.y}
+                    opacity={ov.dimmed ? 0.3 : 1}
+                    onMouseEnter={() => showHover(t.id)}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    <Circle radius={150} fill={C.white} stroke={C.ink} strokeWidth={5} />
+                    {ov.heatPct > 0 && <Circle radius={150} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
+                    <Text text={t.name} x={-140} y={-42} width={280} align="center" fontSize={34} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    <Text
+                      text={`${t.heads} people · ${money(t.cost)}/mo`}
+                      x={-140}
+                      y={4}
+                      width={280}
+                      align="center"
+                      fontSize={20}
+                      fontFamily={FONT}
+                      fill={C.inkSoft}
+                      listening={false}
+                    />
+                    {t.openRoles > 0 && (
+                      <Text text={`${t.openRoles} open`} x={-140} y={32} width={280} align="center" fontSize={19} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
+                    )}
+                    {ov.badge && (
+                      <Text
+                        text={ov.badge}
+                        x={-140}
+                        y={t.openRoles > 0 ? 58 : 32}
+                        width={280}
+                        align="center"
+                        fontSize={18}
+                        fontStyle="bold"
+                        fontFamily={FONT}
+                        fill={C.heat}
+                        listening={false}
+                      />
+                    )}
+                  </Group>
+                );
+              })}
 
             {showSquads &&
               squads.map((s) => {
                 const st = squadStats.get(s.id);
                 const accent = s.isCrossCutting ? C.cross : s.isExternal ? C.external : C.squad;
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
+                const ov = squadOverlay(s);
                 return (
                   <Group
                     key={s.id}
                     x={s.x}
                     y={s.y}
+                    opacity={ov.dimmed ? 0.3 : 1}
                     draggable
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
                     onMouseEnter={() => showHover(s.id)}
@@ -418,6 +539,7 @@ export function OrgCanvas({
                     onTap={() => setSelectedId(s.id)}
                   >
                     <Circle radius={78} fill={C.white} stroke={selectedId === s.id ? C.ink : accent} strokeWidth={selectedId === s.id ? 6 : 4} />
+                    {ov.heatPct > 0 && <Circle radius={78} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
                     <Text text={s.name} x={-72} y={-24} width={144} align="center" fontSize={17} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     <Text
                       text={st ? `${st.heads} · ${st.fte.toFixed(1)} FTE` : ""}
@@ -433,6 +555,20 @@ export function OrgCanvas({
                     {gap > 0 && (
                       <Text text={`${gap} short`} x={-72} y={16} width={144} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
                     )}
+                    {ov.badge && (
+                      <Text
+                        text={ov.badge}
+                        x={-72}
+                        y={gap > 0 ? 34 : 16}
+                        width={144}
+                        align="center"
+                        fontSize={12.5}
+                        fontStyle="bold"
+                        fontFamily={FONT}
+                        fill={C.heat}
+                        listening={false}
+                      />
+                    )}
                   </Group>
                 );
               })}
@@ -441,11 +577,13 @@ export function OrgCanvas({
               people.map((p) => {
                 const u = utilOf(p);
                 const shared = p.allocations.length > 1;
+                const ov = personOverlay(p);
                 return (
                   <Group
                     key={p.id}
                     x={p.x}
                     y={p.y}
+                    opacity={ov.dimmed ? 0.3 : 1}
                     draggable
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
                     onMouseEnter={() => showHover(p.id)}
@@ -472,6 +610,20 @@ export function OrgCanvas({
                           listening={false}
                         />
                       </>
+                    )}
+                    {ov.badge && (
+                      <Text
+                        text={ov.badge}
+                        x={-70}
+                        y={lod === "roles" ? 74 : 44}
+                        width={140}
+                        align="center"
+                        fontSize={11}
+                        fontStyle="bold"
+                        fontFamily={FONT}
+                        fill={C.heat}
+                        listening={false}
+                      />
                     )}
                   </Group>
                 );
@@ -728,6 +880,25 @@ const S = {
     fontWeight: 600,
     cursor: "pointer",
   },
+  overlayGroup: {
+    display: "flex",
+    gap: 4,
+    paddingLeft: 12,
+    marginLeft: 4,
+    borderLeft: `1px solid ${C.line}`,
+  },
+  overlayBtn: (active: boolean) => ({
+    height: 34,
+    padding: "0 11px",
+    borderRadius: 8,
+    border: `1px solid ${active ? C.ink : "transparent"}`,
+    background: active ? C.ink : "transparent",
+    color: active ? C.white : C.inkSoft,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  }),
   canvasWrap: { position: "relative" as const, flex: 1, overflow: "hidden", touchAction: "none" as const },
   lodDock: {
     position: "absolute" as const,
