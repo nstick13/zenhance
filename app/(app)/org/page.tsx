@@ -1,10 +1,16 @@
 import Link from "next/link";
-import { getOrgSnapshot } from "@/lib/data/queries";
+import { getOrgSnapshot, getMapNodes } from "@/lib/data/queries";
 import { RadialOrg } from "@/components/viz/RadialOrg";
+import { OrgCanvasLoader } from "@/components/viz/OrgCanvasLoader";
 import { loadDemoOrg } from "@/lib/data/actions";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 
-export default async function OrgPage() {
+export default async function OrgPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { view } = await searchParams;
   const { people, units, assignments } = await getOrgSnapshot();
   const isEmpty = units.length === 0;
 
@@ -42,6 +48,20 @@ export default async function OrgPage() {
             </Link>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (view === "canvas") {
+    const mapNodeRows = await getMapNodes();
+    return (
+      <div className="h-[calc(100vh-57px)]">
+        <OrgCanvasLoader
+          people={people}
+          units={units}
+          assignments={assignments}
+          mapNodeRows={mapNodeRows}
+        />
       </div>
     );
   }

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, eq, and } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, eq, and } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
@@ -200,6 +200,37 @@ export async function deleteAssignment(id: string): Promise<ActionResult> {
     .delete(assignments)
     .where(and(eq(assignments.id, id), eq(assignments.workspaceId, workspace.id)));
   revalidateAll();
+  return { ok: true, data: undefined };
+}
+
+// --- map nodes (v2 canvas: persisted node positions) ----------------------
+/** Upsert a dragged node's position. Fires on every drag end, so this
+ * deliberately skips revalidateAll() — the canvas already reflects the move
+ * optimistically and a route revalidation would just cause a jarring refetch. */
+export async function saveMapNodePosition(
+  nodeType: "unit" | "person",
+  nodeId: string,
+  x: number,
+  y: number,
+  boardId = "default",
+): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  if (nodeType !== "unit" && nodeType !== "person") return fail("Invalid node type");
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return fail("Invalid position");
+  await db
+    .insert(mapNodes)
+    .values({
+      workspaceId: workspace.id,
+      boardId,
+      nodeType,
+      nodeId,
+      x: x.toFixed(2),
+      y: y.toFixed(2),
+    })
+    .onConflictDoUpdate({
+      target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
+      set: { x: x.toFixed(2), y: y.toFixed(2), updatedAt: new Date() },
+    });
   return { ok: true, data: undefined };
 }
 
