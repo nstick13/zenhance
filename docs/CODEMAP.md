@@ -3,12 +3,14 @@
 Find the file (and region) that owns your concern, read **only** that, then `grep -n` the symbol and `Read` with `offset`/`limit`. Line numbers drift — treat them as "jump near here," and re-grep to confirm. Whole-file reads are occasionally right, but justify it from this map first.
 
 ## Stack
-Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgres (`postgres.js`) · Clerk auth (dev-auth bypass locally) · D3 (`d3-hierarchy/shape/zoom/selection/transition`) + SVG for the viz · SheetJS + Zod for import. Deployed on Vercel + Neon.
+Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgres (`postgres.js`) · Clerk auth (dev-auth bypass locally) · D3 (`d3-hierarchy/shape/zoom/selection/transition`) + SVG for the shipped viz · Konva + react-konva for the v2 canvas map (see [V2.md](V2.md)) · SheetJS + Zod for import. Deployed on Vercel + Neon.
 
 ## "Which file do I touch?" — by concern
 
 | I'm working on… | Go to |
 |---|---|
+| **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
+| v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
 | The radial visualization (anything on `/org`) | `components/viz/RadialOrg.tsx` — **see region table below** |
 | Color palettes / themes | `lib/theme.ts` (palette IDs + accent) **and** `app/globals.css` (the CSS-var blocks per palette). Adding a palette = both files. |
 | Analytics math (cost/ROI, gaps, allocation) | `lib/analytics/{rollup,gaps,allocation}.ts` — pure, client-safe, unit-testable |

@@ -12,7 +12,19 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ---
 
-## ▶ Next build (start here) — design is done, this session ships code
+## ▶ Next build (start here)
+
+> **⚠️ 2026-08-25 — v2 supersedes the two tracks below.** Greg's working Konva prototype prompted a
+> direction change: the map becomes a **free-form canvas** with persisted positions, and the radial view
+> becomes a mode. Read **[V2.md](V2.md)** first — it holds the decisions, the architecture impact and the
+> staged plan (V2.0 viewport → V2.1 parity → V2.2 new capabilities → V2.3 touch polish). The feel study is
+> built and verified at `app/lab/canvas` (`/lab/canvas`).
+>
+> Track 2 below (`reports_to` + formal layer) is **still wanted** and now has a home: it is the *Reporting*
+> layer toggle in the canvas map. Track 1 (analytics findings UI) **already shipped** — porting it onto
+> canvas is V2.1.
+
+### Previously next (pre-v2, kept for context) — design is done, this session ships code
 > Don't re-open the design. The *why* is settled in [PRODUCT.md](PRODUCT.md); the *feel* is built in `app/lab/analytics` (see [LAB.md](LAB.md)); code locations are in [CODEMAP.md](CODEMAP.md). Two tracks, do **Track 1 first** (ships value on existing data, low risk).
 
 **Track 1 — Analytics "findings" UI (productionize the lab).** No schema change.

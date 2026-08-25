@@ -18,4 +18,5 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
+| `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Trains→Squads→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
 | `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
