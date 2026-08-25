@@ -9,6 +9,7 @@ import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
 import {
   saveMapNodePosition,
   moveAssignment,
+  moveOrgUnit,
   createPerson,
   updatePerson,
   deletePerson,
@@ -185,6 +186,7 @@ export function OrgCanvas({
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropTrainId, setDropTrainId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
@@ -442,6 +444,26 @@ export function OrgCanvas({
     [squads],
   );
 
+  // Nearest train whose hull actually contains (x, y) — used to reparent a
+  // dragged squad onto a different train. Excludes the synthetic
+  // cross-cutting bucket, which isn't a real org unit.
+  const nearestTrain = useCallback(
+    (x: number, y: number) => {
+      let nearest: (typeof trainAgg)[number] | null = null;
+      let best = Infinity;
+      for (const t of trainAgg) {
+        if (t.id === CROSS_CUTTING_ID) continue;
+        const d = Math.hypot(t.x - x, t.y - y);
+        if (d < t.radius && d < best) {
+          best = d;
+          nearest = t;
+        }
+      }
+      return nearest;
+    },
+    [trainAgg],
+  );
+
   const onPersonDragMove = useCallback(
     (e: KonvaEventObject<DragEvent>) => {
       if (lod === "trains") {
@@ -454,17 +476,40 @@ export function OrgCanvas({
     [lod, nearestSquad],
   );
 
+  const onSquadDragMove = useCallback(
+    (e: KonvaEventObject<DragEvent>, squad: CanvasSquad) => {
+      if (squad.isCrossCutting) return;
+      const target = nearestTrain(e.target.x(), e.target.y());
+      setDropTrainId(target && target.id !== squad.trainId ? target.id : null);
+    },
+    [nearestTrain],
+  );
+
   const onNodeDragEnd = useCallback(
     (e: KonvaEventObject<DragEvent>, node: CanvasNode) => {
       const x = e.target.x();
       const y = e.target.y();
       setDropTargetId(null);
+      setDropTrainId(null);
       setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
       const nodeType = node.kind === "squad" ? "unit" : "person";
       startTransition(async () => {
         const result = await saveMapNodePosition(nodeType, node.id, x, y);
         if (!result.ok) console.error("Failed to save node position:", result.error);
       });
+
+      if (node.kind === "squad") {
+        if (node.isCrossCutting) return;
+        const target = nearestTrain(x, y);
+        if (!target || target.id === node.trainId) return;
+        const targetTrainId = target.id;
+        startTransition(async () => {
+          const result = await moveOrgUnit(node.id, targetTrainId);
+          if (!result.ok) console.error("Failed to move squad to train:", result.error);
+          else router.refresh();
+        });
+        return;
+      }
 
       if (node.kind !== "person" || lod === "trains" || node.allocations.length === 0) return;
       const target = nearestSquad(x, y);
@@ -486,7 +531,7 @@ export function OrgCanvas({
         else router.refresh();
       });
     },
-    [startTransition, lod, nearestSquad, scenario, router],
+    [startTransition, lod, nearestSquad, nearestTrain, scenario, router],
   );
 
   function toggleScenario() {
@@ -622,12 +667,15 @@ export function OrgCanvas({
           <Layer listening={false}>
             {trainAgg.map((t) => (
               <Group key={`hull-${t.id}`} x={t.x} y={t.y}>
+                {dropTrainId === t.id && (
+                  <Circle radius={t.radius + 18} fill="#34d399" opacity={0.14} />
+                )}
                 <Circle
                   radius={t.radius}
                   fill={C.white}
                   opacity={showSquads ? 0.55 : 0}
-                  stroke={C.line}
-                  strokeWidth={2 / scale}
+                  stroke={dropTrainId === t.id ? "#34d399" : C.line}
+                  strokeWidth={dropTrainId === t.id ? 4 / scale : 2 / scale}
                   perfectDrawEnabled={false}
                 />
                 {showSquads && (
@@ -709,6 +757,7 @@ export function OrgCanvas({
                     y={s.y}
                     opacity={ov.dimmed ? 0.3 : 1}
                     draggable
+                    onDragMove={(e) => onSquadDragMove(e, s)}
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
                     onMouseEnter={() => showHover(s.id)}
                     onMouseLeave={() => setHover(null)}
