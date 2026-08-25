@@ -22,7 +22,7 @@ export const CROSS_CUTTING_ID = "__cross-cutting__";
 const CROSS_CUTTING_NAME = "Cross-cutting";
 const HOME_THRESHOLD_PCT = 60;
 
-export type CanvasAllocation = { unitId: string; role: string; pct: number };
+export type CanvasAllocation = { assignmentId: string; unitId: string; role: string; pct: number };
 
 export type CanvasSquad = {
   id: string;
@@ -246,6 +246,7 @@ export function buildCanvasMap(
       const seed = ring(i, members.length, radius, anchor.x, anchor.y);
       const pos = positions.get(`person:${p.id}`) ?? seed;
       const allocations: CanvasAllocation[] = (assignmentsByPerson.get(p.id) ?? []).map((a) => ({
+        assignmentId: a.id,
         unitId: a.orgUnitId,
         role: a.roleOnTeam ?? "",
         pct: a.allocationPct ?? 0,

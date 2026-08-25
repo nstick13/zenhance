@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Stage, Layer, Group, Circle, Text } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
-import { saveMapNodePosition } from "@/lib/data/actions";
+import { saveMapNodePosition, moveAssignment } from "@/lib/data/actions";
 import {
   buildCanvasMap,
   positionsFromRows,
@@ -71,6 +72,7 @@ const NO_OVERLAY: NodeOverlay = { dimmed: false, badge: null, heatPct: 0 };
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3;
+const SQUAD_DROP_RADIUS = 100;
 
 function lodFor(scale: number): Lod {
   if (scale >= 1.5) return "roles";
@@ -117,22 +119,62 @@ export function OrgCanvas({
   assignments: Assignment[];
   mapNodeRows: MapNodeRow[];
 }) {
-  const [, startTransition] = useTransition();
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  // Scenario planning: `moves` overlays assignment -> new orgUnitId without
+  // touching the server until Apply. Mirrors RadialOrg.tsx's staging pattern
+  // (docs/V2.md V2.1). Node *position* is unaffected — drag always persists
+  // immediately, since position is independent, persisted data, not layout.
+  const [scenario, setScenario] = useState(false);
+  const [moves, setMoves] = useState<Map<string, string>>(new Map());
+
+  const { effAssignments, activeMoveCount } = useMemo(() => {
+    if (moves.size === 0) return { effAssignments: assignments, activeMoveCount: 0 };
+    let count = 0;
+    const eff = assignments.map((a) => {
+      const target = moves.get(a.id);
+      if (target && target !== a.orgUnitId) {
+        count++;
+        return { ...a, orgUnitId: target };
+      }
+      return a;
+    });
+    return { effAssignments: eff, activeMoveCount: count };
+  }, [assignments, moves]);
 
   const seed = useMemo(
-    () => buildCanvasMap({ people: peopleRows, units, assignments }, positionsFromRows(mapNodeRows)),
+    () => buildCanvasMap({ people: peopleRows, units, assignments: effAssignments }, positionsFromRows(mapNodeRows)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peopleRows, units, assignments],
+    [peopleRows, units, effAssignments],
   );
 
   const [nodes, setNodes] = useState<CanvasNode[]>(seed.nodes);
   const trains = seed.trains;
+
+  // Re-derive node content (allocations, home) whenever real data or a
+  // staged scenario move changes, but keep each node's current x/y — the
+  // seed's ring positions are only a fallback for nodes with none yet.
+  // Adjusting state during render (not in an effect) per
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-state-based-on-a-prop.
+  const [prevSeed, setPrevSeed] = useState(seed);
+  if (prevSeed !== seed) {
+    setPrevSeed(seed);
+    setNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      return seed.nodes.map((n) => {
+        const existing = prevById.get(n.id);
+        return existing ? { ...n, x: existing.x, y: existing.y } : n;
+      });
+    });
+  }
 
   const [scale, setScale] = useState(0.3);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -145,15 +187,15 @@ export function OrgCanvas({
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
-  const overAlloc = useMemo(() => overAllocatedPersonIds(assignments), [assignments]);
-  const allocByPerson = useMemo(() => allocationByPerson(assignments), [assignments]);
+  const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
+  const allocByPerson = useMemo(() => allocationByPerson(effAssignments), [effAssignments]);
   const gapsMap = useMemo(
-    () => computeGaps({ units, people: peopleRows, assignments }),
-    [units, peopleRows, assignments],
+    () => computeGaps({ units, people: peopleRows, assignments: effAssignments }),
+    [units, peopleRows, effAssignments],
   );
   const rollupMap = useMemo(
-    () => computeRollup({ units, people: peopleRows, assignments }),
-    [units, peopleRows, assignments],
+    () => computeRollup({ units, people: peopleRows, assignments: effAssignments }),
+    [units, peopleRows, effAssignments],
   );
   const maxUnitCost = useMemo(() => {
     let max = 0;
@@ -369,17 +411,93 @@ export function OrgCanvas({
     pinch.current = null;
   }, []);
 
-  // --- drag: reposition + persist ---------------------------------------------
-  const onNodeDragEnd = useCallback((e: KonvaEventObject<DragEvent>, node: CanvasNode) => {
-    const x = e.target.x();
-    const y = e.target.y();
-    setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
-    const nodeType = node.kind === "squad" ? "unit" : "person";
+  // --- drag: reposition + persist, plus drop-on-squad reassignment -----------
+  const nearestSquad = useCallback(
+    (x: number, y: number): CanvasSquad | null => {
+      let nearest: CanvasSquad | null = null;
+      let best = SQUAD_DROP_RADIUS;
+      for (const s of squads) {
+        if (s.isCrossCutting) continue;
+        const d = Math.hypot(s.x - x, s.y - y);
+        if (d < best) {
+          best = d;
+          nearest = s;
+        }
+      }
+      return nearest;
+    },
+    [squads],
+  );
+
+  const onPersonDragMove = useCallback(
+    (e: KonvaEventObject<DragEvent>) => {
+      if (lod === "trains") {
+        setDropTargetId(null);
+        return;
+      }
+      const target = nearestSquad(e.target.x(), e.target.y());
+      setDropTargetId(target?.id ?? null);
+    },
+    [lod, nearestSquad],
+  );
+
+  const onNodeDragEnd = useCallback(
+    (e: KonvaEventObject<DragEvent>, node: CanvasNode) => {
+      const x = e.target.x();
+      const y = e.target.y();
+      setDropTargetId(null);
+      setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
+      const nodeType = node.kind === "squad" ? "unit" : "person";
+      startTransition(async () => {
+        const result = await saveMapNodePosition(nodeType, node.id, x, y);
+        if (!result.ok) console.error("Failed to save node position:", result.error);
+      });
+
+      if (node.kind !== "person" || lod === "trains" || node.allocations.length === 0) return;
+      const target = nearestSquad(x, y);
+      if (!target) return;
+      const targetSquadId = target.id;
+      const home = [...node.allocations].sort((a, b) => b.pct - a.pct)[0];
+      if (home.unitId === targetSquadId) return;
+      if (scenario) {
+        setMoves((prev) => {
+          const next = new Map(prev);
+          next.set(home.assignmentId, targetSquadId);
+          return next;
+        });
+        return;
+      }
+      startTransition(async () => {
+        const result = await moveAssignment(home.assignmentId, targetSquadId);
+        if (!result.ok) console.error("Failed to reassign:", result.error);
+        else router.refresh();
+      });
+    },
+    [startTransition, lod, nearestSquad, scenario, router],
+  );
+
+  function toggleScenario() {
+    if (scenario) {
+      setMoves(new Map());
+      setScenario(false);
+    } else {
+      setScenario(true);
+    }
+  }
+
+  function applyScenario() {
+    const entries = [...moves.entries()];
     startTransition(async () => {
-      const result = await saveMapNodePosition(nodeType, node.id, x, y);
-      if (!result.ok) console.error("Failed to save node position:", result.error);
+      for (const [id, target] of entries) await moveAssignment(id, target);
+      setMoves(new Map());
+      setScenario(false);
+      router.refresh();
     });
-  }, [startTransition]);
+  }
+
+  function discardScenario() {
+    setMoves(new Map());
+  }
 
   const showHover = useCallback((id: string) => {
     const stage = stageRef.current;
@@ -414,6 +532,24 @@ export function OrgCanvas({
               {o.label}
             </button>
           ))}
+        </div>
+        <div style={S.overlayGroup}>
+          {scenario && activeMoveCount > 0 && (
+            <>
+              <span style={S.pendingPill}>
+                {activeMoveCount} pending move{activeMoveCount === 1 ? "" : "s"}
+              </span>
+              <button style={S.applyBtn} onClick={applyScenario} disabled={isPending}>
+                {isPending ? "Applying…" : "Apply"}
+              </button>
+              <button style={S.discardBtn} onClick={discardScenario}>
+                Discard
+              </button>
+            </>
+          )}
+          <button style={S.scenarioBtn(scenario)} onClick={toggleScenario}>
+            {scenario ? "Scenario: on" : "Scenario mode"}
+          </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button style={S.btn} onClick={() => zoomBy(1.45)} aria-label="Zoom in">
@@ -538,7 +674,13 @@ export function OrgCanvas({
                     onClick={() => setSelectedId(s.id)}
                     onTap={() => setSelectedId(s.id)}
                   >
-                    <Circle radius={78} fill={C.white} stroke={selectedId === s.id ? C.ink : accent} strokeWidth={selectedId === s.id ? 6 : 4} />
+                    {dropTargetId === s.id && <Circle radius={92} fill="#34d399" opacity={0.18} listening={false} />}
+                    <Circle
+                      radius={78}
+                      fill={C.white}
+                      stroke={dropTargetId === s.id ? "#34d399" : selectedId === s.id ? C.ink : accent}
+                      strokeWidth={dropTargetId === s.id ? 5 : selectedId === s.id ? 6 : 4}
+                    />
                     {ov.heatPct > 0 && <Circle radius={78} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
                     <Text text={s.name} x={-72} y={-24} width={144} align="center" fontSize={17} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     <Text
@@ -585,6 +727,7 @@ export function OrgCanvas({
                     y={p.y}
                     opacity={ov.dimmed ? 0.3 : 1}
                     draggable
+                    onDragMove={onPersonDragMove}
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
                     onMouseEnter={() => showHover(p.id)}
                     onMouseLeave={() => setHover(null)}
@@ -899,6 +1042,54 @@ const S = {
     fontWeight: 600,
     cursor: "pointer",
   }),
+  scenarioBtn: (active: boolean) => ({
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 8,
+    border: `1px solid ${active ? C.squad : C.line}`,
+    background: active ? C.squad : C.white,
+    color: active ? C.white : C.ink,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  }),
+  pendingPill: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#047857",
+    background: "#ecfdf5",
+    border: "1px solid #a7f3d0",
+    borderRadius: 999,
+    padding: "7px 11px",
+    whiteSpace: "nowrap" as const,
+  },
+  applyBtn: {
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 8,
+    border: "none",
+    background: C.squad,
+    color: C.white,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  discardBtn: {
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 8,
+    border: `1px solid ${C.line}`,
+    background: "transparent",
+    color: C.ink,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
   canvasWrap: { position: "relative" as const, flex: 1, overflow: "hidden", touchAction: "none" as const },
   lodDock: {
     position: "absolute" as const,
