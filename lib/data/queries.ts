@@ -4,12 +4,14 @@ import {
   people,
   orgUnits,
   assignments,
+  mapNodes,
   eq,
   and,
   asc,
   type Person,
   type OrgUnit,
   type Assignment,
+  type MapNodeRow,
 } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 
@@ -58,6 +60,16 @@ export async function getPerson(id: string): Promise<Person | null> {
     .where(and(eq(people.id, id), eq(people.workspaceId, workspace.id)))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/** Persisted canvas-map node positions (v2). A missing row falls back to a
+ * computed seed layout — see lib/canvas/buildCanvasMap.ts. */
+export async function getMapNodes(boardId = "default"): Promise<MapNodeRow[]> {
+  const { workspace } = await requireWorkspace();
+  return db
+    .select()
+    .from(mapNodes)
+    .where(and(eq(mapNodes.workspaceId, workspace.id), eq(mapNodes.boardId, boardId)));
 }
 
 export async function getOrgUnit(id: string): Promise<OrgUnit | null> {

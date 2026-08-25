@@ -33,6 +33,8 @@ export const membershipRole = pgEnum("membership_role", [
 
 export const orgUnitKind = pgEnum("org_unit_kind", ["group", "team"]);
 
+export const mapNodeType = pgEnum("map_node_type", ["unit", "person"]);
+
 // --- workspace (tenant) ---------------------------------------------------
 export const workspaces = pgTable("workspaces", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -145,12 +147,51 @@ export const assignments = pgTable(
   ],
 );
 
+// --- map nodes (v2 canvas: persisted per-workspace node positions) --------
+// Polymorphic over `people` / `orgUnits` (and synthetic nodes like the
+// cross-cutting bucket computed in lib/canvas/buildCanvasMap.ts) — no FK on
+// nodeId, so it's advisory placement data, not a source of truth. A missing
+// row falls back to a computed seed layout (see docs/V2.md).
+export const mapNodes = pgTable(
+  "map_nodes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    boardId: text("board_id").notNull().default("default"),
+    nodeType: mapNodeType("node_type").notNull(),
+    nodeId: text("node_id").notNull(),
+    x: numeric("x", { precision: 10, scale: 2 }).notNull(),
+    y: numeric("y", { precision: 10, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("map_nodes_workspace_board_node_uq").on(
+      t.workspaceId,
+      t.boardId,
+      t.nodeType,
+      t.nodeId,
+    ),
+    index("map_nodes_workspace_idx").on(t.workspaceId),
+  ],
+);
+
 // --- relations ------------------------------------------------------------
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   memberships: many(memberships),
   people: many(people),
   orgUnits: many(orgUnits),
   assignments: many(assignments),
+  mapNodes: many(mapNodes),
+}));
+
+export const mapNodesRelations = relations(mapNodes, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [mapNodes.workspaceId],
+    references: [workspaces.id],
+  }),
 }));
 
 export const peopleRelations = relations(people, ({ one, many }) => ({
@@ -205,3 +246,4 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type Person = typeof people.$inferSelect;
 export type OrgUnit = typeof orgUnits.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
+export type MapNodeRow = typeof mapNodes.$inferSelect;
