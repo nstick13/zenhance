@@ -10,6 +10,8 @@ import {
   saveMapNodePosition,
   moveAssignment,
   moveOrgUnit,
+  createAssignment,
+  deleteAssignment,
   createPerson,
   updatePerson,
   deletePerson,
@@ -918,7 +920,7 @@ export function OrgCanvas({
             </div>
             <div style={S.panelBody}>
               {creating === "person" && (
-                <PersonForm mode="create" onSaved={closePanel} onCancel={closePanel} />
+                <PersonForm mode="create" squads={squads} onSaved={closePanel} onCancel={closePanel} />
               )}
               {creating === "squad" && (
                 <SquadForm mode="create" trains={realTrains} people={people} onSaved={closePanel} onCancel={closePanel} />
@@ -930,6 +932,7 @@ export function OrgCanvas({
                 <PersonForm
                   mode="edit"
                   person={selected}
+                  squads={squads}
                   onSaved={() => setEditing(false)}
                   onCancel={() => setEditing(false)}
                   onDeleted={closePanel}
@@ -1089,6 +1092,7 @@ function SquadBody({
 type PersonFormState = {
   name: string;
   title: string;
+  squadId: string;
   costPerMonth: string;
   skills: string;
   startDate: string;
@@ -1099,6 +1103,7 @@ type PersonFormState = {
 const emptyPersonForm: PersonFormState = {
   name: "",
   title: "",
+  squadId: "",
   costPerMonth: "",
   skills: "",
   startDate: "",
@@ -1106,10 +1111,17 @@ const emptyPersonForm: PersonFormState = {
   growthFocus: "",
 };
 
+/** The assignment drag-to-reassign would move: the highest-% one. */
+function personHomeAllocation(p: CanvasPerson) {
+  if (p.allocations.length === 0) return null;
+  return [...p.allocations].sort((a, b) => b.pct - a.pct)[0];
+}
+
 function personToForm(p: CanvasPerson): PersonFormState {
   return {
     name: p.name,
     title: p.title ?? "",
+    squadId: personHomeAllocation(p)?.unitId ?? "",
     costPerMonth: p.costPerMonth ? String(p.costPerMonth) : "",
     skills: p.skills.join(", "),
     startDate: p.startDate ?? "",
@@ -1121,12 +1133,14 @@ function personToForm(p: CanvasPerson): PersonFormState {
 function PersonForm({
   mode,
   person,
+  squads,
   onSaved,
   onCancel,
   onDeleted,
 }: {
   mode: "create" | "edit";
   person?: CanvasPerson;
+  squads: CanvasSquad[];
   onSaved: () => void;
   onCancel: () => void;
   onDeleted?: () => void;
@@ -1135,16 +1149,47 @@ function PersonForm({
   const [form, setForm] = useState<PersonFormState>(person ? personToForm(person) : emptyPersonForm);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const home = person ? personHomeAllocation(person) : null;
+  const realSquads = squads.filter((s) => !s.isCrossCutting);
 
   function submit() {
     setError(null);
     startTransition(async () => {
-      const res =
-        mode === "edit" && person ? await updatePerson(person.id, form) : await createPerson(form);
-      if (!res.ok) {
-        setError(res.error);
-        return;
+      const { squadId, ...personFields } = form;
+      let personId: string;
+      if (mode === "edit" && person) {
+        const res = await updatePerson(person.id, personFields);
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        personId = person.id;
+      } else {
+        const res = await createPerson(personFields);
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        personId = res.data.id;
       }
+
+      const currentSquadId = home?.unitId ?? "";
+      if (squadId !== currentSquadId) {
+        if (squadId && home) {
+          await moveAssignment(home.assignmentId, squadId);
+        } else if (squadId && !home) {
+          await createAssignment({
+            orgUnitId: squadId,
+            personId,
+            roleOnTeam: "",
+            allocationPct: 100,
+            isOpenRole: false,
+          });
+        } else if (!squadId && home) {
+          await deleteAssignment(home.assignmentId);
+        }
+      }
+
       router.refresh();
       onSaved();
     });
@@ -1166,6 +1211,25 @@ function PersonForm({
       <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
       <label style={S.formLabel}>Title</label>
       <input style={S.formInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <label style={S.formLabel}>Squad</label>
+      <select
+        style={S.formInput}
+        value={form.squadId}
+        onChange={(e) => setForm({ ...form, squadId: e.target.value })}
+      >
+        <option value="">— unassigned —</option>
+        {realSquads.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      {person && person.allocations.length > 1 && (
+        <p style={S.formHint}>
+          {person.name} is on {person.allocations.length} teams — this changes only their primary
+          (highest-%) assignment, same as dragging their dot.
+        </p>
+      )}
       <label style={S.formLabel}>Cost / month ($)</label>
       <input
         style={S.formInput}
@@ -1601,6 +1665,13 @@ const S = {
     marginTop: 12,
     fontSize: 12.5,
     color: "#dc2626",
+  },
+  formHint: {
+    marginTop: 6,
+    marginBottom: 0,
+    fontSize: 11.5,
+    color: C.inkSoft,
+    lineHeight: 1.4,
   },
   formActions: {
     display: "flex",
