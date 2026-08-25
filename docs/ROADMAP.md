@@ -4,42 +4,38 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
-## Status — as of 2026-06-16
-- **Version 0.1.2**, deployed to **production** on Vercel.
+## Status — as of 2026-08-25
+- **Version 0.1.7.** Production on Vercel runs the radial/SVG viz; v2 canvas work has not shipped yet.
 - **Infra is fully live: Neon Postgres + Clerk auth + Vercel.** The old "create Clerk/Neon accounts" blocker is **resolved** — production deploy is no longer gated on Nate provisioning anything.
 - **Foundations shipped (v1 core):** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + person/team panels; drag-to-reassign + scenario mode; analytics overlays (allocation / gaps / cost-ROI) + summary bar; palette switcher (5 themes); zoom & pan (F1); multi-level group zoom + drag-in-zoom (F2).
 - **Marketing site shipped (2026-06-16):** public Home / Features / Pricing / About at https://zenhance.vercel.app (see Backlog).
+- **Since then:** findings rail + ambient/focus overlay (v0.1.3), `reports_to` formal layer (v0.1.4), a ~45-person demo org (v0.1.5), and the **v2 canvas direction + Konva feel study** (v0.1.6–0.1.7).
 
 ---
 
 ## ▶ Next build (start here)
 
-> **⚠️ 2026-08-25 — v2 supersedes the two tracks below.** Greg's working Konva prototype prompted a
-> direction change: the map becomes a **free-form canvas** with persisted positions, and the radial view
-> becomes a mode. Read **[V2.md](V2.md)** first — it holds the decisions, the architecture impact and the
-> staged plan (V2.0 viewport → V2.1 parity → V2.2 new capabilities → V2.3 touch polish). The feel study is
-> built and verified at `app/lab/canvas` (`/lab/canvas`).
+> **v2 — the canvas map.** Read **[V2.md](V2.md)** for the decisions, then
+> **[V2-BUILD-PLAN.md](V2-BUILD-PLAN.md)** for the seven branch-sized stories with files, definition-of-done
+> and traps. Start at **S1 `v2-map-core`** (S3 `v2-paper-shell` can run in parallel).
 >
-> Track 2 below (`reports_to` + formal layer) is **still wanted** and now has a home: it is the *Reporting*
-> layer toggle in the canvas map. Track 1 (analytics findings UI) **already shipped** — porting it onto
-> canvas is V2.1.
+> The feel study is built and verified at `/lab/canvas`.
 
-### Previously next (pre-v2, kept for context) — design is done, this session ships code
-> Don't re-open the design. The *why* is settled in [PRODUCT.md](PRODUCT.md); the *feel* is built in `app/lab/analytics` (see [LAB.md](LAB.md)); code locations are in [CODEMAP.md](CODEMAP.md). Two tracks, do **Track 1 first** (ships value on existing data, low risk).
+**Decisions taken 2026-08-25 (settled — don't re-open):**
+- Canvas becomes `/org`. **Radial is retired to a layout command** (`tidyUp()`), not kept as a peer view.
+- **The whole app moves to the light "paper" register** — this settles the *Mini Metro theme* story below.
+  The 5 palettes become accents over a shared paper base.
+- Groups (release trains) are **placeable nodes with a centroid fallback**.
+- Sequencing: foundation first, but front-load the look so every intermediate state is demo-able.
 
-**Track 1 — Analytics "findings" UI (productionize the lab).** No schema change.
-- Findings math = **pure functions** in `lib/analytics/*` + Vitest fixtures (house pattern). Ship the two that need **only existing data**: **over-allocation** (`overAlloc` already computed in `RadialOrg.tsx` ~101–122) and **shared-person coupling** (team↔team, `GROUP BY` over `assignments`).
-- Build the **findings rail + ambient/focus map interaction** per `app/lab/analytics`: ambient = presence dots (equal weight, category colour, no severity); focus = spotlight + card **Signal→Narrative**. Wire into `RadialOrg` overlays (`getOverlayProps`, ~985) + a side rail.
-- When it lands: **archive** `app/lab/analytics` → `app/lab/_archive/` and update the [LAB.md](LAB.md) registry.
-
-**Track 2 — `reports_to` + formal layer** (bigger; can be its own session).
-- **Schema:** `people.managerId` self-ref, nullable, workspace-scoped + migration (`lib/db/schema.ts`).
-- **Import:** extend `ImportWizard` column-mapping for `manager`; add the **three-door entry picker** (delivery / formal / by-hand).
-- **Render:** formal **mode** reusing `tree`/`linkRadial` in `RadialOrg.tsx` ~213–264 (person-nodes by `managerId`).
-- **Demo data:** extend `seed.ts` / `demoSeed.ts` with a `reports_to` chain that **diverges** from teams + contractors + time zones — the mess *is* the pitch; the delta can't demo without it.
-- **New fields** for the fuller analytics menu (separate, after): `employment_type`, `timezone`, structured `role`.
-
----
+### ✅ Shipped since this section was last written
+- **Track 1 — Analytics "findings" UI** — shipped `3d1287c` (v0.1.3): `lib/analytics/findings.ts`
+  (over-allocation + shared-person coupling) and the `FindingsRail` + ambient/focus overlay in `RadialOrg`.
+  The `app/lab/analytics` sandbox is archived per LAB.md.
+- **Track 2 — `reports_to` + formal layer** — shipped `2a9b835` (v0.1.4): `people.managerId` + migration,
+  formal map mode, and a demo seed whose reporting lines deliberately diverge from delivery teams
+  (`02b8a4a` extended it to ~45 people).
+- *Still open from Track 2:* `employment_type`, `timezone` and a structured `role` — see **Data Model** below.
 
 ## Feature: Analytics  🧭 *design-first*
 > **Do not start coding these without a design pass first.** This whole feature gets a separate, non-coding discussion (the "what should the visualization reveal?" conversation). Stories below are seeds, not specs.
@@ -74,17 +70,17 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 ## Feature: Functionality  🔜
 > Interaction & polish that make it feel touch-native. Mostly self-contained viz/UX work.
 
-- **Double-tap to center** — *(the original F2 that got dropped when F2 was redefined.)* Double-tap/click a node → smooth `d3-zoom` transition that centers + scales to fit its subtree. Note: dblclick is currently **disabled** in the zoom filter (`RadialOrg.tsx` ~line 153) — re-enabling there is the starting point. Complements single-click drill-down.
+- **Double-tap to center** — *(the original F2 that got dropped when F2 was redefined.)* Double-tap a node → smooth transition that centers + scales to fit. ⚠️ **Rebase onto canvas** — the old note pointed at `RadialOrg.tsx`'s `d3-zoom` filter, which S5 deletes. Build it against `OrgCanvasStage`'s zoom instead.
 - **Animated transitions** — smooth position interpolation on drill-down and overlay switches (today they snap).
-- **Scenario save / compare** — persist multiple what-if scenarios and diff them side-by-side (builds on the existing in-memory `moves` overlay).
+- **Scenario save / compare** — persist multiple what-if scenarios and diff them side-by-side (builds on the existing in-memory `moves` overlay). `map_nodes.boardId` is left flexible for exactly this.
 - **Responsive panel + touch targets (iPad)** — detail `<aside>` → bottom sheet under `lg`; ≥44px touch targets; SummaryBar pills wrap; SVG fills viewport. *(folded in from old M6/F4.)*
 - **Empty / error states** — audit `/people` & `/teams` empty states; verify `error.tsx` / `not-found.tsx`. *(old F5; quick.)*
-- **"Mini Metro" theme** — light, flat, no-glow palette (Greg's "clean, minimal, calm"). Add to `lib/theme.ts` + the `@theme static` block in `globals.css`. *(old F6.)*
+- ✅ **"Mini Metro" theme** — **settled by v2 (2026-08-25):** the light/flat/calm paper register becomes the whole app's look, not an optional palette. Built in story **S3 `v2-paper-shell`** — see [V2-BUILD-PLAN.md](V2-BUILD-PLAN.md).
 
 ---
 
 ## Backlog  🅿️ *(post-v1, not committed)*
-- **Edge-type layer toggles** — separate visibility for "reporting" vs "project assignment" edges (Greg's layer concept; needs edge-type modeling → relates to Data Model).
+- **Edge-type layer toggles** — separate visibility for "reporting" vs "project assignment" edges. **Promoted into v2 story S6 `v2-zones-layers`**; already working in the canvas lab.
 - **Workspace invites & roles** — Clerk Organizations already supports it; v2.
 - **Live data connectors** — Jira / ADO / HRIS import; v2+.
 - ✅ **Marketing site** — **shipped & deployed to prod 2026-06-16** (commit `a69edeb`). Multi-page site under `app/(marketing)/` (Home / Features / Pricing / About) with shared header/footer in `components/marketing/`. Live at https://zenhance.vercel.app. *Follow-up: pricing numbers are introductory placeholders ($29/mo Team) — replace with real pricing when decided.*

@@ -9,7 +9,8 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 
 | I'm working on… | Go to |
 |---|---|
-| **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
+| **v2 canvas map — decisions & architecture impact** | **[V2.md](V2.md)** — read before touching the viz |
+| **v2 canvas map — what to build next, story by story** | **[V2-BUILD-PLAN.md](V2-BUILD-PLAN.md)** — files, definition-of-done, traps per story |
 | v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
 | Greg's original prototype (the v2 trigger) | `docs/reference/greg-preview-v1.html` — see `docs/reference/README.md` |
 | The radial visualization (anything on `/org`) | `components/viz/RadialOrg.tsx` — **see region table below** |
@@ -29,7 +30,10 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | App shell / layout / empty-org screen | `app/(app)/layout.tsx`, `app/(app)/org/page.tsx`, `app/(app)/{error,not-found}.tsx` |
 | Onboarding banner, palette switcher | `components/OnboardingBanner.tsx`, `components/PaletteSwitcher.tsx` |
 
-## `components/viz/RadialOrg.tsx` region guide (~1400 lines)
+## `components/viz/RadialOrg.tsx` region guide (~1760 lines)
+> ⚠️ Line numbers below predate the findings rail (`3d1287c`) and are stale by ~350 lines past the midpoint —
+> `grep -n` the symbol rather than trusting them. This file is **scheduled for deletion in v2 story S5**;
+> its panels move to `components/viz/panels/` in S2.
 One client component. Jump to the region; don't read top-to-bottom.
 
 | Region | ~Lines | What's there |
