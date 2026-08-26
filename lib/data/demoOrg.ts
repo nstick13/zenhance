@@ -7,7 +7,7 @@ import * as schema from "../db/schema";
  * seeders (the `tsx` CLI in `lib/db/seed.ts` and the in-app "Load demo org" in
  * `lib/data/demoSeed.ts`) so the two can never drift.
  *
- * This is the *pitch* org: ~45 people across three release trains, deliberately
+ * This is the *pitch* org: ~45 people across three value streams, deliberately
  * messy so every analytic has something visceral to surface —
  *   - cross-cutting supporters (SRE / security / platform / data / agile coach)
  *     embedded across multiple teams → over-allocation + team coupling
@@ -17,7 +17,7 @@ import * as schema from "../db/schema";
  *
  * Everything is referenced by *name* here; `applyDemoOrg` resolves names to ids
  * at insert time. Cross-cutting people are embedded into each team they support
- * (data-only) — the "orbit the train" rendering is a separate viz story.
+ * (data-only) — the "orbit the value stream" rendering is a separate viz story.
  */
 
 export type DemoPerson = {
@@ -131,7 +131,7 @@ export const demoUnits: DemoUnit[] = [
   { name: "Digital Tailoring Supplies", kind: "group" },
   { name: "Delivery Group", kind: "group", parent: "Digital Tailoring Supplies", lead: "Sarah Reeve", expectedRoi: 28000000 },
 
-  // Release trains (sub-groups)
+  // Value streams (sub-groups)
   { name: "Atlas", kind: "group", parent: "Delivery Group", lead: "Aimee Bradford", expectedRoi: 11000000 },
   { name: "Orion", kind: "group", parent: "Delivery Group", lead: "Aaron Richter", expectedRoi: 9500000 },
   { name: "Vega", kind: "group", parent: "Delivery Group", lead: "Nadia Khan", expectedRoi: 6500000 },

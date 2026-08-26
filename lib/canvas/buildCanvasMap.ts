@@ -6,7 +6,7 @@ import { indexById, childUnitsByParent, rootUnits } from "@/lib/org/model";
  * RadialOrg.tsx renders) into a flat node list for the v2 canvas map — see
  * docs/V2.md. No DB, no React.
  *
- * "Train" (the top zoom rung) isn't a schema concept — it's the first level
+ * "Value stream" (the top zoom rung) isn't a schema concept — it's the first level
  * where the org tree branches below its root, walking down through any
  * chain of single-child groups (root org -> "Delivery Group" -> {Atlas,
  * Orion, Vega, Infosys Contractors} in the demo org). "Squad" = any
@@ -30,8 +30,8 @@ export type CanvasSquad = {
   name: string;
   x: number;
   y: number;
-  trainId: string;
-  trainName: string;
+  streamId: string;
+  streamName: string;
   leadPersonId: string | null;
   leadName: string | null;
   targetHeadcount: number | null;
@@ -58,14 +58,14 @@ export type CanvasPerson = {
   skills: string[];
   growthFocus: string | null;
   allocations: CanvasAllocation[];
-  crossCuttingTier: "squad" | "train" | null;
+  crossCuttingTier: "squad" | "stream" | null;
 };
 
 export type CanvasNode = CanvasSquad | CanvasPerson;
 
-export type CanvasTrain = { id: string; name: string; expectedRoi: number | null };
+export type CanvasStream = { id: string; name: string; expectedRoi: number | null };
 
-export type CanvasMapData = { trains: CanvasTrain[]; nodes: CanvasNode[] };
+export type CanvasMapData = { streams: CanvasStream[]; nodes: CanvasNode[] };
 
 export type Position = { x: number; y: number };
 
@@ -78,7 +78,7 @@ export function positionsFromRows(
   return m;
 }
 
-/** First level below the root where the tree branches — the "train" rung. */
+/** First level below the root where the tree branches — the "stream" rung. */
 function topRungUnits(units: OrgUnit[]): OrgUnit[] {
   const byParent = childUnitsByParent(units);
   let level = rootUnits(units);
@@ -90,7 +90,7 @@ function topRungUnits(units: OrgUnit[]): OrgUnit[] {
   return level;
 }
 
-function trainOf(unit: OrgUnit, topIds: Set<string>, unitsById: Map<string, OrgUnit>): OrgUnit {
+function streamOf(unit: OrgUnit, topIds: Set<string>, unitsById: Map<string, OrgUnit>): OrgUnit {
   let cur = unit;
   while (!topIds.has(cur.id) && cur.parentId) {
     const parent = unitsById.get(cur.parentId);
@@ -170,52 +170,52 @@ export function buildCanvasMap(
   }
   const usesCrossCutting = people.some((p) => homeOf.get(p.id) === CROSS_CUTTING_ID);
 
-  // --- group squads by train, list trains -----------------------------------
-  const teamsByTrain = new Map<string, OrgUnit[]>();
+  // --- group squads by stream, list streams -----------------------------------
+  const teamsByStream = new Map<string, OrgUnit[]>();
   for (const t of teams) {
-    const train = trainOf(t, topIds, unitsById);
-    if (!teamsByTrain.has(train.id)) teamsByTrain.set(train.id, []);
-    teamsByTrain.get(train.id)!.push(t);
+    const stream = streamOf(t, topIds, unitsById);
+    if (!teamsByStream.has(stream.id)) teamsByStream.set(stream.id, []);
+    teamsByStream.get(stream.id)!.push(t);
   }
-  for (const list of teamsByTrain.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+  for (const list of teamsByStream.values()) list.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Squad → train lookup used to classify cross-cutting people by tier.
-  const squadToTrainId = new Map<string, string>();
-  for (const [trainId, squadList] of teamsByTrain) {
-    for (const sq of squadList) squadToTrainId.set(sq.id, trainId);
+  // Squad → stream lookup used to classify cross-cutting people by tier.
+  const squadToStreamId = new Map<string, string>();
+  for (const [streamId, squadList] of teamsByStream) {
+    for (const sq of squadList) squadToStreamId.set(sq.id, streamId);
   }
 
-  const trainList: CanvasTrain[] = tops
-    .filter((t) => (teamsByTrain.get(t.id)?.length ?? 0) > 0)
+  const streamList: CanvasStream[] = tops
+    .filter((t) => (teamsByStream.get(t.id)?.length ?? 0) > 0)
     .map((t) => ({
       id: t.id,
       name: t.name,
       expectedRoi: t.expectedRoi != null ? Number(t.expectedRoi) : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  if (usesCrossCutting) trainList.push({ id: CROSS_CUTTING_ID, name: CROSS_CUTTING_NAME, expectedRoi: null });
+  if (usesCrossCutting) streamList.push({ id: CROSS_CUTTING_ID, name: CROSS_CUTTING_NAME, expectedRoi: null });
 
-  // --- anchors: trains laid out in a grid, cross-cutting set apart ----------
-  const TRAIN_SPACING = 1400;
-  const realTrains = trainList.filter((t) => t.id !== CROSS_CUTTING_ID);
-  const perRow = Math.max(1, Math.ceil(Math.sqrt(realTrains.length)));
-  const trainAnchor = new Map<string, Position>();
-  realTrains.forEach((t, i) => {
-    trainAnchor.set(t.id, {
-      x: (i % perRow) * TRAIN_SPACING,
-      y: Math.floor(i / perRow) * TRAIN_SPACING,
+  // --- anchors: streams laid out in a grid, cross-cutting set apart ----------
+  const STREAM_SPACING = 1400;
+  const realStreams = streamList.filter((t) => t.id !== CROSS_CUTTING_ID);
+  const perRow = Math.max(1, Math.ceil(Math.sqrt(realStreams.length)));
+  const streamAnchor = new Map<string, Position>();
+  realStreams.forEach((t, i) => {
+    streamAnchor.set(t.id, {
+      x: (i % perRow) * STREAM_SPACING,
+      y: Math.floor(i / perRow) * STREAM_SPACING,
     });
   });
   if (usesCrossCutting) {
-    const midCol = (Math.min(perRow, realTrains.length) - 1) / 2;
-    trainAnchor.set(CROSS_CUTTING_ID, { x: midCol * TRAIN_SPACING, y: -TRAIN_SPACING });
+    const midCol = (Math.min(perRow, realStreams.length) - 1) / 2;
+    streamAnchor.set(CROSS_CUTTING_ID, { x: midCol * STREAM_SPACING, y: -STREAM_SPACING });
   }
 
   const nodes: CanvasNode[] = [];
   const squadAnchor = new Map<string, Position>();
 
-  for (const t of trainList) {
-    const anchor = trainAnchor.get(t.id)!;
+  for (const t of streamList) {
+    const anchor = streamAnchor.get(t.id)!;
     if (t.id === CROSS_CUTTING_ID) {
       const pos = positions.get(`unit:${CROSS_CUTTING_ID}`) ?? anchor;
       squadAnchor.set(CROSS_CUTTING_ID, pos);
@@ -225,8 +225,8 @@ export function buildCanvasMap(
         name: CROSS_CUTTING_NAME,
         x: pos.x,
         y: pos.y,
-        trainId: CROSS_CUTTING_ID,
-        trainName: CROSS_CUTTING_NAME,
+        streamId: CROSS_CUTTING_ID,
+        streamName: CROSS_CUTTING_NAME,
         leadPersonId: null,
         leadName: null,
         targetHeadcount: null,
@@ -239,7 +239,7 @@ export function buildCanvasMap(
       });
       continue;
     }
-    const squadTeams = teamsByTrain.get(t.id) ?? [];
+    const squadTeams = teamsByStream.get(t.id) ?? [];
     const squadRadius = Math.max(300, 240 + squadTeams.length * 22);
     squadTeams.forEach((team, i) => {
       const seed = ring(i, squadTeams.length, squadRadius, anchor.x, anchor.y);
@@ -252,8 +252,8 @@ export function buildCanvasMap(
         name: team.name,
         x: pos.x,
         y: pos.y,
-        trainId: t.id,
-        trainName: t.name,
+        streamId: t.id,
+        streamName: t.name,
         leadPersonId: team.leadPersonId,
         leadName: team.leadPersonId ? (peopleById.get(team.leadPersonId)?.name ?? null) : null,
         targetHeadcount: team.targetHeadcount,
@@ -283,7 +283,7 @@ export function buildCanvasMap(
       if (homeOf.get(p.id) !== CROSS_CUTTING_ID) continue;
       const asg = assignmentsByPerson.get(p.id) ?? [];
       if (asg.length === 0) continue;
-      // Both tiers take a seat in every squad they serve — cross-train people
+      // Both tiers take a seat in every squad they serve — cross-stream people
       // are only distinguished by the seat's accent, not by a separate node.
       for (const a of asg) ghostSeatCount.set(a.orgUnitId, (ghostSeatCount.get(a.orgUnitId) ?? 0) + 1);
     }
@@ -328,9 +328,9 @@ export function buildCanvasMap(
           bucketMembers.push(p);
           continue;
         }
-        // Classify: cross-squad if all allocations share one train; cross-train otherwise.
-        const trainSet = new Set(asg.map((a) => squadToTrainId.get(a.orgUnitId)).filter((t): t is string => !!t));
-        const tier: "squad" | "train" = trainSet.size <= 1 ? "squad" : "train";
+        // Classify: cross-squad if all allocations share one stream; cross-stream otherwise.
+        const streamSet = new Set(asg.map((a) => squadToStreamId.get(a.orgUnitId)).filter((t): t is string => !!t));
+        const tier: "squad" | "stream" = streamSet.size <= 1 ? "squad" : "stream";
         // Always seed from squad positions for cross-cutting people — persisted positions
         // from the old bucket layout are stale and cause off-screen connection lines.
         nodes.push({
@@ -384,5 +384,5 @@ export function buildCanvasMap(
     }
   }
 
-  return { trains: trainList, nodes };
+  return { streams: streamList, nodes };
 }

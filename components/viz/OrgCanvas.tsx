@@ -29,7 +29,7 @@ import {
   type CanvasNode,
   type CanvasSquad,
   type CanvasPerson,
-  type CanvasTrain,
+  type CanvasStream,
   type CanvasAllocation,
 } from "@/lib/canvas/buildCanvasMap";
 
@@ -67,7 +67,7 @@ const C = {
   squad: "#10b981",
   cross: "#f59e0b",
   external: "#8b5cf6",
-  crossTrain: "#6366f1", // seats held by someone who spans multiple trains
+  crossStream: "#6366f1", // seats held by someone who spans multiple streams
   utilOk: "#22c55e",
   utilWarn: "#eab308",
   utilOver: "#ef4444",
@@ -77,10 +77,10 @@ const C = {
 const FONT =
   "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif";
 
-type Lod = "trains" | "squads" | "people" | "roles";
+type Lod = "streams" | "squads" | "people" | "roles";
 
 const LOD_LABELS: [Lod, string][] = [
-  ["trains", "Trains"],
+  ["streams", "Value streams"],
   ["squads", "Squads"],
   ["people", "People"],
   ["roles", "Roles"],
@@ -106,7 +106,7 @@ function lodFor(scale: number): Lod {
   if (scale >= 1.5) return "roles";
   if (scale >= 0.45) return "people";
   if (scale >= 0.26) return "squads";
-  return "trains";
+  return "streams";
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -181,7 +181,7 @@ export function OrgCanvas({
   );
 
   const [nodes, setNodes] = useState<CanvasNode[]>(seed.nodes);
-  const trains = seed.trains;
+  const streams = seed.streams;
 
   // Re-derive node content (allocations, home) whenever real data or a staged
   // scenario move changes, keeping each node's current x/y. When mapNodeRows
@@ -209,7 +209,8 @@ export function OrgCanvas({
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [dropTrainId, setDropTrainId] = useState<string | null>(null);
+  const [dropStreamId, setDropStreamId] = useState<string | null>(null);
+  const [railFocus, setRailFocus] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
@@ -222,7 +223,7 @@ export function OrgCanvas({
   const squads = useMemo(() => nodes.filter((n): n is CanvasSquad => n.kind === "squad"), [nodes]);
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-  const realTrains = useMemo(() => trains.filter((t) => t.id !== CROSS_CUTTING_ID), [trains]);
+  const realStreams = useMemo(() => streams.filter((t) => t.id !== CROSS_CUTTING_ID), [streams]);
 
   // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
   const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
@@ -273,14 +274,14 @@ export function OrgCanvas({
     [overlayType, overAlloc, allocByPerson],
   );
 
-  const trainOverlay = useCallback(
-    (trainId: string, openRoles: number, cost: number): NodeOverlay => {
+  const streamOverlay = useCallback(
+    (streamId: string, openRoles: number, cost: number): NodeOverlay => {
       if (overlayType === "none") return NO_OVERLAY;
       if (overlayType === "allocation") return { ...NO_OVERLAY, dimmed: true };
       if (overlayType === "gaps") {
         return { dimmed: openRoles === 0, badge: openRoles > 0 ? `${openRoles} open` : null, heatPct: 0 };
       }
-      const roi = rollupMap.get(trainId)?.totalRoi ?? 0;
+      const roi = rollupMap.get(streamId)?.totalRoi ?? 0;
       return {
         dimmed: false,
         badge: roi > 0 ? `ROI ${money(roi)}` : null,
@@ -343,8 +344,29 @@ export function OrgCanvas({
 
   const squadR = useCallback((id: string) => squadNodeRadius(seatsBySquad.get(id) ?? 0), [seatsBySquad]);
 
+  // Everyone who holds seats outside their own squad, split by how far they
+  // reach. Feeds the rail above the canvas — the one place cross-cutting people
+  // are enumerable rather than scattered across it.
+  const sharedPeople = useMemo(() => {
+    const rows = people
+      .filter((p) => p.crossCuttingTier !== null && p.allocations.length > 0)
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        tier: p.crossCuttingTier as "squad" | "stream",
+        teams: p.allocations.length,
+        pct: p.allocations.reduce((t, a) => t + a.pct, 0),
+      }));
+    rows.sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name));
+    return {
+      streams: rows.filter((r) => r.tier === "stream"),
+      squads: rows.filter((r) => r.tier === "squad"),
+    };
+  }, [people]);
+
+
   // Ghost seat positions for every cross-cutting person with allocations —
-  // cross-squad and cross-train alike. Placed into the *largest
+  // cross-squad and cross-stream alike. Placed into the *largest
   // angular gaps* of the squad's real member ring, measured from live node
   // positions — so a ghost never lands on a member, and the layout survives
   // dragging members (or the squad itself) around.
@@ -411,12 +433,12 @@ export function OrgCanvas({
     return result;
   }, [people, byId, seatsBySquad]);
 
-  const trainAgg = useMemo(() => {
-    return trains
+  const streamAgg = useMemo(() => {
+    return streams
       .map((t) => {
-        const own = squads.filter((s) => s.trainId === t.id);
+        const own = squads.filter((s) => s.streamId === t.id);
         if (own.length === 0) return null;
-        // A train is drawn as a rounded rectangle sized to contain its squads
+        // A stream is drawn as a rounded rectangle sized to contain its squads
         // *and* their member rings — so more squads reads as a bigger block.
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         for (const n of own) {
@@ -445,7 +467,7 @@ export function OrgCanvas({
         return { ...t, x: cx, y: cy, hw, hh, heads, cost, openRoles, squads: own.length };
       })
       .filter((t): t is NonNullable<typeof t> => t !== null);
-  }, [trains, squads, squadStats, seatsBySquad]);
+  }, [streams, squads, squadStats, seatsBySquad]);
 
   // --- sizing ----------------------------------------------------------------
   useEffect(() => {
@@ -565,14 +587,14 @@ export function OrgCanvas({
     [squads, seatsBySquad],
   );
 
-  // Nearest train whose hull actually contains (x, y) — used to reparent a
-  // dragged squad onto a different train. Excludes the synthetic
+  // Nearest stream whose hull actually contains (x, y) — used to reparent a
+  // dragged squad onto a different stream. Excludes the synthetic
   // cross-cutting bucket, which isn't a real org unit.
-  const nearestTrain = useCallback(
+  const nearestStream = useCallback(
     (x: number, y: number) => {
-      let nearest: (typeof trainAgg)[number] | null = null;
+      let nearest: (typeof streamAgg)[number] | null = null;
       let best = Infinity;
-      for (const t of trainAgg) {
+      for (const t of streamAgg) {
         if (t.id === CROSS_CUTTING_ID) continue;
         if (Math.abs(x - t.x) > t.hw || Math.abs(y - t.y) > t.hh) continue;
         const area = t.hw * t.hh; // nested boxes: the tightest one wins
@@ -583,12 +605,12 @@ export function OrgCanvas({
       }
       return nearest;
     },
-    [trainAgg],
+    [streamAgg],
   );
 
   const onPersonDragMove = useCallback(
     (e: KonvaEventObject<DragEvent>) => {
-      if (lod === "trains") {
+      if (lod === "streams") {
         setDropTargetId(null);
         return;
       }
@@ -601,10 +623,10 @@ export function OrgCanvas({
   const onSquadDragMove = useCallback(
     (e: KonvaEventObject<DragEvent>, squad: CanvasSquad) => {
       if (squad.isCrossCutting) return;
-      const target = nearestTrain(e.target.x(), e.target.y());
-      setDropTrainId(target && target.id !== squad.trainId ? target.id : null);
+      const target = nearestStream(e.target.x(), e.target.y());
+      setDropStreamId(target && target.id !== squad.streamId ? target.id : null);
     },
-    [nearestTrain],
+    [nearestStream],
   );
 
   const onNodeDragEnd = useCallback(
@@ -612,7 +634,7 @@ export function OrgCanvas({
       const x = e.target.x();
       const y = e.target.y();
       setDropTargetId(null);
-      setDropTrainId(null);
+      setDropStreamId(null);
       setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
       const nodeType = node.kind === "squad" ? "unit" : "person";
       startTransition(async () => {
@@ -622,18 +644,18 @@ export function OrgCanvas({
 
       if (node.kind === "squad") {
         if (node.isCrossCutting) return;
-        const target = nearestTrain(x, y);
-        if (!target || target.id === node.trainId) return;
-        const targetTrainId = target.id;
+        const target = nearestStream(x, y);
+        if (!target || target.id === node.streamId) return;
+        const targetStreamId = target.id;
         startTransition(async () => {
-          const result = await moveOrgUnit(node.id, targetTrainId);
-          if (!result.ok) console.error("Failed to move squad to train:", result.error);
+          const result = await moveOrgUnit(node.id, targetStreamId);
+          if (!result.ok) console.error("Failed to move squad to stream:", result.error);
           else router.refresh();
         });
         return;
       }
 
-      if (node.kind !== "person" || lod === "trains" || node.allocations.length === 0) return;
+      if (node.kind !== "person" || lod === "streams" || node.allocations.length === 0) return;
       const target = nearestSquad(x, y);
       if (!target) return;
       const targetSquadId = target.id;
@@ -653,7 +675,7 @@ export function OrgCanvas({
         else router.refresh();
       });
     },
-    [startTransition, lod, nearestSquad, nearestTrain, scenario, router],
+    [startTransition, lod, nearestSquad, nearestStream, scenario, router],
   );
 
   function toggleScenario() {
@@ -716,7 +738,7 @@ export function OrgCanvas({
   const hovered = hover ? byId.get(hover.id) : null;
   const panelOpen = !!selected || !!creating;
 
-  const showSquads = lod !== "trains";
+  const showSquads = lod !== "streams";
   const showPeople = lod === "people" || lod === "roles";
 
   return (
@@ -799,9 +821,9 @@ export function OrgCanvas({
           }}
         >
           <Layer listening={false}>
-            {trainAgg.map((t) => (
+            {streamAgg.map((t) => (
               <Group key={`hull-${t.id}`} x={t.x} y={t.y}>
-                {dropTrainId === t.id && (
+                {dropStreamId === t.id && (
                   <Rect
                     x={-t.hw - 16}
                     y={-t.hh - 16}
@@ -820,8 +842,8 @@ export function OrgCanvas({
                   cornerRadius={40}
                   fill={C.white}
                   opacity={showSquads ? 0.55 : 0}
-                  stroke={dropTrainId === t.id ? "#34d399" : C.line}
-                  strokeWidth={dropTrainId === t.id ? 4 / scale : 2 / scale}
+                  stroke={dropStreamId === t.id ? "#34d399" : C.line}
+                  strokeWidth={dropStreamId === t.id ? 4 / scale : 2 / scale}
                   perfectDrawEnabled={false}
                 />
                 {showSquads && (
@@ -843,9 +865,9 @@ export function OrgCanvas({
 
           <Layer>
             {!showSquads &&
-              trainAgg.map((t) => {
-                const ov = trainOverlay(t.id, t.openRoles, t.cost);
-                // Collapsed train card — width grows with squad count.
+              streamAgg.map((t) => {
+                const ov = streamOverlay(t.id, t.openRoles, t.cost);
+                // Collapsed stream card — width grows with squad count.
                 const bw = clamp(140 + t.squads * 26, 150, 300);
                 const bh = 104;
                 const tw = bw * 2 - 36;
@@ -962,28 +984,31 @@ export function OrgCanvas({
 
             {/* Ghost seats — a borrowed seat for someone whose home is elsewhere.
                 Dashed + smaller than a real seat; the wedge is this squad's
-                share of them. Amber = shared inside this train; indigo + an
-                outer halo = shared across trains (they hold seats in another
-                train too). Person-level state (over-allocation, utilisation
+                share of them. Amber = shared inside this stream; indigo + an
+                outer halo = shared across streams (they hold seats in another
+                stream too). Person-level state (over-allocation, utilisation
                 colour) lives on the person's panel, not on a borrowed seat. */}
             {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }) => {
               const ov = personOverlay(p);
               const sel = selectedId === p.id;
-              const spansTrains = p.crossCuttingTier === "train";
-              const accent = spansTrains ? C.crossTrain : C.cross;
+              const spansStreams = p.crossCuttingTier === "stream";
+              const accent = spansStreams ? C.crossStream : C.cross;
+              const focused = railFocus === p.id;
+              const muted = railFocus !== null && !focused;
               return (
                 <Group
                   key={`ghost-${p.id}-${a.unitId}`}
                   x={gx}
                   y={gy}
-                  opacity={ov.dimmed ? 0.28 : 1}
+                  opacity={muted ? 0.16 : ov.dimmed ? 0.28 : 1}
                   onClick={() => selectNode(p.id)}
                   onTap={() => selectNode(p.id)}
                   onMouseEnter={() => showHover(p.id)}
                   onMouseLeave={() => setHover(null)}
                 >
-                  {spansTrains && (
-                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={1.25} opacity={0.5} listening={false} />
+                  {focused && <Circle radius={GHOST_R + 13} fill={accent} opacity={0.16} listening={false} />}
+                  {spansStreams && (
+                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={focused ? 2 : 1.25} opacity={focused ? 0.85 : 0.5} listening={false} />
                   )}
                   <Circle radius={GHOST_R} fill={C.white} />
                   <Arc
@@ -995,7 +1020,7 @@ export function OrgCanvas({
                     opacity={0.18}
                     listening={false}
                   />
-                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
+                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel || focused ? 3.5 : 2.5} dash={[4, 4]} />
                   <Text
                     text={shortName(p.name)}
                     x={-56}
@@ -1024,7 +1049,7 @@ export function OrgCanvas({
                     key={p.id}
                     x={p.x}
                     y={p.y}
-                    opacity={ov.dimmed ? 0.3 : 1}
+                    opacity={railFocus !== null ? 0.16 : ov.dimmed ? 0.3 : 1}
                     draggable
                     onDragMove={onPersonDragMove}
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
@@ -1082,6 +1107,41 @@ export function OrgCanvas({
           <span style={{ color: C.inkSoft, fontVariantNumeric: "tabular-nums" }}>{scale.toFixed(2)}×</span>
         </div>
 
+        {showPeople && (sharedPeople.streams.length > 0 || sharedPeople.squads.length > 0) && (
+          <div style={S.rail} onMouseLeave={() => setRailFocus(null)}>
+            {([
+              ["stream", "multiple value streams", sharedPeople.streams, C.crossStream],
+              ["squad", "multiple squads", sharedPeople.squads, C.cross],
+            ] as const)
+              .filter(([, , rows]) => rows.length > 0)
+              .map(([tier, label, rows, accent]) => (
+                <div key={tier} style={S.railGroup}>
+                  <span style={S.railLabel}>
+                    <i style={{ ...S.sw, border: `2px dashed ${accent}`, background: "transparent" }} />
+                    {label}
+                    <b style={{ marginLeft: 6, color: C.ink }}>{rows.length}</b>
+                  </span>
+                  {rows.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      style={S.railChip(railFocus === r.id || selectedId === r.id, accent)}
+                      onMouseEnter={() => setRailFocus(r.id)}
+                      onFocus={() => setRailFocus(r.id)}
+                      onClick={() => selectNode(r.id)}
+                      title={`${r.name} — ${r.teams} teams, ${r.pct}% allocated`}
+                    >
+                      {r.name}
+                      <span style={{ color: C.inkSoft, marginLeft: 6, fontVariantNumeric: "tabular-nums" }}>
+                        {r.teams}×
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+          </div>
+        )}
+
         <div style={S.legend}>
           <span>
             <i style={{ ...S.sw, background: C.utilOk }} /> ≤100%
@@ -1093,10 +1153,10 @@ export function OrgCanvas({
             <i style={{ ...S.sw, background: C.utilOver }} /> over
           </span>
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> shared in train
+            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple squads
           </span>
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.crossTrain}`, background: "transparent" }} /> shared across trains
+            <i style={{ ...S.sw, border: `2px dashed ${C.crossStream}`, background: "transparent" }} /> multiple value streams
           </span>
         </div>
 
@@ -1133,7 +1193,7 @@ export function OrgCanvas({
                 <PersonForm mode="create" squads={squads} onSaved={closePanel} onCancel={closePanel} />
               )}
               {creating === "squad" && (
-                <SquadForm mode="create" trains={realTrains} people={people} onSaved={closePanel} onCancel={closePanel} />
+                <SquadForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
               )}
               {!creating && selected?.kind === "person" && !editing && (
                 <PersonBody person={selected} byId={byId} onSelect={selectNode} onEdit={() => setEditing(true)} />
@@ -1161,7 +1221,7 @@ export function OrgCanvas({
                 <SquadForm
                   mode="edit"
                   squad={selected}
-                  trains={realTrains}
+                  streams={realStreams}
                   people={people}
                   onSaved={() => setEditing(false)}
                   onCancel={() => setEditing(false)}
@@ -1259,7 +1319,7 @@ function SquadBody({
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ color: C.inkSoft, fontSize: 13 }}>
-          {squad.trainName}
+          {squad.streamName}
           {squad.vendorName ? ` · ${squad.vendorName}` : ""}
         </div>
         {!squad.isCrossCutting && (
@@ -1491,7 +1551,7 @@ function PersonForm({
 
 type SquadFormState = {
   name: string;
-  trainId: string;
+  streamId: string;
   leadPersonId: string;
   targetHeadcount: string;
   costPerMonth: string;
@@ -1500,10 +1560,10 @@ type SquadFormState = {
   vendorName: string;
 };
 
-function emptySquadForm(trains: CanvasTrain[]): SquadFormState {
+function emptySquadForm(streams: CanvasStream[]): SquadFormState {
   return {
     name: "",
-    trainId: trains[0]?.id ?? "",
+    streamId: streams[0]?.id ?? "",
     leadPersonId: "",
     targetHeadcount: "",
     costPerMonth: "",
@@ -1513,13 +1573,13 @@ function emptySquadForm(trains: CanvasTrain[]): SquadFormState {
   };
 }
 
-// Assumes the squad's real parentId is its train directly — true today (the
-// demo org has no sub-group nesting between train and team; see the "Sub-groups"
+// Assumes the squad's real parentId is its stream directly — true today (the
+// demo org has no sub-group nesting between stream and team; see the "Sub-groups"
 // story in docs/ROADMAP.md). Revisit if that nesting lands.
 function squadToForm(s: CanvasSquad): SquadFormState {
   return {
     name: s.name,
-    trainId: s.trainId,
+    streamId: s.streamId,
     leadPersonId: s.leadPersonId ?? "",
     targetHeadcount: s.targetHeadcount != null ? String(s.targetHeadcount) : "",
     costPerMonth: s.costPerMonth != null ? String(s.costPerMonth) : "",
@@ -1532,7 +1592,7 @@ function squadToForm(s: CanvasSquad): SquadFormState {
 function SquadForm({
   mode,
   squad,
-  trains,
+  streams,
   people,
   onSaved,
   onCancel,
@@ -1540,20 +1600,20 @@ function SquadForm({
 }: {
   mode: "create" | "edit";
   squad?: CanvasSquad;
-  trains: CanvasTrain[];
+  streams: CanvasStream[];
   people: CanvasPerson[];
   onSaved: () => void;
   onCancel: () => void;
   onDeleted?: () => void;
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<SquadFormState>(squad ? squadToForm(squad) : emptySquadForm(trains));
+  const [form, setForm] = useState<SquadFormState>(squad ? squadToForm(squad) : emptySquadForm(streams));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function submit() {
-    if (!form.trainId) {
-      setError("Choose a train");
+    if (!form.streamId) {
+      setError("Choose a value stream");
       return;
     }
     setError(null);
@@ -1561,7 +1621,7 @@ function SquadForm({
       const payload = {
         name: form.name,
         kind: "team" as const,
-        parentId: form.trainId,
+        parentId: form.streamId,
         leadPersonId: form.leadPersonId,
         targetHeadcount: form.targetHeadcount,
         costPerMonth: form.costPerMonth,
@@ -1594,14 +1654,14 @@ function SquadForm({
     <>
       <label style={S.formLabel}>Name *</label>
       <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      <label style={S.formLabel}>Train *</label>
+      <label style={S.formLabel}>Value stream *</label>
       <select
         style={S.formInput}
-        value={form.trainId}
-        onChange={(e) => setForm({ ...form, trainId: e.target.value })}
+        value={form.streamId}
+        onChange={(e) => setForm({ ...form, streamId: e.target.value })}
       >
-        {trains.length === 0 && <option value="">No trains yet</option>}
-        {trains.map((t) => (
+        {streams.length === 0 && <option value="">No value streams yet</option>}
+        {streams.map((t) => (
           <option key={t.id} value={t.id}>
             {t.name}
           </option>
@@ -1936,6 +1996,44 @@ const S = {
     pointerEvents: "none" as const,
   },
   sw: { display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 5, verticalAlign: "middle" },
+  rail: {
+    position: "absolute" as const,
+    top: 14,
+    left: "50%",
+    transform: "translateX(-50%)",
+    maxWidth: "calc(100% - 28px)",
+    display: "flex",
+    alignItems: "center",
+    gap: 18,
+    padding: "8px 14px",
+    background: "#ffffffeb",
+    border: `1px solid ${C.line}`,
+    borderRadius: 999,
+    fontSize: 12,
+    overflowX: "auto" as const,
+    whiteSpace: "nowrap" as const,
+    zIndex: 20,
+  },
+  railGroup: { display: "flex", alignItems: "center", gap: 6 },
+  railLabel: {
+    color: C.inkSoft,
+    fontWeight: 600,
+    marginRight: 2,
+    display: "inline-flex",
+    alignItems: "center",
+  },
+  railChip: (on: boolean, accent: string) => ({
+    border: `1px solid ${on ? accent : C.line}`,
+    background: on ? `${accent}1f` : C.white,
+    color: C.ink,
+    borderRadius: 999,
+    padding: "3px 9px",
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "inherit",
+    cursor: "pointer",
+    lineHeight: 1.5,
+  }),
   bubble: {
     position: "absolute" as const,
     transform: "translate(-50%, calc(-100% - 14px))",
