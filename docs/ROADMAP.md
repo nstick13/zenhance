@@ -5,7 +5,7 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
 ## Status — as of 2026-08-26
-- **Version 0.1.29**, deployed to **production** on Vercel (Neon Postgres + Clerk auth). Migration `0003` must be applied by hand in Neon's SQL editor before that deploy works — Drizzle's `select()` names every column, so any query touching `people` fails until the new columns exist.
+- **Version 0.1.31**, deployed to **production** on Vercel (Neon Postgres + Clerk auth). Migrations `0003` (people attributes) and `0004` (`workspaces.lens`) must be applied by hand in Neon's SQL editor **before** the deploy — Drizzle's `select()` names every column, so an unapplied migration 500s every query touching that table, and `0004`'s table is `workspaces`, which means the whole app.
 - **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
 - **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, team reparenting, inline create/edit/delete for people and teams, and (v0.1.16–22) the cross-cutting seat model.
 - **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each team they serve — amber for multiple teams, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
@@ -31,7 +31,7 @@ Pure viz, no schema. Fixes the flat first impression and lands the first slice o
 - ✅ **Open on a view, not a fit** — lands on the value stream with the most open roles rather than framing the whole world at the least informative zoom.
 - ✅ **Depth** — soft shadows under team circles and stream cards.
 
-### S2 — Recognized person attributes  *(schema + editing shipped v0.1.29; import mapping outstanding)*
+### S2 — Recognized person attributes  *(schema + editing shipped v0.1.29)* ⬅ **import mapping is next**
 **Done:** `disciplines` table per workspace + `people.disciplineId`; `people.employment` (fixed enum `fte|contractor|vendor|unknown`); `people.location`; `people.timezone` (IANA). Migration `0003_silent_power_pack.sql`, applied by hand in Neon's SQL editor (and locally with `psql -f`) — **not** recorded in Drizzle's `__drizzle_migrations` ledger, same as `0001`, so a future `db:migrate` may try to replay it. Editing lives in the canvas person panel/form and `/people`. `ensureDiscipline` is find-or-create.
 
 **Three fields, deliberately distinct — do not conflate:**
@@ -43,11 +43,19 @@ Pure viz, no schema. Fixes the flat first impression and lands the first slice o
 
 **Outstanding:** import column-mapping for the four new fields, including a **title → discipline suggestion** at ingest (most orgs' exports only have a title; without the suggestion the analyzable field stays empty and quietly disables half the findings). Unrecognised values should auto-create via `ensureDiscipline` rather than blocking the import on taxonomy setup.
 
-### S3 — The lens config  ⬅ **recommended next**
-Per-workspace, persisted. The data it keys off now exists.
-- **Colour by:** utilisation (today) / discipline / employment type / value stream.
-- **Label by:** name / name + title / initials.
-- **Toggles:** cross-cutting render mode; the shared-people rail (built v0.1.21, removed v0.1.22 — it should return as an *option*, not a fixture); stat lines; stream headers.
+### S3 — The lens config  *(colour-by + label-by shipped v0.1.31; toggles outstanding)*
+Per-workspace, persisted to `workspaces.lens` (jsonb). Migration `0004_mean_spirit.sql` — **hand-apply in Neon before the deploy**, same as `0001`/`0003`: `requireWorkspace` does `select({ workspace: workspaces })`, so until the column exists *every* page 500s.
+
+**Done (v0.1.31):**
+- ✅ **Colour by** utilisation (default, unchanged) / discipline / employment / value stream. Disciplines use `disciplines.color` when set, else a ramp; a *missing* value is grey (`NO_VALUE_COLOR`), never a ramp slot, so a gap reads as a gap.
+- ✅ **Label by** name / name + title / initials. Initials render *inside* the seat — at that setting the point is the org's shape, not its roster.
+- ✅ **Legend follows the lens**, counting only values present on the map, most-populous first, missing-value bucket pinned last. The two dashed cross-cutting entries are *shape*, not colour, so they survive every lens.
+- ✅ **Ghost seats obey the lens too** — under a non-default colour they answer the lens's question; "shared" is carried by the dash, the smaller radius and the halo. Under utilisation they keep the amber/indigo tiers exactly as before.
+- ✅ **Facts outrank the lens:** the over-110% pip stays red under every setting, so colour-by-discipline can't hide who is drowning.
+- ✅ All meaning lives in one pure module, `lib/canvas/lens.ts` (18 Vitest cases). Applied optimistically, persisted in the background — a display preference never makes the map wait on a round-trip.
+
+**Outstanding — the toggles:** cross-cutting render mode; the shared-people rail (built v0.1.21, removed v0.1.22 — it should return as an *option*, not a fixture; restore from `0783c92`); stat lines; stream headers. Each is a `Lens` field + a row in `LensChoice`; `normalizeLens` already degrades unknown blobs per-field, so adding one can't break an existing workspace.
+
 - *Why this before finishing S2:* the demo org already carries the data, colour-by-discipline is the most direct proof of the configurability thesis, and import mapping is the bigger chunk that benefits from knowing which fields earn a place on the map. **Flip the order if a real pilot is closer than a pitch** — display for data nobody can import is backwards for an actual customer.
 
 ### S4 — The findings S2 unlocks

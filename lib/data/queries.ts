@@ -16,6 +16,7 @@ import {
   type Discipline,
 } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
+import { normalizeLens, type Lens } from "@/lib/canvas/lens";
 
 /** Everything needed to render the org, fetched in one workspace-scoped pass. */
 export type OrgSnapshot = {
@@ -24,6 +25,8 @@ export type OrgSnapshot = {
   units: OrgUnit[];
   assignments: Assignment[];
   disciplines: Discipline[];
+  /** The workspace's display lens (S3), already normalised to a valid shape. */
+  lens: Lens;
 };
 
 export async function getOrgSnapshot(): Promise<OrgSnapshot> {
@@ -35,7 +38,14 @@ export async function getOrgSnapshot(): Promise<OrgSnapshot> {
     db.select().from(assignments).where(eq(assignments.workspaceId, wid)),
     db.select().from(disciplines).where(eq(disciplines.workspaceId, wid)).orderBy(asc(disciplines.sortOrder)),
   ]);
-  return { workspaceId: wid, people: p, units: u, assignments: a, disciplines: d };
+  return {
+    workspaceId: wid,
+    people: p,
+    units: u,
+    assignments: a,
+    disciplines: d,
+    lens: normalizeLens(workspace.lens),
+  };
 }
 
 export async function getDisciplines(): Promise<Discipline[]> {

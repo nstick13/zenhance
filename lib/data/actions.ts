@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, mapNodes, disciplines, eq, and } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, disciplines, workspaces, eq, and } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
@@ -11,6 +11,7 @@ import {
   assignmentInput,
   assignmentPatch,
   disciplineInput,
+  lensInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
 import { getOrgSnapshot } from "@/lib/data/queries";
@@ -295,6 +296,24 @@ export async function saveMapNodePosition(
       target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
       set: { x: x.toFixed(2), y: y.toFixed(2), updatedAt: new Date() },
     });
+  return { ok: true, data: undefined };
+}
+
+// --- lens (S3: per-workspace display config) --------------------------------
+/**
+ * Persist the map lens. Validated here rather than trusted, because the value
+ * lands in a schemaless jsonb column — the Zod parse *is* the column type.
+ * Only /org re-renders: the lens changes nothing on the CRUD pages.
+ */
+export async function saveLens(raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = lensInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid lens");
+  await db
+    .update(workspaces)
+    .set({ lens: parsed.data, updatedAt: new Date() })
+    .where(eq(workspaces.id, workspace.id));
+  revalidatePath("/org");
   return { ok: true, data: undefined };
 }
 

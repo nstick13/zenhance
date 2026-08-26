@@ -20,6 +20,7 @@ import {
   updateOrgUnit,
   deleteOrgUnit,
   tidyUpCanvasLayout,
+  saveLens,
 } from "@/lib/data/actions";
 import {
   buildCanvasMap,
@@ -34,15 +35,22 @@ import {
   type CanvasAllocation,
 } from "@/lib/canvas/buildCanvasMap";
 
+import {
+  DEFAULT_LENS,
+  COLOR_BY_OPTIONS,
+  LABEL_BY_OPTIONS,
+  EMPLOYMENT_COLORS,
+  disciplineColors,
+  personColor,
+  personLabel,
+  buildLegend,
+  initialsOf,
+  isDefaultLens,
+  type Lens,
+} from "@/lib/canvas/lens";
+
 const CROSS_CUTTING_MODE = "connected" as const;
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
-
-/** "Marco Webb" -> "M. Webb". Ghost seats repeat the same person across teams;
- *  the short form keeps the ring readable without dropping identity. */
-const shortName = (name: string) => {
-  const parts = name.trim().split(/\s+/);
-  return parts.length < 2 ? name : `${parts[0][0]}. ${parts[parts.length - 1]}`;
-};
 import { overAllocatedPersonIds, allocationByPerson } from "@/lib/org/model";
 import { computeGaps } from "@/lib/analytics/gaps";
 import { computeRollup } from "@/lib/analytics/rollup";
@@ -170,12 +178,14 @@ export function OrgCanvas({
   assignments,
   mapNodeRows,
   disciplines,
+  lens: initialLens,
 }: {
   people: Person[];
   units: OrgUnit[];
   assignments: Assignment[];
   mapNodeRows: MapNodeRow[];
   disciplines: Discipline[];
+  lens: Lens;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -245,6 +255,25 @@ export function OrgCanvas({
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "team" | null>(null);
 
+  // --- lens (S3) ------------------------------------------------------------
+  // Held locally and applied on click, then persisted in the background: a
+  // display preference should never make the map wait on a round-trip. The
+  // server is the source of truth on next load, so a failed write just means
+  // the change didn't stick — nothing is lost.
+  const [lens, setLens] = useState<Lens>(initialLens);
+  const [lensOpen, setLensOpen] = useState(false);
+  const setLensField = useCallback(
+    <K extends keyof Lens>(key: K, value: Lens[K]) => {
+      setLens((prev) => {
+        if (prev[key] === value) return prev;
+        const next = { ...prev, [key]: value };
+        void saveLens(next);
+        return next;
+      });
+    },
+    [],
+  );
+
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const pinch = useRef<{ dist: number; center: { x: number; y: number } } | null>(null);
@@ -256,6 +285,13 @@ export function OrgCanvas({
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const realStreams = useMemo(() => streams.filter((t) => t.id !== CROSS_CUTTING_ID), [streams]);
 
+  /** Resolved colour per discipline — the row's own, else a ramp slot. */
+  const disciplineColor = useMemo(() => disciplineColors(disciplines), [disciplines]);
+  const disciplineName = useMemo(
+    () => new Map(disciplines.map((d) => [d.id, d.name])),
+    [disciplines],
+  );
+
   /** Stable identity colour per value stream. */
   const hueOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -263,6 +299,44 @@ export function OrgCanvas({
     m.set(CROSS_CUTTING_ID, C.inkSoft);
     return m;
   }, [realStreams]);
+
+  /** A person's home value stream — the team they sit in, not one they visit. */
+  const homeStreamOf = useCallback(
+    (p: CanvasPerson) => {
+      const home = byId.get(p.homeId);
+      return home && home.kind === "team" ? home : null;
+    },
+    [byId],
+  );
+
+  /** The one answer to "what colour is this seat?" — shared by real seats,
+   *  ghost seats and the panel, so the lens can never disagree with itself. */
+  const seatColor = useCallback(
+    (p: CanvasPerson) =>
+      personColor(p, {
+        lens,
+        utilisation: utilOf(p),
+        utilColor,
+        disciplineColor,
+        streamHue: hueOf.get(homeStreamOf(p)?.streamId ?? "") ?? null,
+      }),
+    [lens, disciplineColor, hueOf, homeStreamOf],
+  );
+
+  /** Legend entries for the active lens, counted over the people on the map. */
+  const legend = useMemo(
+    () =>
+      buildLegend(lens, people, {
+        utilisationOf: utilOf,
+        disciplineColor,
+        disciplineName,
+        streamHueOf: (p) => hueOf.get(homeStreamOf(p)?.streamId ?? "") ?? null,
+        streamNameOf: (p) => homeStreamOf(p)?.streamName ?? null,
+        employmentLabel: EMPLOYMENT_LABELS,
+        utilColor,
+      }),
+    [lens, people, disciplineColor, disciplineName, hueOf, homeStreamOf],
+  );
 
   // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
   const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
@@ -881,6 +955,35 @@ export function OrgCanvas({
             {isPending ? "Tidying…" : "Tidy up"}
           </button>
         </div>
+        {/* The lens hides behind one button rather than adding a sixth row of
+            pills — the topbar is already at its width budget. */}
+        <div style={{ ...S.overlayGroup, position: "relative" }}>
+          <button style={S.lensBtn(lensOpen || !isDefaultLens(lens))} onClick={() => setLensOpen((v) => !v)}>
+            ◎ Lens
+            {!isDefaultLens(lens) && <span style={S.lensDot} />}
+          </button>
+          {lensOpen && (
+            <>
+              <div style={S.scrim} onClick={() => setLensOpen(false)} />
+              <div style={S.lensPanel}>
+                <LensChoice
+                  title="Colour by"
+                  options={COLOR_BY_OPTIONS}
+                  value={lens.colorBy}
+                  onPick={(v) => setLensField("colorBy", v)}
+                />
+                <div style={S.lensDivider} />
+                <LensChoice
+                  title="Label by"
+                  options={LABEL_BY_OPTIONS}
+                  value={lens.labelBy}
+                  onPick={(v) => setLensField("labelBy", v)}
+                />
+                <p style={S.lensFoot}>Saved for this workspace.</p>
+              </div>
+            </>
+          )}
+        </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button style={S.btn} onClick={() => zoomBy(1.45)} aria-label="Zoom in">
             +
@@ -1192,7 +1295,15 @@ export function OrgCanvas({
               const ov = personOverlay(p);
               const sel = selectedId === p.id;
               const spansStreams = p.crossCuttingTier === "stream";
-              const accent = spansStreams ? C.crossStream : C.cross;
+              // Under the default (utilisation) lens a ghost seat keeps its
+              // cross-cutting accent — amber for cross-team, indigo for
+              // cross-stream. Under any other lens the seat answers the
+              // question the lens is asking, and "shared" is carried by the
+              // dash, the smaller radius and the halo instead of by hue.
+              const tierAccent = spansStreams ? C.crossStream : C.cross;
+              const accent = lens.colorBy === "utilisation" ? tierAccent : seatColor(p);
+              const gLabel = personLabel(p, lens, { short: true });
+              const gInitials = lens.labelBy === "initials";
               // Settle outward from the team they orbit, so the ring is seen forming.
               const home = byId.get(a.unitId);
               const inP = phase(introT, 0.34 + gi * 0.012, 0.34);
@@ -1210,7 +1321,7 @@ export function OrgCanvas({
                   onMouseLeave={() => setHover(null)}
                 >
                   {spansStreams && (
-                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={1.25} opacity={0.5} listening={false} />
+                    <Circle radius={GHOST_R + 5.5} stroke={tierAccent} strokeWidth={1.25} opacity={0.5} listening={false} />
                   )}
                   <Circle radius={GHOST_R} fill={C.white} />
                   <Arc
@@ -1223,19 +1334,26 @@ export function OrgCanvas({
                     listening={false}
                   />
                   <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
-                  <Text
-                    text={shortName(p.name)}
-                    x={-56}
-                    y={GHOST_R + 6}
-                    width={112}
-                    align="center"
-                    fontSize={12}
-                    fontFamily={FONT}
-                    fill={C.inkSoft}
-                    listening={false}
-                  />
-                  {lod === "roles" && (
-                    <Text text={`${a.pct}%`} x={-56} y={GHOST_R + 21} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={accent} listening={false} />
+                  {gInitials ? (
+                    <Text text={gLabel.primary} x={-20} y={-5} width={40} align="center" fontSize={12} fontStyle="bold" fontFamily={FONT} fill={C.inkSoft} listening={false} />
+                  ) : (
+                    <Text
+                      text={gLabel.primary}
+                      x={-56}
+                      y={GHOST_R + 6}
+                      width={112}
+                      align="center"
+                      fontSize={12}
+                      fontFamily={FONT}
+                      fill={C.inkSoft}
+                      listening={false}
+                    />
+                  )}
+                  {!gInitials && gLabel.secondary && (
+                    <Text text={gLabel.secondary} x={-56} y={GHOST_R + 20} width={112} align="center" fontSize={10.5} fontFamily={FONT} fill={C.inkSoft} opacity={0.75} listening={false} />
+                  )}
+                  {lod === "roles" && !gInitials && (
+                    <Text text={`${a.pct}%`} x={-56} y={GHOST_R + (gLabel.secondary ? 33 : 21)} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={accent} listening={false} />
                   )}
                 </Group>
               );
@@ -1250,6 +1368,11 @@ export function OrgCanvas({
                 const inP = phase(introT, 0.34 + pi * 0.012, 0.34);
                 const ix = home ? home.x + (p.x - home.x) * inP : p.x;
                 const iy = home ? home.y + (p.y - home.y) * inP : p.y;
+                const label = personLabel(p, lens);
+                // Initials go *inside* the circle: at that setting the point is
+                // to read the org's shape, not its roster, so nothing hangs
+                // below the seat to thicken the ring.
+                const initialsInside = lens.labelBy === "initials";
                 return (
                   <Group
                     key={p.id}
@@ -1264,10 +1387,20 @@ export function OrgCanvas({
                     onClick={() => selectNode(p.id)}
                     onTap={() => selectNode(p.id)}
                   >
-                    <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={shared ? 5 : 3.5} dash={shared ? [5, 3] : undefined} />
+                    <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : seatColor(p)} strokeWidth={shared ? 5 : 3.5} dash={shared ? [5, 3] : undefined} />
+                    {/* The over-110% pip is a *fact*, not a colour choice — it
+                        survives every lens, so switching to colour-by-discipline
+                        never hides who is drowning. */}
                     {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
-                    <Text text={p.name} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
-                    {lod === "roles" && (
+                    {initialsInside ? (
+                      <Text text={initialsOf(p.name)} x={-22} y={-6} width={44} align="center" fontSize={14} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    ) : (
+                      <Text text={label.primary} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    )}
+                    {!initialsInside && label.secondary && lod !== "roles" && (
+                      <Text text={label.secondary} x={-70} y={44} width={140} align="center" fontSize={11.5} fontFamily={FONT} fill={C.inkSoft} listening={false} />
+                    )}
+                    {lod === "roles" && !initialsInside && (
                       <>
                         <Text text={p.title ?? ""} x={-70} y={44} width={140} align="center" fontSize={11.5} fontFamily={FONT} fill={C.inkSoft} listening={false} />
                         <Text
@@ -1288,7 +1421,7 @@ export function OrgCanvas({
                       <Text
                         text={ov.badge}
                         x={-70}
-                        y={lod === "roles" ? 74 : 44}
+                        y={initialsInside ? 28 : lod === "roles" ? 74 : 44}
                         width={140}
                         align="center"
                         fontSize={11}
@@ -1313,16 +1446,18 @@ export function OrgCanvas({
           <span style={{ color: C.inkSoft, fontVariantNumeric: "tabular-nums" }}>{scale.toFixed(2)}×</span>
         </div>
 
+        {/* Legend follows the lens. The two dashed entries are *shape*, not
+            colour, so they stay true whatever colour is carrying. */}
         <div style={S.legend}>
-          <span>
-            <i style={{ ...S.sw, background: C.utilOk }} /> ≤100%
-          </span>
-          <span>
-            <i style={{ ...S.sw, background: C.utilWarn }} /> 100–110%
-          </span>
-          <span>
-            <i style={{ ...S.sw, background: C.utilOver }} /> over
-          </span>
+          {legend
+            .filter((e) => e.count > 0)
+            .map((e) => (
+              <span key={e.key}>
+                <i style={{ ...S.sw, background: e.color }} /> {e.label}
+                <span style={S.legendCount}>{e.count}</span>
+              </span>
+            ))}
+          <span style={S.legendSep} />
           <span>
             <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple teams
           </span>
@@ -2126,6 +2261,40 @@ function Assignments({
   );
 }
 
+/** One dimension of the lens: a titled column of radio-ish rows. Each row
+ *  carries a hint, because "Discipline" alone doesn't say what will change. */
+function LensChoice<T extends string>({
+  title,
+  options,
+  value,
+  onPick,
+}: {
+  title: string;
+  options: readonly { value: T; label: string; hint: string }[];
+  value: T;
+  onPick: (v: T) => void;
+}) {
+  return (
+    <div>
+      <div style={S.lensTitle}>{title}</div>
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button key={o.value} style={S.lensRow(on)} onClick={() => onPick(o.value)}>
+            <span style={S.lensTick(on)}>{on ? "●" : "○"}</span>
+            <span>
+              <span style={{ display: "block", fontWeight: 600 }}>{o.label}</span>
+              <span style={{ display: "block", fontSize: 11, color: C.inkSoft, marginTop: 1 }}>
+                {o.hint}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section style={{ marginTop: 18 }}>
@@ -2367,12 +2536,93 @@ const S = {
     borderBottom: on ? `2px solid ${C.cross}` : "2px solid transparent",
     paddingBottom: 1,
   }),
+  lensBtn: (active: boolean) => ({
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 8,
+    border: `1px solid ${active ? C.ink : C.line}`,
+    background: active ? C.ink : C.white,
+    color: active ? C.white : C.ink,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+  }),
+  lensDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: C.cross,
+    display: "inline-block",
+  },
+  scrim: {
+    position: "fixed" as const,
+    inset: 0,
+    zIndex: 40,
+  },
+  lensPanel: {
+    position: "absolute" as const,
+    top: 42,
+    left: 12,
+    zIndex: 41,
+    width: 248,
+    padding: 12,
+    background: C.white,
+    border: `1px solid ${C.line}`,
+    borderRadius: 14,
+    boxShadow: "0 12px 30px rgba(34,39,46,0.14)",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 10,
+  },
+  lensTitle: {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase" as const,
+    color: C.inkSoft,
+    marginBottom: 6,
+  },
+  lensRow: (on: boolean) => ({
+    width: "100%",
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 8,
+    border: "1px solid transparent",
+    background: on ? "#f2f0ea" : "transparent",
+    color: C.ink,
+    fontFamily: FONT,
+    fontSize: 13,
+    textAlign: "left" as const,
+    cursor: "pointer",
+  }),
+  lensTick: (on: boolean) => ({ fontSize: 11, lineHeight: "18px", color: on ? C.ink : "#c3bfb4" }),
+  lensDivider: { height: 1, background: C.line },
+  lensFoot: { margin: 0, fontSize: 11, color: C.inkSoft },
+  legendCount: {
+    marginLeft: 5,
+    fontVariantNumeric: "tabular-nums" as const,
+    color: "#a9a496",
+  },
+  legendSep: {
+    width: 1,
+    alignSelf: "stretch" as const,
+    background: C.line,
+  },
   legend: {
     position: "absolute" as const,
     left: 14,
     bottom: 14,
+    maxWidth: "min(62vw, 720px)",
     display: "flex",
-    gap: 14,
+    flexWrap: "wrap" as const,
+    alignItems: "center",
+    gap: "6px 14px",
     padding: "10px 14px",
     background: "#ffffffeb",
     border: `1px solid ${C.line}`,

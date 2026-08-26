@@ -98,3 +98,11 @@ export const disciplineInput = z.object({
   color: optionalString,
 });
 export type DisciplineInput = z.infer<typeof disciplineInput>;
+
+/** The map lens (S3). Both fields required — the client always sends a whole
+ *  lens, and a partial write would silently reset the other dimension. */
+export const lensInput = z.object({
+  colorBy: z.enum(["utilisation", "discipline", "employment", "stream"]),
+  labelBy: z.enum(["name", "nameTitle", "initials"]),
+});
+export type LensInput = z.infer<typeof lensInput>;

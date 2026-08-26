@@ -8,6 +8,7 @@ import {
   numeric,
   date,
   timestamp,
+  jsonb,
   unique,
   index,
   type AnyPgColumn,
@@ -52,6 +53,15 @@ export const workspaces = pgTable("workspaces", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   ownerUserId: text("owner_user_id").notNull(), // Clerk user id
+  /**
+   * The map lens (S3): how this workspace chooses to *read* its org — what
+   * colour and label carry. One jsonb blob rather than a column per setting,
+   * because the set of display dimensions will keep growing and each one is
+   * a display preference, never a fact anything queries or joins on.
+   * Null = the defaults in lib/canvas/lens.ts. Shape is validated on write
+   * and re-normalised on read, so an older/newer blob can never crash a map.
+   */
+  lens: jsonb("lens"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
