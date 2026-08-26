@@ -520,8 +520,7 @@ export function OrgCanvas({
   );
 
   // Open on a *view*, not on "fit everything": land on the value stream with the
-  // most open roles (tie-break on headcount) — the one worth looking at — and
-  // let the map assemble itself rather than appearing fully built.
+  // most open roles (tie-break on headcount) — the one worth looking at.
   const didFit = useRef(false);
   useEffect(() => {
     if (didFit.current || size.w === 0) return;
@@ -531,7 +530,14 @@ export function OrgCanvas({
       .sort((a, b) => b.openRoles - a.openRoles || b.heads - a.heads)[0];
     if (opening) frameBox(opening);
     else fit();
+  }, [fit, frameBox, streamAgg, size]);
 
+  // The intro clock is its own mount-only effect. It must NOT share the
+  // once-guarded effect above: any dep change (or React's dev double-invoke)
+  // runs that cleanup, cancels the frame, and the re-run returns early on the
+  // guard — leaving introT pinned at 0, which renders the whole map invisible.
+  // The timeout is a hard backstop: whatever happens to rAF, the map appears.
+  useEffect(() => {
     // Reduced motion: same code path, zero-length clock — the first frame lands on 1.
     const reduced = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const dur = reduced ? 1 : INTRO_MS;
@@ -543,8 +549,12 @@ export function OrgCanvas({
       if (t < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [fit, frameBox, streamAgg, size]);
+    const backstop = setTimeout(() => setIntroT(1), INTRO_MS + 500);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(backstop);
+    };
+  }, []);
 
   const zoomBy = useCallback(
     (factor: number) => {
