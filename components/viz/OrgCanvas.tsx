@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Stage, Layer, Group, Circle, Rect, Text, Line, Arc } from "react-konva";
+import { Stage, Layer, Group, Circle, Rect, Text, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
@@ -67,6 +67,7 @@ const C = {
   squad: "#10b981",
   cross: "#f59e0b",
   external: "#8b5cf6",
+  crossTrain: "#6366f1", // seats held by someone who spans multiple trains
   utilOk: "#22c55e",
   utilWarn: "#eab308",
   utilOver: "#ef4444",
@@ -331,9 +332,9 @@ export function OrgCanvas({
     const m = new Map<string, number>();
     const bump = (id: string) => m.set(id, (m.get(id) ?? 0) + 1);
     for (const p of people) {
-      if (p.crossCuttingTier === "squad") {
+      if (p.crossCuttingTier !== null) {
         for (const a of p.allocations) bump(a.unitId);
-      } else if (p.homeId !== CROSS_CUTTING_ID || p.crossCuttingTier === null) {
+      } else {
         bump(p.homeId);
       }
     }
@@ -342,7 +343,8 @@ export function OrgCanvas({
 
   const squadR = useCallback((id: string) => squadNodeRadius(seatsBySquad.get(id) ?? 0), [seatsBySquad]);
 
-  // Ghost seat positions for cross-squad people. Placed into the *largest
+  // Ghost seat positions for every cross-cutting person with allocations —
+  // cross-squad and cross-train alike. Placed into the *largest
   // angular gaps* of the squad's real member ring, measured from live node
   // positions — so a ghost never lands on a member, and the layout survives
   // dragging members (or the squad itself) around.
@@ -355,7 +357,7 @@ export function OrgCanvas({
     }
     const ghostsBySquad = new Map<string, Array<{ person: CanvasPerson; alloc: CanvasAllocation }>>();
     for (const p of people) {
-      if (p.crossCuttingTier !== "squad") continue;
+      if (p.crossCuttingTier === null) continue;
       for (const a of p.allocations) {
         if (!ghostsBySquad.has(a.unitId)) ghostsBySquad.set(a.unitId, []);
         ghostsBySquad.get(a.unitId)!.push({ person: p, alloc: a });
@@ -893,49 +895,6 @@ export function OrgCanvas({
                 );
               })}
 
-            {/* Cross-cutting connection lines — cross-train people only; cross-squad shown as ghost seats */}
-            {showSquads && showPeople && CROSS_CUTTING_MODE === "connected" &&
-              people
-                .filter((p) => p.homeId === CROSS_CUTTING_ID && p.crossCuttingTier === "train" && p.allocations.length > 0)
-                .map((p) =>
-                  p.allocations.map((a) => {
-                    const sq = byId.get(a.unitId);
-                    if (!sq) return null;
-                    const dx = p.x - sq.x;
-                    const dy = p.y - sq.y;
-                    const dist = Math.hypot(dx, dy);
-                    if (dist < 1) return null;
-                    // Terminate at squad circle edge
-                    const r = squadR(sq.id);
-                    const ex = sq.x + (dx / dist) * r;
-                    const ey = sq.y + (dy / dist) * r;
-                    const mx = (p.x + ex) / 2;
-                    const my = (p.y + ey) / 2;
-                    return (
-                      <Group key={`conn-${p.id}-${a.unitId}`} listening={false}>
-                        <Line
-                          points={[p.x, p.y, ex, ey]}
-                          stroke={C.squad}
-                          strokeWidth={2 / scale}
-                          dash={[8 / scale, 5 / scale]}
-                          opacity={0.45}
-                        />
-                        <Text
-                          x={mx - 20 / scale}
-                          y={my - 10 / scale}
-                          width={40 / scale}
-                          align="center"
-                          text={`${a.pct}%`}
-                          fontSize={11 / scale}
-                          fontFamily={FONT}
-                          fill={C.inkSoft}
-                          opacity={0.8}
-                        />
-                      </Group>
-                    );
-                  })
-                )}
-
             {showSquads &&
               squads.map((s) => {
                 const st = squadStats.get(s.id);
@@ -1001,13 +960,17 @@ export function OrgCanvas({
                 );
               })}
 
-            {/* Ghost seats — a cross-squad person's borrowed seat in this squad.
-                Amber + dashed + smaller than a real seat; the wedge is this
-                squad's share of them. Person-level state (over-allocation,
-                utilisation colour) lives on their own node, not on a seat. */}
+            {/* Ghost seats — a borrowed seat for someone whose home is elsewhere.
+                Dashed + smaller than a real seat; the wedge is this squad's
+                share of them. Amber = shared inside this train; indigo + an
+                outer halo = shared across trains (they hold seats in another
+                train too). Person-level state (over-allocation, utilisation
+                colour) lives on the person's panel, not on a borrowed seat. */}
             {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }) => {
               const ov = personOverlay(p);
               const sel = selectedId === p.id;
+              const spansTrains = p.crossCuttingTier === "train";
+              const accent = spansTrains ? C.crossTrain : C.cross;
               return (
                 <Group
                   key={`ghost-${p.id}-${a.unitId}`}
@@ -1019,17 +982,20 @@ export function OrgCanvas({
                   onMouseEnter={() => showHover(p.id)}
                   onMouseLeave={() => setHover(null)}
                 >
+                  {spansTrains && (
+                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={1.25} opacity={0.5} listening={false} />
+                  )}
                   <Circle radius={GHOST_R} fill={C.white} />
                   <Arc
                     innerRadius={0}
                     outerRadius={GHOST_R - 2.5}
                     angle={(360 * clamp(a.pct, 0, 100)) / 100}
                     rotation={-90}
-                    fill={C.cross}
+                    fill={accent}
                     opacity={0.18}
                     listening={false}
                   />
-                  <Circle radius={GHOST_R} stroke={sel ? C.ink : C.cross} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
+                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
                   <Text
                     text={shortName(p.name)}
                     x={-56}
@@ -1042,14 +1008,14 @@ export function OrgCanvas({
                     listening={false}
                   />
                   {lod === "roles" && (
-                    <Text text={`${a.pct}%`} x={-56} y={GHOST_R + 21} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={C.cross} listening={false} />
+                    <Text text={`${a.pct}%`} x={-56} y={GHOST_R + 21} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={accent} listening={false} />
                   )}
                 </Group>
               );
             })}
 
             {showPeople &&
-              people.filter((p) => p.crossCuttingTier !== "squad").map((p) => {
+              people.filter((p) => p.crossCuttingTier === null).map((p) => {
                 const u = utilOf(p);
                 const shared = p.allocations.length > 1;
                 const ov = personOverlay(p);
@@ -1127,7 +1093,10 @@ export function OrgCanvas({
             <i style={{ ...S.sw, background: C.utilOver }} /> over
           </span>
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.inkSoft}`, background: "transparent" }} /> shared across teams
+            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> shared in train
+          </span>
+          <span>
+            <i style={{ ...S.sw, border: `2px dashed ${C.crossTrain}`, background: "transparent" }} /> shared across trains
           </span>
         </div>
 

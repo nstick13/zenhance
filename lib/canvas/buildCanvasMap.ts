@@ -283,17 +283,19 @@ export function buildCanvasMap(
       if (homeOf.get(p.id) !== CROSS_CUTTING_ID) continue;
       const asg = assignmentsByPerson.get(p.id) ?? [];
       if (asg.length === 0) continue;
-      const trainSet = new Set(asg.map((a) => squadToTrainId.get(a.orgUnitId)).filter((t): t is string => !!t));
-      if (trainSet.size > 1) continue; // cross-train people get a node + lines, not seats
+      // Both tiers take a seat in every squad they serve — cross-train people
+      // are only distinguished by the seat's accent, not by a separate node.
       for (const a of asg) ghostSeatCount.set(a.orgUnitId, (ghostSeatCount.get(a.orgUnitId) ?? 0) + 1);
     }
   }
   const seatsOf = (squadId: string) =>
     (peopleByHome.get(squadId)?.length ?? 0) + (ghostSeatCount.get(squadId) ?? 0);
 
-  // In connected mode, cross-cutting people with team allocations are placed at
-  // the weighted centroid of those team anchors rather than in the bucket.
-  // People truly without any team allocation still cluster in the bucket.
+  // Cross-cutting people with team allocations are rendered as ghost seats in
+  // each squad they serve (see OrgCanvas), so their own node position is never
+  // drawn — the centroid below is only a stable fallback for anything that
+  // reads node coordinates. People without any team allocation cluster in the
+  // bucket and are drawn normally.
   const bucketMembers: Person[] = [];
 
   for (const [homeId, members] of peopleByHome) {
