@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Stage, Layer, Group, Circle, Text, Line } from "react-konva";
+import { Stage, Layer, Group, Circle, Text, Line, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
@@ -33,6 +33,14 @@ import {
 
 const CROSS_CUTTING_MODE = "connected" as const;
 const SQUAD_R = 78; // must match the squad Circle radius below
+const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
+
+/** "Marco Webb" -> "M. Webb". Ghost seats repeat the same person across squads;
+ *  the short form keeps the ring readable without dropping identity. */
+const shortName = (name: string) => {
+  const parts = name.trim().split(/\s+/);
+  return parts.length < 2 ? name : `${parts[0][0]}. ${parts[parts.length - 1]}`;
+};
 import { overAllocatedPersonIds, allocationByPerson } from "@/lib/org/model";
 import { computeGaps } from "@/lib/analytics/gaps";
 import { computeRollup } from "@/lib/analytics/rollup";
@@ -316,20 +324,21 @@ export function OrgCanvas({
     return m;
   }, [squads, people]);
 
-  // Ghost seat positions for cross-squad people — slotted into each squad's
-  // member ring after the regular members, using the same ring formula as
-  // buildCanvasMap so they don't overlap existing dots.
+  // Ghost seat positions for cross-squad people. Placed into the *largest
+  // angular gaps* of the squad's real member ring, measured from live node
+  // positions — so a ghost never lands on a member, and the layout survives
+  // dragging members (or the squad itself) around.
   const ghostSeats = useMemo(() => {
-    const regularCountBySquad = new Map<string, number>();
+    const membersBySquad = new Map<string, CanvasPerson[]>();
     for (const p of people) {
       if (p.crossCuttingTier !== null || p.homeId === CROSS_CUTTING_ID) continue;
-      regularCountBySquad.set(p.homeId, (regularCountBySquad.get(p.homeId) ?? 0) + 1);
+      if (!membersBySquad.has(p.homeId)) membersBySquad.set(p.homeId, []);
+      membersBySquad.get(p.homeId)!.push(p);
     }
     const ghostsBySquad = new Map<string, Array<{ person: CanvasPerson; alloc: CanvasAllocation }>>();
     for (const p of people) {
       if (p.crossCuttingTier !== "squad") continue;
-      const sorted = [...p.allocations].sort((a, b) => a.unitId.localeCompare(b.unitId));
-      for (const a of sorted) {
+      for (const a of p.allocations) {
         if (!ghostsBySquad.has(a.unitId)) ghostsBySquad.set(a.unitId, []);
         ghostsBySquad.get(a.unitId)!.push({ person: p, alloc: a });
       }
@@ -339,17 +348,41 @@ export function OrgCanvas({
       const sq = byId.get(squadId);
       if (!sq || sq.kind !== "squad" || (sq as CanvasSquad).isCrossCutting) continue;
       ghosts.sort((a, b) => a.person.name.localeCompare(b.person.name));
-      const regularCount = regularCountBySquad.get(squadId) ?? 0;
-      const totalCount = regularCount + ghosts.length;
-      const radius = Math.max(90, 60 + totalCount * 6);
-      ghosts.forEach(({ person, alloc }, ghostIdx) => {
-        const i = regularCount + ghostIdx;
-        const angle = (2 * Math.PI * i) / Math.max(1, totalCount) - Math.PI / 2;
+
+      const polar = (membersBySquad.get(squadId) ?? [])
+        .map((m) => ({ a: Math.atan2(m.y - sq.y, m.x - sq.x), r: Math.hypot(m.x - sq.x, m.y - sq.y) }))
+        .filter((q) => q.r > 1);
+      const ringR = polar.length
+        ? clamp(polar.reduce((s, q) => s + q.r, 0) / polar.length, 96, 320)
+        : Math.max(96, 60 + ghosts.length * 6);
+
+      const slots: number[] = [];
+      if (polar.length === 0) {
+        for (let i = 0; i < ghosts.length; i++) slots.push((2 * Math.PI * i) / ghosts.length - Math.PI / 2);
+      } else {
+        const occupied = polar.map((q) => q.a);
+        for (let g = 0; g < ghosts.length; g++) {
+          const all = [...occupied, ...slots].sort((a, b) => a - b);
+          let bestMid = -Math.PI / 2;
+          let bestGap = -1;
+          for (let i = 0; i < all.length; i++) {
+            const a0 = all[i];
+            const a1 = i === all.length - 1 ? all[0] + 2 * Math.PI : all[i + 1];
+            if (a1 - a0 > bestGap) {
+              bestGap = a1 - a0;
+              bestMid = a0 + (a1 - a0) / 2;
+            }
+          }
+          slots.push(bestMid);
+        }
+      }
+
+      ghosts.forEach(({ person, alloc }, i) => {
         result.push({
           person,
           alloc,
-          gx: sq.x + Math.cos(angle) * radius,
-          gy: sq.y + Math.sin(angle) * radius,
+          gx: sq.x + Math.cos(slots[i]) * ringR,
+          gy: sq.y + Math.sin(slots[i]) * ringR,
         });
       });
     }
@@ -912,26 +945,48 @@ export function OrgCanvas({
                 );
               })}
 
-            {/* Ghost seats — cross-squad people slotted into each squad's member ring */}
+            {/* Ghost seats — a cross-squad person's borrowed seat in this squad.
+                Amber + dashed + smaller than a real seat; the wedge is this
+                squad's share of them. Person-level state (over-allocation,
+                utilisation colour) lives on their own node, not on a seat. */}
             {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }) => {
-              const u = utilOf(p);
               const ov = personOverlay(p);
+              const sel = selectedId === p.id;
               return (
                 <Group
                   key={`ghost-${p.id}-${a.unitId}`}
                   x={gx}
                   y={gy}
-                  opacity={ov.dimmed ? 0.3 : 0.9}
+                  opacity={ov.dimmed ? 0.28 : 1}
                   onClick={() => selectNode(p.id)}
                   onTap={() => selectNode(p.id)}
                   onMouseEnter={() => showHover(p.id)}
                   onMouseLeave={() => setHover(null)}
                 >
-                  <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={3.5} dash={[5, 3]} />
-                  {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
-                  <Text text={p.name} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                  <Circle radius={GHOST_R} fill={C.white} />
+                  <Arc
+                    innerRadius={0}
+                    outerRadius={GHOST_R - 2.5}
+                    angle={(360 * clamp(a.pct, 0, 100)) / 100}
+                    rotation={-90}
+                    fill={C.cross}
+                    opacity={0.18}
+                    listening={false}
+                  />
+                  <Circle radius={GHOST_R} stroke={sel ? C.ink : C.cross} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
+                  <Text
+                    text={shortName(p.name)}
+                    x={-56}
+                    y={GHOST_R + 6}
+                    width={112}
+                    align="center"
+                    fontSize={12}
+                    fontFamily={FONT}
+                    fill={C.inkSoft}
+                    listening={false}
+                  />
                   {lod === "roles" && (
-                    <Text text={`${a.pct}%`} x={-70} y={44} width={140} align="center" fontSize={11.5} fontStyle="bold" fontFamily={FONT} fill={utilColor(u)} listening={false} />
+                    <Text text={`${a.pct}%`} x={-56} y={GHOST_R + 21} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={C.cross} listening={false} />
                   )}
                 </Group>
               );

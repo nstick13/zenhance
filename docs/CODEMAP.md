@@ -11,7 +11,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 |---|---|
 | **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
 | v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
-| **v2 canvas data transform** (flat node list, cross-cutting tier classification, ring layout seed) | `lib/canvas/buildCanvasMap.ts` — `crossCuttingTier` on `CanvasPerson`; `ghostSeats` memo in `OrgCanvas.tsx` ~line 317 |
+| **v2 canvas data transform** (flat node list, cross-cutting tier classification, ring layout seed) | `lib/canvas/buildCanvasMap.ts` — `crossCuttingTier` on `CanvasPerson`; gap-based `ghostSeats` memo + ghost render block in `OrgCanvas.tsx` (~line 320 / ~line 915) |
 | Greg's original prototype (the v2 trigger) | `docs/reference/greg-preview-v1.html` — see `docs/reference/README.md` |
 | The radial visualization (anything on `/org`) | `components/viz/RadialOrg.tsx` — **see region table below** |
 | Color palettes / themes | `lib/theme.ts` (palette IDs + accent) **and** `app/globals.css` (the CSS-var blocks per palette). Adding a palette = both files. |
