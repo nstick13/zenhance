@@ -87,6 +87,18 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ---
 
+## Known bugs
+
+- **Cross-cutting connection lines appear at wrong LOD / from off-screen origin (v0.1.15).**
+  The dashed lines from cross-cutting people to their squads are gated on `showPeople`, but persisted
+  positions from the old cross-cutting bucket layout place those people far off-screen. The lines then
+  originate from an invisible point and slash diagonally across the canvas. **Fix:** run Tidy Up after
+  upgrading (resets positions to new weighted-centroid seed), then the lines originate from the correct
+  on-screen node. Longer-term: auto-migrate stale cross-cutting positions on first load in connected mode
+  rather than requiring a manual Tidy Up.
+
+---
+
 ## Backlog  🅿️ *(post-v1, not committed)*
 - **Edge-type layer toggles** — separate visibility for "reporting" vs "project assignment" edges (Greg's layer concept; needs edge-type modeling → relates to Data Model).
 - **Workspace invites & roles** — Clerk Organizations already supports it; v2.
