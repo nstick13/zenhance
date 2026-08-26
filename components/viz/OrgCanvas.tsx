@@ -36,10 +36,8 @@ import {
 } from "@/lib/canvas/buildCanvasMap";
 
 import {
-  DEFAULT_LENS,
   COLOR_BY_OPTIONS,
   LABEL_BY_OPTIONS,
-  EMPLOYMENT_COLORS,
   disciplineColors,
   personColor,
   personLabel,
@@ -905,15 +903,13 @@ export function OrgCanvas({
 
   return (
     <div style={S.root}>
+      {/* A toolbar, not a header — the app shell in app/(app)/layout.tsx already
+          owns the brand and the nav, so repeating them here read as two headers
+          stacked. The radial view is still reachable at /org?view=radial; the
+          link is gone until it earns a place back (see ROADMAP: retire the
+          radial once FindingsRail and the formal layer port). */}
       <header style={S.topbar}>
-        <div style={S.brand}>
-          <span style={S.dot} />
-          <strong style={{ fontSize: 16, letterSpacing: "0.01em" }}>Zenhance</strong>
-        </div>
-        <a style={S.viewLink} href="/org?view=radial">
-          ⟲ Radial view
-        </a>
-        <div style={S.overlayGroup}>
+        <div style={S.overlayGroupFirst}>
           {OVERLAY_OPTIONS.map((o) => (
             <button
               key={o.type}
@@ -2349,20 +2345,6 @@ const S = {
     borderBottom: `1px solid ${C.line}`,
     zIndex: 20,
   },
-  brand: { display: "flex", alignItems: "center", gap: 8 },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: "50%",
-    background: C.ink,
-    marginRight: 6,
-  },
-  viewLink: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: C.inkSoft,
-    textDecoration: "none",
-  },
   btn: {
     minWidth: 40,
     height: 40,
@@ -2383,6 +2365,8 @@ const S = {
     marginLeft: 4,
     borderLeft: `1px solid ${C.line}`,
   },
+  /** The leading group has nothing to its left to divide it from. */
+  overlayGroupFirst: { display: "flex", gap: 4 },
   overlayBtn: (active: boolean) => ({
     height: 34,
     padding: "0 11px",

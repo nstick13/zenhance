@@ -5,13 +5,13 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
 ## Status — as of 2026-08-26
-- **Version 0.1.31**, deployed to **production** on Vercel (Neon Postgres + Clerk auth). Migrations `0003` (people attributes) and `0004` (`workspaces.lens`) must be applied by hand in Neon's SQL editor **before** the deploy — Drizzle's `select()` names every column, so an unapplied migration 500s every query touching that table, and `0004`'s table is `workspaces`, which means the whole app.
+- **Version 0.1.32**, deployed to **production** on Vercel (Neon Postgres + Clerk auth). Migrations `0003` (people attributes) and `0004` (`workspaces.lens`) must be applied by hand in Neon's SQL editor **before** the deploy — Drizzle's `select()` names every column, so an unapplied migration 500s every query touching that table, and `0004`'s table is `workspaces`, which means the whole app.
 - **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
 - **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, team reparenting, inline create/edit/delete for people and teams, and (v0.1.16–22) the cross-cutting seat model.
 - **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each team they serve — amber for multiple teams, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
 - **Sizing carries meaning** (v0.1.19): team circles scale with seat count, member rings scale to give each seat ~104px of arc, value streams are rectangles sized to their contents.
 - **Terminology (v0.1.21):** the top rung is a **value stream**, not a "release train." App-level only — no migration was needed, since `org_units.kind` is just `group | team`.
-- **`/org` is the canvas** (v0.1.27). The radial is at `/org?view=radial`, kept only until its FindingsRail and formal layer port.
+- **`/org` is the canvas** (v0.1.27). The radial is at `/org?view=radial` — still reachable by URL, but **unlinked as of v0.1.32**; kept only until its FindingsRail and formal layer port.
 - **Vocabulary is settled:** top rung = **value stream** (never "release train"), middle = **team** (never "squad" — the DB always said `kind: "team"`).
 - **Paper palette across the whole app** (v0.1.27–28) via Tailwind tokens in `globals.css`. Marketing keeps its own dark treatment by choice.
 - **Multi-team membership is editable from the map** (v0.1.26) — panel Teams section, or ⌥-drag a person onto a team to add rather than move.
@@ -76,7 +76,7 @@ Verified 2026-08-26: `computeAllFindings` fires **9** findings on the demo org (
 Still wanted, still the documented moat, and it now has a home as the *Reporting* layer toggle on the canvas. Sequenced **after** the above deliberately: [PRODUCT.md](PRODUCT.md) says delivery-first is the common entry door and that depth investment belongs in delivery analytics. Build steps: `people.managerId` self-ref + migration; import mapping for `manager`; the three-door entry picker; formal render mode; demo data whose reporting chain **diverges** from the teams (the mess is the pitch).
 
 ### Also wanted, unscheduled
-- **Retire the radial** — `/org` is the canvas as of v0.1.27; the radial lives at `/org?view=radial` and is kept **only** because it still owns the FindingsRail and the formal (`managerId`) layer. Archive `RadialOrg.tsx` once both port.
+- **Retire the radial** — `/org` is the canvas as of v0.1.27; the radial lives at `/org?view=radial`, is **no longer linked from anywhere** (v0.1.32), and is kept **only** because it still owns the FindingsRail and the formal (`managerId`) layer. Archive `RadialOrg.tsx` once both port.
 - **Full product cabinet** — S1 ships a single owner per stream from the existing `orgUnits.leadPersonId`. A real cabinet (product owner + eng lead + delivery lead) needs role-tagged people attached to a *group* unit; `assignments` are currently restricted to `kind === "team"`, so this is new modeling. Do it after S2's role field exists.
 - **Ownership analytics** — streams with no owner (partly shipped: the red "No owner"), one person owning several streams, an owner barely allocated to the stream they own.
 
