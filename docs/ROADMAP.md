@@ -27,14 +27,14 @@ Pure viz, no schema. Fixes the flat first impression and lands the first slice o
 - ✅ **Open on a view, not a fit** — lands on the value stream with the most open roles rather than framing the whole world at the least informative zoom.
 - ✅ **Depth** — soft shadows under team circles and stream cards.
 
-### S2 — Recognized person attributes  ⬅ **next**
+### S2 — Recognized person attributes  *(schema + editing shipped v0.1.29; import mapping outstanding)*
 Small migration, big unlock. See the *People roles & job function* story under Data Model for the open questions (discipline vs role-on-team; taxonomy vs free text).
 - `role` / discipline — **workspace-defined list**, not free text (free text is un-analyzable).
 - `employmentType` — FTE / contractor / vendor. Today this is team-level only (`orgUnits.isExternal`), which is why a contractor sitting inside a normal team is invisible.
 - `location` / `timezone`.
 - Extend the **import column-mapping** and the **person panel's inline edit** for all three. "Ingest greedily, display selectively."
 
-### S3 — The lens config
+### S3 — The lens config  ⬅ **next**
 Per-workspace, persisted. This is the "other people would want other things" story, and it needs S2 to have anything to key off.
 - **Colour by:** utilisation (today) / discipline / employment type / value stream.
 - **Label by:** name / name + title / initials.

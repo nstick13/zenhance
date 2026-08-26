@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { Person } from "@/lib/db/schema";
+import type { Person, Discipline } from "@/lib/db/schema";
 import {
   createPerson,
   updatePerson,
@@ -17,6 +17,10 @@ type FormState = {
   startDate: string;
   growthFocus: string;
   lastVacationAt: string;
+  disciplineId: string;
+  employment: "fte" | "contractor" | "vendor" | "unknown";
+  location: string;
+  timezone: string;
 };
 
 const empty: FormState = {
@@ -27,6 +31,10 @@ const empty: FormState = {
   startDate: "",
   growthFocus: "",
   lastVacationAt: "",
+  disciplineId: "",
+  employment: "unknown",
+  location: "",
+  timezone: "",
 };
 
 function toForm(p: Person): FormState {
@@ -38,13 +46,30 @@ function toForm(p: Person): FormState {
     startDate: p.startDate ?? "",
     growthFocus: p.growthFocus ?? "",
     lastVacationAt: p.lastVacationAt ?? "",
+    disciplineId: p.disciplineId ?? "",
+    employment: p.employment,
+    location: p.location ?? "",
+    timezone: p.timezone ?? "",
   };
 }
+
+const EMPLOYMENT_LABELS: Record<string, string> = {
+  fte: "Employee",
+  contractor: "Contractor",
+  vendor: "Vendor",
+  unknown: "—",
+};
 
 const field =
   "w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink-soft";
 
-export function PeopleManager({ initialPeople }: { initialPeople: Person[] }) {
+export function PeopleManager({
+  initialPeople,
+  disciplines,
+}: {
+  initialPeople: Person[];
+  disciplines: Discipline[];
+}) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -127,6 +152,52 @@ export function PeopleManager({ initialPeople }: { initialPeople: Person[] }) {
               />
             </label>
             <label className="text-sm">
+              <span className="mb-1 block text-ink-soft">Discipline</span>
+              <select
+                className={field}
+                value={form.disciplineId}
+                onChange={(e) => setForm({ ...form, disciplineId: e.target.value })}
+              >
+                <option value="">— none —</option>
+                {disciplines.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-ink-soft">Employment</span>
+              <select
+                className={field}
+                value={form.employment}
+                onChange={(e) => setForm({ ...form, employment: e.target.value as FormState["employment"] })}
+              >
+                {(["fte", "contractor", "vendor", "unknown"] as const).map((k) => (
+                  <option key={k} value={k}>
+                    {EMPLOYMENT_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-ink-soft">Location</span>
+              <input
+                className={field}
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-ink-soft">Time zone</span>
+              <input
+                className={field}
+                placeholder="Europe/Berlin"
+                value={form.timezone}
+                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              />
+            </label>
+            <label className="text-sm">
               <span className="mb-1 block text-ink-soft">Cost / month ($)</span>
               <input
                 className={field}
@@ -193,6 +264,8 @@ export function PeopleManager({ initialPeople }: { initialPeople: Person[] }) {
             <tr>
               <th className="px-4 py-2 font-medium">Name</th>
               <th className="px-4 py-2 font-medium">Title</th>
+              <th className="px-4 py-2 font-medium">Discipline</th>
+              <th className="px-4 py-2 font-medium">Employment</th>
               <th className="px-4 py-2 font-medium">Cost/mo</th>
               <th className="px-4 py-2 font-medium">Skills</th>
               <th className="px-4 py-2" />
@@ -201,7 +274,7 @@ export function PeopleManager({ initialPeople }: { initialPeople: Person[] }) {
           <tbody>
             {initialPeople.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center">
+                <td colSpan={7} className="px-4 py-10 text-center">
                   <p className="text-ink-soft">No people yet.</p>
                   <p className="mt-2 text-sm text-ink-soft">
                     Add your first person above, or{" "}
@@ -217,6 +290,10 @@ export function PeopleManager({ initialPeople }: { initialPeople: Person[] }) {
               <tr key={p.id} className="border-t border-line">
                 <td className="px-4 py-2 font-medium">{p.name}</td>
                 <td className="px-4 py-2 text-ink">{p.title ?? "—"}</td>
+                <td className="px-4 py-2 text-ink">
+                  {disciplines.find((d) => d.id === p.disciplineId)?.name ?? "—"}
+                </td>
+                <td className="px-4 py-2 text-ink-soft">{EMPLOYMENT_LABELS[p.employment] ?? "—"}</td>
                 <td className="px-4 py-2 text-ink">
                   {p.costPerMonth ? `$${Number(p.costPerMonth).toLocaleString()}` : "—"}
                 </td>

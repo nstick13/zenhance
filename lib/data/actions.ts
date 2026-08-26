@@ -3,13 +3,14 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, mapNodes, eq, and } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, disciplines, eq, and } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
   orgUnitInput,
   assignmentInput,
   assignmentPatch,
+  disciplineInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
 import { getOrgSnapshot } from "@/lib/data/queries";
@@ -54,6 +55,10 @@ export async function createPerson(
       growthFocus: v.growthFocus,
       photoUrl: v.photoUrl,
       lastVacationAt: v.lastVacationAt,
+      disciplineId: v.disciplineId ?? null,
+      employment: v.employment,
+      location: v.location,
+      timezone: v.timezone,
     })
     .returning({ id: people.id });
   revalidateAll();
@@ -79,6 +84,10 @@ export async function updatePerson(
       growthFocus: v.growthFocus,
       photoUrl: v.photoUrl,
       lastVacationAt: v.lastVacationAt,
+      disciplineId: v.disciplineId ?? null,
+      employment: v.employment,
+      location: v.location,
+      timezone: v.timezone,
       updatedAt: new Date(),
     })
     .where(and(eq(people.id, id), eq(people.workspaceId, workspace.id)));
@@ -170,6 +179,43 @@ export async function moveOrgUnit(
     .update(orgUnits)
     .set({ parentId, updatedAt: new Date() })
     .where(and(eq(orgUnits.id, id), eq(orgUnits.workspaceId, workspace.id)));
+  revalidateAll();
+  return { ok: true, data: undefined };
+}
+
+// --- disciplines ----------------------------------------------------------
+
+/**
+ * Find-or-create a discipline by name. Import and inline entry both lean on
+ * this: an unrecognised value creates the discipline rather than blocking on
+ * taxonomy setup, and the user renames or merges afterwards.
+ */
+export async function ensureDiscipline(raw: unknown): Promise<ActionResult<{ id: string }>> {
+  const { workspace } = await requireWorkspace();
+  const parsed = disciplineInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  const v = parsed.data;
+  const [existing] = await db
+    .select({ id: disciplines.id })
+    .from(disciplines)
+    .where(and(eq(disciplines.workspaceId, workspace.id), eq(disciplines.name, v.name)));
+  if (existing) return { ok: true, data: { id: existing.id } };
+  const [row] = await db
+    .insert(disciplines)
+    .values({ workspaceId: workspace.id, name: v.name, color: v.color })
+    .returning({ id: disciplines.id });
+  revalidateAll();
+  return { ok: true, data: { id: row.id } };
+}
+
+export async function renameDiscipline(id: string, raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = disciplineInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  await db
+    .update(disciplines)
+    .set({ name: parsed.data.name, color: parsed.data.color })
+    .where(and(eq(disciplines.id, id), eq(disciplines.workspaceId, workspace.id)));
   revalidateAll();
   return { ok: true, data: undefined };
 }

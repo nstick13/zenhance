@@ -43,6 +43,11 @@ export const personInput = z.object({
   growthFocus: optionalString,
   photoUrl: optionalString,
   lastVacationAt: optionalDate,
+  /** What they *are* (structured). `title` above is their HR label (free text). */
+  disciplineId: z.preprocess(emptyToNull, z.string().uuid().nullable()).optional(),
+  employment: z.enum(["fte", "contractor", "vendor", "unknown"]).default("unknown"),
+  location: optionalString,
+  timezone: optionalString,
 });
 export type PersonInput = z.infer<typeof personInput>;
 
@@ -87,3 +92,9 @@ export const assignmentPatch = z.object({
   roleOnTeam: optionalString.optional(),
 });
 export type AssignmentPatch = z.infer<typeof assignmentPatch>;
+
+export const disciplineInput = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  color: optionalString,
+});
+export type DisciplineInput = z.infer<typeof disciplineInput>;

@@ -57,6 +57,10 @@ export type CanvasPerson = {
   startDate: string | null;
   skills: string[];
   growthFocus: string | null;
+  disciplineId: string | null;
+  employment: "fte" | "contractor" | "vendor" | "unknown";
+  location: string | null;
+  timezone: string | null;
   allocations: CanvasAllocation[];
   crossCuttingTier: "team" | "stream" | null;
 };
@@ -348,6 +352,7 @@ export function buildCanvasMap(
           title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
           managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
           skills: p.skills, growthFocus: p.growthFocus, allocations, crossCuttingTier: tier,
+          disciplineId: p.disciplineId, employment: p.employment, location: p.location, timezone: p.timezone,
         });
       }
       continue;
@@ -371,6 +376,7 @@ export function buildCanvasMap(
         title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
         managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
         skills: p.skills, growthFocus: p.growthFocus, allocations, crossCuttingTier: null,
+        disciplineId: p.disciplineId, employment: p.employment, location: p.location, timezone: p.timezone,
       });
     });
   }
@@ -389,6 +395,7 @@ export function buildCanvasMap(
           costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
           managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
           skills: p.skills, growthFocus: p.growthFocus, allocations: [], crossCuttingTier: null,
+          disciplineId: p.disciplineId, employment: p.employment, location: p.location, timezone: p.timezone,
         });
       });
     }

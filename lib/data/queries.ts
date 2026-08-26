@@ -5,6 +5,7 @@ import {
   orgUnits,
   assignments,
   mapNodes,
+  disciplines,
   eq,
   and,
   asc,
@@ -12,6 +13,7 @@ import {
   type OrgUnit,
   type Assignment,
   type MapNodeRow,
+  type Discipline,
 } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 
@@ -21,17 +23,28 @@ export type OrgSnapshot = {
   people: Person[];
   units: OrgUnit[];
   assignments: Assignment[];
+  disciplines: Discipline[];
 };
 
 export async function getOrgSnapshot(): Promise<OrgSnapshot> {
   const { workspace } = await requireWorkspace();
   const wid = workspace.id;
-  const [p, u, a] = await Promise.all([
+  const [p, u, a, d] = await Promise.all([
     db.select().from(people).where(eq(people.workspaceId, wid)).orderBy(asc(people.name)),
     db.select().from(orgUnits).where(eq(orgUnits.workspaceId, wid)).orderBy(asc(orgUnits.name)),
     db.select().from(assignments).where(eq(assignments.workspaceId, wid)),
+    db.select().from(disciplines).where(eq(disciplines.workspaceId, wid)).orderBy(asc(disciplines.sortOrder)),
   ]);
-  return { workspaceId: wid, people: p, units: u, assignments: a };
+  return { workspaceId: wid, people: p, units: u, assignments: a, disciplines: d };
+}
+
+export async function getDisciplines(): Promise<Discipline[]> {
+  const { workspace } = await requireWorkspace();
+  return db
+    .select()
+    .from(disciplines)
+    .where(eq(disciplines.workspaceId, workspace.id))
+    .orderBy(asc(disciplines.sortOrder));
 }
 
 export async function getPeople(): Promise<Person[]> {

@@ -30,6 +30,12 @@ export type DemoPerson = {
   lastVacationAt?: string;
   /** Name of this person's formal manager; resolved to managerId. */
   manager?: string;
+  /** Discipline name; resolved to disciplineId (auto-created per workspace). */
+  discipline?: string;
+  employment?: "fte" | "contractor" | "vendor" | "unknown";
+  location?: string;
+  /** IANA zone — powers distribution-drag analytics. */
+  timezone?: string;
 };
 
 export type DemoUnit = {
@@ -56,74 +62,88 @@ export type DemoAssignment = {
   isOpenRole?: boolean;
 };
 
+/**
+ * The demo workspace's discipline taxonomy. Colours are the seed values for
+ * colour-by-discipline; a workspace can rename or recolour these freely.
+ */
+export const demoDisciplines: { name: string; color: string }[] = [
+  { name: "Engineering", color: "#4f46e5" },
+  { name: "QA", color: "#0e7490" },
+  { name: "Platform", color: "#15803d" },
+  { name: "Security", color: "#9d174d" },
+  { name: "Data", color: "#a16207" },
+  { name: "Delivery", color: "#7c3aed" },
+  { name: "Leadership", color: "#5c6570" },
+];
+
 // --- people ----------------------------------------------------------------
 export const demoPeople: DemoPerson[] = [
   // Leadership
-  { name: "Sarah Reeve", title: "Delivery Lead", costPerMonth: 15500, skills: ["Leadership", "SAFe", "Org design"], startDate: "2017-02-01", growthFocus: "Scaling delivery" },
-  { name: "Aimee Bradford", title: "RTE — Atlas", costPerMonth: 12800, skills: ["Leadership", "Architecture", "Java"], startDate: "2019-06-15", lastVacationAt: "2025-09-01", manager: "Sarah Reeve" },
-  { name: "Aaron Richter", title: "RTE — Orion", costPerMonth: 12600, skills: ["Leadership", "Go", "Platform"], startDate: "2018-05-01", manager: "Sarah Reeve" },
-  { name: "Nadia Khan", title: "RTE — Vega", costPerMonth: 12400, skills: ["Leadership", "Product", "Agile"], startDate: "2019-09-01", manager: "Sarah Reeve" },
+  { name: "Sarah Reeve", title: "Delivery Lead", costPerMonth: 15500, skills: ["Leadership", "SAFe", "Org design"], startDate: "2017-02-01", growthFocus: "Scaling delivery", discipline: "Leadership", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Aimee Bradford", title: "RTE — Atlas", costPerMonth: 12800, skills: ["Leadership", "Architecture", "Java"], startDate: "2019-06-15", lastVacationAt: "2025-09-01", manager: "Sarah Reeve", discipline: "Leadership", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Aaron Richter", title: "RTE — Orion", costPerMonth: 12600, skills: ["Leadership", "Go", "Platform"], startDate: "2018-05-01", manager: "Sarah Reeve", discipline: "Leadership", employment: "fte", location: "Berlin, DE", timezone: "Europe/Berlin" },
+  { name: "Nadia Khan", title: "RTE — Vega", costPerMonth: 12400, skills: ["Leadership", "Product", "Agile"], startDate: "2019-09-01", manager: "Sarah Reeve", discipline: "Leadership", employment: "fte", location: "London, UK", timezone: "Europe/London" },
 
   // Cross-cutting supporters — report straight to Sarah (skip-level mess)
-  { name: "Marcus Webb", title: "Staff SRE", costPerMonth: 12200, skills: ["Kubernetes", "Terraform", "Observability"], startDate: "2020-03-01", lastVacationAt: "2023-06-01", growthFocus: "Platform leadership", manager: "Sarah Reeve" },
-  { name: "Devraj Patel", title: "Security Engineer", costPerMonth: 11800, skills: ["AppSec", "Threat modeling", "Compliance"], startDate: "2020-08-01", lastVacationAt: "2023-02-01", manager: "Sarah Reeve" },
-  { name: "Grace Okafor", title: "Staff Platform Engineer", costPerMonth: 11600, skills: ["Go", "Kubernetes", "CI/CD"], startDate: "2021-01-15", manager: "Sarah Reeve" },
-  { name: "Yuki Tanaka", title: "Data / Analytics Engineer", costPerMonth: 10900, skills: ["SQL", "dbt", "Python"], startDate: "2021-07-01", manager: "Sarah Reeve" },
-  { name: "Helena Brandt", title: "Agile Coach", costPerMonth: 10200, skills: ["Coaching", "SAFe", "Facilitation"], startDate: "2019-11-01", manager: "Sarah Reeve" },
+  { name: "Marcus Webb", title: "Staff SRE", costPerMonth: 12200, skills: ["Kubernetes", "Terraform", "Observability"], startDate: "2020-03-01", lastVacationAt: "2023-06-01", growthFocus: "Platform leadership", manager: "Sarah Reeve", discipline: "Platform", employment: "fte", location: "Manchester, UK", timezone: "Europe/London" },
+  { name: "Devraj Patel", title: "Security Engineer", costPerMonth: 11800, skills: ["AppSec", "Threat modeling", "Compliance"], startDate: "2020-08-01", lastVacationAt: "2023-02-01", manager: "Sarah Reeve", discipline: "Security", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Grace Okafor", title: "Staff Platform Engineer", costPerMonth: 11600, skills: ["Go", "Kubernetes", "CI/CD"], startDate: "2021-01-15", manager: "Sarah Reeve", discipline: "Platform", employment: "fte", location: "Lagos, NG", timezone: "Africa/Lagos" },
+  { name: "Yuki Tanaka", title: "Data / Analytics Engineer", costPerMonth: 10900, skills: ["SQL", "dbt", "Python"], startDate: "2021-07-01", manager: "Sarah Reeve", discipline: "Data", employment: "fte", location: "Tokyo, JP", timezone: "Asia/Tokyo" },
+  { name: "Helena Brandt", title: "Agile Coach", costPerMonth: 10200, skills: ["Coaching", "SAFe", "Facilitation"], startDate: "2019-11-01", manager: "Sarah Reeve", discipline: "Delivery", employment: "fte", location: "Berlin, DE", timezone: "Europe/Berlin" },
 
   // Atlas — Starlight
-  { name: "Thomas Le", title: "Senior Engineer", costPerMonth: 10200, skills: ["Java", "Kafka", "Microservices"], startDate: "2020-03-01", manager: "Aimee Bradford" },
-  { name: "Angela Smith", title: "Engineer", costPerMonth: 9200, skills: ["Java", "JavaScript", "CRM"], startDate: "2022-01-10", growthFocus: "Archaeology of legacy code", lastVacationAt: "2023-01-05", manager: "Aimee Bradford" },
-  { name: "Areline De Lisle", title: "QA Engineer", costPerMonth: 8500, skills: ["QA", "Automation", "Cypress"], startDate: "2021-09-01", manager: "Thomas Le" },
-  { name: "Ben Carter", title: "Engineer", costPerMonth: 7600, skills: ["JavaScript", "React"], startDate: "2024-02-01", manager: "Sarah Reeve" }, // skip-level: junior reporting to delivery lead
-  { name: "Owen Reilly", title: "Engineer", costPerMonth: 8100, skills: ["Java", "Spring"], startDate: "2023-05-01", manager: "Thomas Le" },
+  { name: "Thomas Le", title: "Senior Engineer", costPerMonth: 10200, skills: ["Java", "Kafka", "Microservices"], startDate: "2020-03-01", manager: "Aimee Bradford", discipline: "Engineering", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Angela Smith", title: "Engineer", costPerMonth: 9200, skills: ["Java", "JavaScript", "CRM"], startDate: "2022-01-10", growthFocus: "Archaeology of legacy code", lastVacationAt: "2023-01-05", manager: "Aimee Bradford", discipline: "Engineering", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Areline De Lisle", title: "QA Engineer", costPerMonth: 8500, skills: ["QA", "Automation", "Cypress"], startDate: "2021-09-01", manager: "Thomas Le", discipline: "QA", employment: "fte", location: "Paris, FR", timezone: "Europe/Paris" },
+  { name: "Ben Carter", title: "Engineer", costPerMonth: 7600, skills: ["JavaScript", "React"], startDate: "2024-02-01", manager: "Sarah Reeve", discipline: "Engineering", employment: "fte", location: "London, UK", timezone: "Europe/London" }, // skip-level: junior reporting to delivery lead
+  { name: "Owen Reilly", title: "Engineer", costPerMonth: 8100, skills: ["Java", "Spring"], startDate: "2023-05-01", manager: "Thomas Le", discipline: "Engineering", employment: "fte", location: "Dublin, IE", timezone: "Europe/Dublin" },
 
   // Atlas — Moonlight
-  { name: "Priya Nair", title: "Engineer", costPerMonth: 9100, skills: ["Java", "Spring", "Kafka"], startDate: "2021-04-01", manager: "Aimee Bradford" },
-  { name: "Richard Stewartson", title: "Database Engineer", costPerMonth: 9600, skills: ["Postgres", "ETL", "Performance"], startDate: "2020-11-01", manager: "Priya Nair" },
-  { name: "Sofia Marchetti", title: "Engineer", costPerMonth: 8900, skills: ["JavaScript", "React", "Node"], startDate: "2023-01-15", manager: "Aaron Richter" }, // divergence: delivers Atlas, reports Orion
-  { name: "Naomi Cole", title: "QA Engineer", costPerMonth: 8200, skills: ["QA", "Selenium"], startDate: "2022-10-01", manager: "Priya Nair" },
+  { name: "Priya Nair", title: "Engineer", costPerMonth: 9100, skills: ["Java", "Spring", "Kafka"], startDate: "2021-04-01", manager: "Aimee Bradford", discipline: "Engineering", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Richard Stewartson", title: "Database Engineer", costPerMonth: 9600, skills: ["Postgres", "ETL", "Performance"], startDate: "2020-11-01", manager: "Priya Nair", discipline: "Data", employment: "fte", location: "Edinburgh, UK", timezone: "Europe/London" },
+  { name: "Sofia Marchetti", title: "Engineer", costPerMonth: 8900, skills: ["JavaScript", "React", "Node"], startDate: "2023-01-15", manager: "Aaron Richter", discipline: "Engineering", employment: "fte", location: "Milan, IT", timezone: "Europe/Rome" }, // divergence: delivers Atlas, reports Orion
+  { name: "Naomi Cole", title: "QA Engineer", costPerMonth: 8200, skills: ["QA", "Selenium"], startDate: "2022-10-01", manager: "Priya Nair", discipline: "QA", employment: "fte", location: "London, UK", timezone: "Europe/London" },
 
   // Atlas — Nebula
-  { name: "Liam Walsh", title: "Senior Engineer", costPerMonth: 10100, skills: ["Go", "gRPC", "Distributed systems"], startDate: "2020-07-01", manager: "Aimee Bradford" },
-  { name: "Hana Kim", title: "Engineer", costPerMonth: 8700, skills: ["Go", "Kubernetes"], startDate: "2022-06-01", manager: "Liam Walsh" },
-  { name: "Tobias Frank", title: "Engineer", costPerMonth: 8400, skills: ["Rust", "Go"], startDate: "2023-03-01", manager: "Liam Walsh" },
-  { name: "Felix Braun", title: "QA Engineer", costPerMonth: 7900, skills: ["QA", "Performance testing"], startDate: "2024-04-01", manager: "Liam Walsh" },
+  { name: "Liam Walsh", title: "Senior Engineer", costPerMonth: 10100, skills: ["Go", "gRPC", "Distributed systems"], startDate: "2020-07-01", manager: "Aimee Bradford", discipline: "Engineering", employment: "fte", location: "Dublin, IE", timezone: "Europe/Dublin" },
+  { name: "Hana Kim", title: "Engineer", costPerMonth: 8700, skills: ["Go", "Kubernetes"], startDate: "2022-06-01", manager: "Liam Walsh", discipline: "Engineering", employment: "fte", location: "Seoul, KR", timezone: "Asia/Seoul" },
+  { name: "Tobias Frank", title: "Engineer", costPerMonth: 8400, skills: ["Rust", "Go"], startDate: "2023-03-01", manager: "Liam Walsh", discipline: "Engineering", employment: "fte", location: "Berlin, DE", timezone: "Europe/Berlin" },
+  { name: "Felix Braun", title: "QA Engineer", costPerMonth: 7900, skills: ["QA", "Performance testing"], startDate: "2024-04-01", manager: "Liam Walsh", discipline: "QA", employment: "fte", location: "Berlin, DE", timezone: "Europe/Berlin" },
 
   // Orion — Earthlight
-  { name: "Lena Ortiz", title: "QA Lead", costPerMonth: 9300, skills: ["QA", "Selenium", "Leadership"], startDate: "2021-02-01", manager: "Aaron Richter" },
-  { name: "Carlos Mendes", title: "Engineer", costPerMonth: 8800, skills: ["Java", "Spring"], startDate: "2022-03-01", manager: "Aimee Bradford" }, // divergence: delivers Orion, reports Atlas
-  { name: "Sven Larsson", title: "Senior Engineer", costPerMonth: 10000, skills: ["Java", "Architecture"], startDate: "2019-08-01", manager: "Aaron Richter" },
-  { name: "Aisha Bello", title: "Engineer", costPerMonth: 8300, skills: ["JavaScript", "React"], startDate: "2023-07-01", manager: "Lena Ortiz" },
-  { name: "Zara Haddad", title: "Engineer", costPerMonth: 8000, skills: ["Python", "Django"], startDate: "2024-01-10" }, // recent hire, no manager set (data gap)
+  { name: "Lena Ortiz", title: "QA Lead", costPerMonth: 9300, skills: ["QA", "Selenium", "Leadership"], startDate: "2021-02-01", manager: "Aaron Richter", discipline: "QA", employment: "fte", location: "New York, US", timezone: "America/New_York" },
+  { name: "Carlos Mendes", title: "Engineer", costPerMonth: 8800, skills: ["Java", "Spring"], startDate: "2022-03-01", manager: "Aimee Bradford", discipline: "Engineering", employment: "fte", location: "Sao Paulo, BR", timezone: "America/Sao_Paulo" }, // divergence: delivers Orion, reports Atlas
+  { name: "Sven Larsson", title: "Senior Engineer", costPerMonth: 10000, skills: ["Java", "Architecture"], startDate: "2019-08-01", manager: "Aaron Richter", discipline: "Engineering", employment: "fte", location: "Stockholm, SE", timezone: "Europe/Stockholm" },
+  { name: "Aisha Bello", title: "Engineer", costPerMonth: 8300, skills: ["JavaScript", "React"], startDate: "2023-07-01", manager: "Lena Ortiz", discipline: "Engineering", employment: "fte", location: "Lagos, NG", timezone: "Africa/Lagos" },
+  { name: "Zara Haddad", title: "Engineer", costPerMonth: 8000, skills: ["Python", "Django"], startDate: "2024-01-10", discipline: "Engineering", employment: "contractor", location: "Dubai, AE", timezone: "Asia/Dubai" }, // recent hire, no manager set (data gap)
 
   // Orion — Dawnbreak
-  { name: "Hannah Schmidt", title: "Engineer", costPerMonth: 9000, skills: ["Java", "Kafka"], startDate: "2021-05-01", manager: "Aaron Richter" },
-  { name: "Omar Farouk", title: "Engineer", costPerMonth: 8600, skills: ["Go", "Kubernetes"], startDate: "2022-09-01", manager: "Hannah Schmidt" },
-  { name: "Mateo Rossi", title: "Engineer", costPerMonth: 8200, skills: ["JavaScript", "Vue"], startDate: "2023-04-01", manager: "Hannah Schmidt" },
-  { name: "Chloe Dubois", title: "QA Engineer", costPerMonth: 7800, skills: ["QA", "Automation"], startDate: "2024-03-01", manager: "Hannah Schmidt" },
+  { name: "Hannah Schmidt", title: "Engineer", costPerMonth: 9000, skills: ["Java", "Kafka"], startDate: "2021-05-01", manager: "Aaron Richter", discipline: "Engineering", employment: "fte", location: "Berlin, DE", timezone: "Europe/Berlin" },
+  { name: "Omar Farouk", title: "Engineer", costPerMonth: 8600, skills: ["Go", "Kubernetes"], startDate: "2022-09-01", manager: "Hannah Schmidt", discipline: "Engineering", employment: "fte", location: "Cairo, EG", timezone: "Africa/Cairo" },
+  { name: "Mateo Rossi", title: "Engineer", costPerMonth: 8200, skills: ["JavaScript", "Vue"], startDate: "2023-04-01", manager: "Hannah Schmidt", discipline: "Engineering", employment: "contractor", location: "Rome, IT", timezone: "Europe/Rome" },
+  { name: "Chloe Dubois", title: "QA Engineer", costPerMonth: 7800, skills: ["QA", "Automation"], startDate: "2024-03-01", manager: "Hannah Schmidt", discipline: "QA", employment: "fte", location: "Paris, FR", timezone: "Europe/Paris" },
 
   // Orion — Tideway
-  { name: "Diego Alvarez", title: "Senior Engineer", costPerMonth: 9900, skills: ["Java", "Architecture", "Kafka"], startDate: "2020-02-01", manager: "Aaron Richter" },
-  { name: "Mei Lin", title: "Engineer", costPerMonth: 8500, skills: ["Java", "Spring"], startDate: "2022-11-01", manager: "Diego Alvarez" },
-  { name: "Paul Nguyen", title: "Engineer", costPerMonth: 8100, skills: ["Go", "gRPC"], startDate: "2023-06-01", manager: "Diego Alvarez" },
-  { name: "Sara Lindqvist", title: "QA Engineer", costPerMonth: 7700, skills: ["QA", "Cypress"], startDate: "2024-05-01", manager: "Diego Alvarez" },
+  { name: "Diego Alvarez", title: "Senior Engineer", costPerMonth: 9900, skills: ["Java", "Architecture", "Kafka"], startDate: "2020-02-01", manager: "Aaron Richter", discipline: "Engineering", employment: "fte", location: "Madrid, ES", timezone: "Europe/Madrid" },
+  { name: "Mei Lin", title: "Engineer", costPerMonth: 8500, skills: ["Java", "Spring"], startDate: "2022-11-01", manager: "Diego Alvarez", discipline: "Engineering", employment: "fte", location: "Singapore, SG", timezone: "Asia/Singapore" },
+  { name: "Paul Nguyen", title: "Engineer", costPerMonth: 8100, skills: ["Go", "gRPC"], startDate: "2023-06-01", manager: "Diego Alvarez", discipline: "Engineering", employment: "fte", location: "Hanoi, VN", timezone: "Asia/Ho_Chi_Minh" },
+  { name: "Sara Lindqvist", title: "Engineer", costPerMonth: 7700, skills: ["Python", "Cypress"], startDate: "2024-05-01", manager: "Diego Alvarez", discipline: "Engineering", employment: "fte", location: "Stockholm, SE", timezone: "Europe/Stockholm" },
 
   // Vega — Ironclad
-  { name: "Fatima Noor", title: "Team Lead", costPerMonth: 10300, skills: ["Leadership", "Java", "Security"], startDate: "2019-04-01", manager: "Nadia Khan" },
-  { name: "Jonas Berg", title: "Engineer", costPerMonth: 8800, skills: ["Java", "Spring"], startDate: "2022-02-01", manager: "Fatima Noor" },
-  { name: "Ingrid Solberg", title: "Engineer", costPerMonth: 8400, skills: ["Go", "Kubernetes"], startDate: "2023-02-01", manager: "Fatima Noor" },
-  { name: "Kwame Mensah", title: "QA Engineer", costPerMonth: 7900, skills: ["QA", "Automation"], startDate: "2023-09-01", manager: "Fatima Noor" },
+  { name: "Fatima Noor", title: "Team Lead", costPerMonth: 10300, skills: ["Leadership", "Java", "Security"], startDate: "2019-04-01", manager: "Nadia Khan", discipline: "Leadership", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Jonas Berg", title: "Engineer", costPerMonth: 8800, skills: ["Java", "Spring"], startDate: "2022-02-01", manager: "Fatima Noor", discipline: "Engineering", employment: "fte", location: "Oslo, NO", timezone: "Europe/Oslo" },
+  { name: "Ingrid Solberg", title: "Engineer", costPerMonth: 8400, skills: ["Go", "Kubernetes"], startDate: "2023-02-01", manager: "Fatima Noor", discipline: "Engineering", employment: "fte", location: "Oslo, NO", timezone: "Europe/Oslo" },
+  { name: "Kwame Mensah", title: "QA Engineer", costPerMonth: 7900, skills: ["QA", "Automation"], startDate: "2023-09-01", manager: "Fatima Noor", discipline: "QA", employment: "fte", location: "Accra, GH", timezone: "Africa/Accra" },
 
   // Vega — Lighthouse
-  { name: "Ravi Kapoor", title: "Senior Engineer", costPerMonth: 10000, skills: ["Java", "Architecture"], startDate: "2020-10-01", manager: "Nadia Khan" },
-  { name: "Emma Thompson", title: "QA Engineer", costPerMonth: 8300, skills: ["QA", "Selenium"], startDate: "2022-07-01", manager: "Ravi Kapoor" },
-  { name: "Lucas Silva", title: "Engineer", costPerMonth: 8200, skills: ["JavaScript", "React"], startDate: "2023-08-01", manager: "Ravi Kapoor" },
-  { name: "Noah Berger", title: "Engineer", costPerMonth: 7800, skills: ["Python", "FastAPI"], startDate: "2024-06-01" }, // recent hire, no manager set
+  { name: "Ravi Kapoor", title: "Senior Engineer", costPerMonth: 10000, skills: ["Java", "Architecture"], startDate: "2020-10-01", manager: "Nadia Khan", discipline: "Engineering", employment: "fte", location: "London, UK", timezone: "Europe/London" },
+  { name: "Emma Thompson", title: "QA Engineer", costPerMonth: 8300, skills: ["QA", "Selenium"], startDate: "2022-07-01", manager: "Ravi Kapoor", discipline: "QA", employment: "fte", location: "Manchester, UK", timezone: "Europe/London" },
+  { name: "Lucas Silva", title: "Engineer", costPerMonth: 8200, skills: ["JavaScript", "React"], startDate: "2023-08-01", manager: "Ravi Kapoor", discipline: "Engineering", employment: "fte", location: "Lisbon, PT", timezone: "Europe/Lisbon" },
+  { name: "Noah Berger", title: "Engineer", costPerMonth: 7800, skills: ["Python", "FastAPI"], startDate: "2024-06-01", discipline: "Engineering", employment: "contractor", location: "Vienna, AT", timezone: "Europe/Vienna" }, // recent hire, no manager set
 
   // Contractors (Infosys)
-  { name: "Vikram Rao", title: "Contractor — Engineer", costPerMonth: 7000, skills: ["Java", "Spring"], startDate: "2024-09-01" },
-  { name: "Anita Desai", title: "Contractor — QA", costPerMonth: 6800, skills: ["QA", "Automation"], startDate: "2025-01-01" },
+  { name: "Vikram Rao", title: "Contractor — Engineer", costPerMonth: 7000, skills: ["Java", "Spring"], startDate: "2024-09-01", discipline: "Engineering", employment: "vendor", location: "Bengaluru, IN", timezone: "Asia/Kolkata" },
+  { name: "Anita Desai", title: "Contractor — QA", costPerMonth: 6800, skills: ["QA", "Automation"], startDate: "2025-01-01", discipline: "QA", employment: "vendor", location: "Pune, IN", timezone: "Asia/Kolkata" },
 ];
 
 // --- units (parents precede children) --------------------------------------
@@ -211,7 +231,7 @@ export const demoAssignments: DemoAssignment[] = [
   { person: "Diego Alvarez", unit: "Tideway", role: "Team Lead" },
   { person: "Mei Lin", unit: "Tideway", role: "Engineer" },
   { person: "Paul Nguyen", unit: "Tideway", role: "Engineer" },
-  { person: "Sara Lindqvist", unit: "Tideway", role: "QA" },
+  { person: "Sara Lindqvist", unit: "Tideway", role: "Engineer" }, // Tideway ends up with no QA at all — a coverage gap nobody noticed
   { person: "Helena Brandt", unit: "Tideway", role: "Scrum Master", allocationPct: 50 }, // supporter
   { person: null, unit: "Tideway", role: "Engineer", isOpenRole: true },
 
@@ -247,13 +267,23 @@ export async function applyDemoOrg(
   db: PostgresJsDatabase<typeof schema>,
   workspaceId: string,
 ): Promise<{ people: number; units: number; assignments: number }> {
-  const { people, orgUnits, assignments } = schema;
+  const { people, orgUnits, assignments, disciplines } = schema;
   const wid = workspaceId;
 
   // Clear existing org data (assignments cascade from people/units anyway).
   await db.delete(assignments).where(eq(assignments.workspaceId, wid));
   await db.delete(orgUnits).where(eq(orgUnits.workspaceId, wid));
   await db.delete(people).where(eq(people.workspaceId, wid));
+  await db.delete(disciplines).where(eq(disciplines.workspaceId, wid));
+
+  // Disciplines — the workspace's taxonomy, inserted before people reference it.
+  const insertedDisciplines = await db
+    .insert(disciplines)
+    .values(demoDisciplines.map((d, i) => ({ workspaceId: wid, name: d.name, color: d.color, sortOrder: i })))
+    .returning();
+  const disciplineId = Object.fromEntries(
+    insertedDisciplines.map((d) => [d.name, d.id]),
+  ) as Record<string, string>;
 
   // People — insert first (without managers), then wire managerId by name.
   const insertedPeople = await db
@@ -268,6 +298,10 @@ export async function applyDemoOrg(
         startDate: p.startDate ?? null,
         growthFocus: p.growthFocus ?? null,
         lastVacationAt: p.lastVacationAt ?? null,
+        disciplineId: p.discipline ? (disciplineId[p.discipline] ?? null) : null,
+        employment: p.employment ?? "unknown",
+        location: p.location ?? null,
+        timezone: p.timezone ?? null,
       })),
     )
     .returning();

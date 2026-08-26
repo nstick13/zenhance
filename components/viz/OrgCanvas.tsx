@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Stage, Layer, Group, Circle, Rect, Text, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
-import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
+import type { OrgUnit, Person, Assignment, MapNodeRow, Discipline } from "@/lib/db/schema";
 import {
   saveMapNodePosition,
   moveAssignment,
@@ -120,6 +120,13 @@ function lodFor(scale: number): Lod {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+const EMPLOYMENT_LABELS: Record<string, string> = {
+  fte: "Employee",
+  contractor: "Contractor",
+  vendor: "Vendor",
+  unknown: "—",
+};
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Largest font size at which `text` still fits `width` on one line. */
@@ -162,11 +169,13 @@ export function OrgCanvas({
   units,
   assignments,
   mapNodeRows,
+  disciplines,
 }: {
   people: Person[];
   units: OrgUnit[];
   assignments: Assignment[];
   mapNodeRows: MapNodeRow[];
+  disciplines: Discipline[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -1352,7 +1361,7 @@ export function OrgCanvas({
             </div>
             <div style={S.panelBody}>
               {creating === "person" && (
-                <PersonForm mode="create" teams={teams} onSaved={closePanel} onCancel={closePanel} />
+                <PersonForm mode="create" teams={teams} disciplines={disciplines} onSaved={closePanel} onCancel={closePanel} />
               )}
               {creating === "team" && (
                 <TeamForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
@@ -1362,6 +1371,7 @@ export function OrgCanvas({
                   person={selected}
                   byId={byId}
                   teams={teams}
+                  disciplines={disciplines}
                   onSelect={selectNode}
                   onEdit={() => setEditing(true)}
                 />
@@ -1371,6 +1381,7 @@ export function OrgCanvas({
                   mode="edit"
                   person={selected}
                   teams={teams}
+                  disciplines={disciplines}
                   onSaved={() => setEditing(false)}
                   onCancel={() => setEditing(false)}
                   onDeleted={closePanel}
@@ -1409,17 +1420,20 @@ function PersonBody({
   person,
   byId,
   teams,
+  disciplines,
   onSelect,
   onEdit,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
   teams: CanvasTeam[];
+  disciplines: Discipline[];
   onSelect: (id: string) => void;
   onEdit: () => void;
 }) {
   const u = utilOf(person);
   const mgr = person.managerId ? byId.get(person.managerId) : null;
+  const discipline = disciplines.find((d) => d.id === person.disciplineId) ?? null;
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1427,6 +1441,20 @@ function PersonBody({
         <button style={S.editBtn} onClick={onEdit}>
           Edit
         </button>
+      </div>
+      {/* Discipline is what they *are*; the title above is their HR label. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        {discipline && (
+          <span style={{ ...S.tag, background: `${discipline.color ?? C.inkSoft}1f`, color: C.ink }}>
+            {discipline.name}
+          </span>
+        )}
+        {person.employment !== "fte" && person.employment !== "unknown" && (
+          <span style={{ ...S.tag, background: `${C.cross}22`, color: C.ink }}>
+            {EMPLOYMENT_LABELS[person.employment]}
+          </span>
+        )}
+        {person.location && <span style={S.tag}>{person.location}</span>}
       </div>
       <Meter label="Delivery load" value={u} />
       <Assignments person={person} byId={byId} teams={teams} onSelect={onSelect} />
@@ -1436,6 +1464,8 @@ function PersonBody({
           <Fact label="Reports to" value={mgr?.name ?? "—"} />
           <Fact label="Started" value={person.startDate ?? "—"} />
           <Fact label="Last leave" value={person.lastVacationAt ?? "—"} />
+          <Fact label="Employment" value={EMPLOYMENT_LABELS[person.employment] ?? "—"} />
+          <Fact label="Time zone" value={person.timezone ?? "—"} />
         </div>
       </Section>
       {person.skills.length > 0 && (
@@ -1522,6 +1552,10 @@ type PersonFormState = {
   startDate: string;
   lastVacationAt: string;
   growthFocus: string;
+  disciplineId: string;
+  employment: "fte" | "contractor" | "vendor" | "unknown";
+  location: string;
+  timezone: string;
 };
 
 const emptyPersonForm: PersonFormState = {
@@ -1533,6 +1567,10 @@ const emptyPersonForm: PersonFormState = {
   startDate: "",
   lastVacationAt: "",
   growthFocus: "",
+  disciplineId: "",
+  employment: "unknown",
+  location: "",
+  timezone: "",
 };
 
 /** The assignment drag-to-reassign would move: the highest-% one. */
@@ -1551,6 +1589,10 @@ function personToForm(p: CanvasPerson): PersonFormState {
     startDate: p.startDate ?? "",
     lastVacationAt: p.lastVacationAt ?? "",
     growthFocus: p.growthFocus ?? "",
+    disciplineId: p.disciplineId ?? "",
+    employment: p.employment,
+    location: p.location ?? "",
+    timezone: p.timezone ?? "",
   };
 }
 
@@ -1558,6 +1600,7 @@ function PersonForm({
   mode,
   person,
   teams,
+  disciplines,
   onSaved,
   onCancel,
   onDeleted,
@@ -1565,6 +1608,7 @@ function PersonForm({
   mode: "create" | "edit";
   person?: CanvasPerson;
   teams: CanvasTeam[];
+  disciplines: Discipline[];
   onSaved: () => void;
   onCancel: () => void;
   onDeleted?: () => void;
@@ -1633,8 +1677,43 @@ function PersonForm({
     <>
       <label style={S.formLabel}>Name *</label>
       <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      <label style={S.formLabel}>Title</label>
+      <label style={S.formLabel}>Job title</label>
       <input style={S.formInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <p style={S.formHint}>Their HR label. Discipline below is what gets counted.</p>
+      <label style={S.formLabel}>Discipline</label>
+      <select
+        style={S.formInput}
+        value={form.disciplineId}
+        onChange={(e) => setForm({ ...form, disciplineId: e.target.value })}
+      >
+        <option value="">— none —</option>
+        {disciplines.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.name}
+          </option>
+        ))}
+      </select>
+      <label style={S.formLabel}>Employment</label>
+      <select
+        style={S.formInput}
+        value={form.employment}
+        onChange={(e) => setForm({ ...form, employment: e.target.value as PersonFormState["employment"] })}
+      >
+        {(["fte", "contractor", "vendor", "unknown"] as const).map((k) => (
+          <option key={k} value={k}>
+            {EMPLOYMENT_LABELS[k]}
+          </option>
+        ))}
+      </select>
+      <label style={S.formLabel}>Location</label>
+      <input style={S.formInput} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+      <label style={S.formLabel}>Time zone</label>
+      <input
+        style={S.formInput}
+        placeholder="Europe/Berlin"
+        value={form.timezone}
+        onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+      />
       <label style={S.formLabel}>Team</label>
       <select
         style={S.formInput}

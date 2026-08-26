@@ -35,6 +35,18 @@ export const orgUnitKind = pgEnum("org_unit_kind", ["group", "team"]);
 
 export const mapNodeType = pgEnum("map_node_type", ["unit", "person"]);
 
+/**
+ * How a person is employed. Deliberately a fixed enum, not a workspace-defined
+ * list: outsourcing exposure is a headline finding, so "contractor" has to mean
+ * the same thing in every workspace to stay comparable.
+ */
+export const employmentType = pgEnum("employment_type", [
+  "fte",
+  "contractor",
+  "vendor",
+  "unknown",
+]);
+
 // --- workspace (tenant) ---------------------------------------------------
 export const workspaces = pgTable("workspaces", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -63,6 +75,34 @@ export const memberships = pgTable(
 );
 
 // --- people ---------------------------------------------------------------
+/**
+ * A workspace's discipline taxonomy — what a person *is* (developer, QA, SRE),
+ * as opposed to `people.title` (their HR label, free text) or
+ * `assignments.roleOnTeam` (what they do on one specific team, free text).
+ *
+ * A table rather than an enum or a text[] because: every org's list differs;
+ * renaming one is a single row instead of a rewrite across every person; and
+ * colour-by-discipline needs a stable, user-settable colour per value.
+ */
+export const disciplines = pgTable(
+  "disciplines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Hex colour used by colour-by-discipline; null = assign one from a ramp. */
+    color: text("color"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("disciplines_workspace_idx").on(t.workspaceId),
+    unique("disciplines_workspace_name_uq").on(t.workspaceId, t.name),
+  ],
+);
+
 export const people = pgTable(
   "people",
   {
@@ -81,12 +121,20 @@ export const people = pgTable(
     growthFocus: text("growth_focus"),
     photoUrl: text("photo_url"),
     lastVacationAt: date("last_vacation_at"), // powers burnout fast-follow
+    /** What they *are*. Structured, because analytics counts it. */
+    disciplineId: uuid("discipline_id").references(() => disciplines.id, {
+      onDelete: "set null",
+    }),
+    employment: employmentType("employment").notNull().default("unknown"),
+    location: text("location"), // free text, for display
+    timezone: text("timezone"), // IANA name, e.g. "Europe/Berlin" — powers distribution drag
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("people_workspace_idx").on(t.workspaceId),
     index("people_manager_idx").on(t.managerId),
+    index("people_discipline_idx").on(t.disciplineId),
   ],
 );
 
@@ -244,6 +292,7 @@ export const assignmentsRelations = relations(assignments, ({ one }) => ({
 // Convenience types
 export type Workspace = typeof workspaces.$inferSelect;
 export type Person = typeof people.$inferSelect;
+export type Discipline = typeof disciplines.$inferSelect;
 export type OrgUnit = typeof orgUnits.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
 export type MapNodeRow = typeof mapNodes.$inferSelect;

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
+import type { OrgUnit, Person, Assignment, MapNodeRow, Discipline } from "@/lib/db/schema";
 
 /**
  * Konva touches `window` at module scope, so OrgCanvas must load with
@@ -33,6 +33,7 @@ export function OrgCanvasLoader(props: {
   units: OrgUnit[];
   assignments: Assignment[];
   mapNodeRows: MapNodeRow[];
+  disciplines: Discipline[];
 }) {
   return <OrgCanvas {...props} />;
 }

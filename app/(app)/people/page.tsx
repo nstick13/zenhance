@@ -1,8 +1,8 @@
-import { getPeople } from "@/lib/data/queries";
+import { getPeople, getDisciplines } from "@/lib/data/queries";
 import { PeopleManager } from "@/components/people/PeopleManager";
 
 export default async function PeoplePage() {
-  const people = await getPeople();
+  const [people, disciplines] = await Promise.all([getPeople(), getDisciplines()]);
   return (
     <div className="min-h-[calc(100vh-57px)] bg-paper text-ink">
       <div className="mx-auto max-w-5xl p-6">
@@ -14,7 +14,7 @@ export default async function PeoplePage() {
             </p>
           </div>
         </div>
-        <PeopleManager initialPeople={people} />
+        <PeopleManager initialPeople={people} disciplines={disciplines} />
       </div>
     </div>
   );

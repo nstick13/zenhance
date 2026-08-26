@@ -11,7 +11,7 @@ export default async function OrgPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { view } = await searchParams;
-  const { people, units, assignments } = await getOrgSnapshot();
+  const { people, units, assignments, disciplines } = await getOrgSnapshot();
   const isEmpty = units.length === 0;
 
   if (isEmpty) {
@@ -69,6 +69,7 @@ export default async function OrgPage({
         units={units}
         assignments={assignments}
         mapNodeRows={mapNodeRows}
+        disciplines={disciplines}
       />
     </div>
   );
