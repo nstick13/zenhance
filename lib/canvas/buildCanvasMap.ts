@@ -196,8 +196,11 @@ export function buildCanvasMap(
     for (const sq of teamList) teamToStreamId.set(sq.id, streamId);
   }
 
+  // Empty streams are kept deliberately. A value stream created from the
+  // toolbar has no teams for as long as it takes to add one, and a stream that
+  // vanishes the moment you create it is a dead end — it would also be missing
+  // from the team form's stream picker, leaving no way to fill it.
   const streamList: CanvasStream[] = tops
-    .filter((t) => (teamsByStream.get(t.id)?.length ?? 0) > 0)
     .map((t) => ({
       id: t.id,
       name: t.name,

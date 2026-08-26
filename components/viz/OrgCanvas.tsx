@@ -21,6 +21,7 @@ import {
   deleteOrgUnit,
   tidyUpCanvasLayout,
   saveLens,
+  saveMapNodePositions,
 } from "@/lib/data/actions";
 import {
   buildCanvasMap,
@@ -33,6 +34,7 @@ import {
   type CanvasPerson,
   type CanvasStream,
   type CanvasAllocation,
+  type Position,
 } from "@/lib/canvas/buildCanvasMap";
 
 import {
@@ -251,7 +253,7 @@ export function OrgCanvas({
   const [introT, setIntroT] = useState(0);
   const [addMode, setAddMode] = useState(false); // Option/Alt held during a person drag
   const [editing, setEditing] = useState(false);
-  const [creating, setCreating] = useState<"person" | "team" | null>(null);
+  const [creating, setCreating] = useState<"person" | "team" | "stream" | null>(null);
 
   // --- lens (S3) ------------------------------------------------------------
   // Held locally and applied on click, then persisted in the background: a
@@ -282,6 +284,14 @@ export function OrgCanvas({
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const realStreams = useMemo(() => streams.filter((t) => t.id !== CROSS_CUTTING_ID), [streams]);
+
+  /** Where a new value stream hangs: beside the streams that already exist, so
+   *  the top rung stays the top rung. Falls back to the root unit. */
+  const streamParentId = useMemo(() => {
+    const sibling = realStreams[0] ? units.find((u) => u.id === realStreams[0].id) : null;
+    if (sibling) return sibling.parentId;
+    return units.find((u) => !u.parentId)?.id ?? null;
+  }, [realStreams, units]);
 
   /** Resolved colour per discipline — the row's own, else a ramp slot. */
   const disciplineColor = useMemo(() => disciplineColors(disciplines), [disciplines]);
@@ -524,10 +534,32 @@ export function OrgCanvas({
   }, [people, byId, seatsByTeam]);
 
   const streamAgg = useMemo(() => {
+    // An empty stream has no contents to derive a box from, so it gets a
+    // placeholder parked to the right of everything else. As soon as it holds
+    // a team the box derives from its contents like every other stream.
+    const empties: string[] = [];
+    let farRight = 0;
+    for (const s of teams) farRight = Math.max(farRight, s.x + 700);
+
     return streams
       .map((t) => {
         const own = teams.filter((s) => s.streamId === t.id);
-        if (own.length === 0) return null;
+        if (own.length === 0) {
+          if (t.id === CROSS_CUTTING_ID) return null;
+          const slot = empties.length;
+          empties.push(t.id);
+          return {
+            ...t,
+            x: farRight + 380,
+            y: slot * 420,
+            hw: 320,
+            hh: 150,
+            heads: 0,
+            cost: 0,
+            openRoles: 0,
+            teams: 0,
+          };
+        }
         // A stream is drawn as a rounded rectangle sized to contain its teams
         // *and* their member rings — so more teams reads as a bigger block.
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -746,6 +778,93 @@ export function OrgCanvas({
     [streamAgg],
   );
 
+  // --- drag a whole value stream -------------------------------------------
+  // The hull is *derived* from its contents, so it has no position to drag.
+  // Dragging it therefore translates every team in the stream and every seat
+  // in those teams, and the box follows because it is recomputed from them.
+  //
+  // Konva's own `draggable` can't drive this (the node's position is a
+  // computed prop, so the drag and the re-render fight each other), so the
+  // gesture is tracked from raw pointer deltas in world space instead.
+  const streamDrag = useRef<{ id: string; last: Position; moved: boolean } | null>(null);
+  const [draggingStreamId, setDraggingStreamId] = useState<string | null>(null);
+  const nodesRef = useRef(nodes);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  /** Pointer position in world (pre-transform) coordinates. */
+  const pointerWorld = useCallback((): Position | null => {
+    const stage = stageRef.current;
+    const p = stage?.getPointerPosition();
+    if (!stage || !p) return null;
+    const k = stage.scaleX();
+    return { x: (p.x - stage.x()) / k, y: (p.y - stage.y()) / k };
+  }, []);
+
+  const moveStreamBy = useCallback((streamId: string, dx: number, dy: number) => {
+    setNodes((prev) => {
+      const teamIds = new Set(
+        prev.filter((n): n is CanvasTeam => n.kind === "team" && n.streamId === streamId).map((n) => n.id),
+      );
+      if (teamIds.size === 0) return prev;
+      return prev.map((n) =>
+        (n.kind === "team" ? teamIds.has(n.id) : teamIds.has(n.homeId))
+          ? { ...n, x: n.x + dx, y: n.y + dy }
+          : n,
+      );
+    });
+  }, []);
+
+  const startStreamDrag = useCallback(
+    (e: KonvaEventObject<MouseEvent | TouchEvent>, streamId: string) => {
+      const w = pointerWorld();
+      if (!w) return;
+      e.cancelBubble = true; // don't also pan the stage
+      stageRef.current?.draggable(false);
+      streamDrag.current = { id: streamId, last: w, moved: false };
+      setDraggingStreamId(streamId);
+    },
+    [pointerWorld],
+  );
+
+  const dragStream = useCallback(() => {
+    const d = streamDrag.current;
+    if (!d) return false;
+    const w = pointerWorld();
+    if (!w) return true;
+    const dx = w.x - d.last.x;
+    const dy = w.y - d.last.y;
+    if (dx || dy) {
+      d.last = w;
+      d.moved = true;
+      moveStreamBy(d.id, dx, dy);
+    }
+    return true;
+  }, [pointerWorld, moveStreamBy]);
+
+  const endStreamDrag = useCallback(() => {
+    const d = streamDrag.current;
+    if (!d) return;
+    streamDrag.current = null;
+    setDraggingStreamId(null);
+    stageRef.current?.draggable(true);
+    if (!d.moved) return;
+    const ns = nodesRef.current;
+    const teamIds = new Set(
+      ns.filter((n): n is CanvasTeam => n.kind === "team" && n.streamId === d.id).map((n) => n.id),
+    );
+    const rows = ns
+      .filter((n) => (n.kind === "team" ? teamIds.has(n.id) : teamIds.has(n.homeId)))
+      .map((n) => ({
+        nodeType: (n.kind === "team" ? "unit" : "person") as "unit" | "person",
+        nodeId: n.id,
+        x: n.x,
+        y: n.y,
+      }));
+    void saveMapNodePositions(rows);
+  }, []);
+
   const onPersonDragMove = useCallback(
     (e: KonvaEventObject<DragEvent>) => {
       if (lod === "streams") {
@@ -881,7 +1000,7 @@ export function OrgCanvas({
     setCreating(null);
   }
 
-  function startCreate(kind: "person" | "team") {
+  function startCreate(kind: "person" | "team" | "stream") {
     setSelectedId(null);
     setEditing(false);
     setCreating(kind);
@@ -945,6 +1064,9 @@ export function OrgCanvas({
           <button style={S.btn} onClick={() => startCreate("team")}>
             + Team
           </button>
+          <button style={S.btn} onClick={() => startCreate("stream")}>
+            + Value stream
+          </button>
         </div>
         <div style={S.overlayGroup}>
           <button style={S.btn} onClick={tidyUp} disabled={isPending}>
@@ -1000,8 +1122,21 @@ export function OrgCanvas({
           height={size.h}
           draggable
           onWheel={onWheel}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
+          onMouseMove={dragStream}
+          onMouseUp={endStreamDrag}
+          onMouseLeave={endStreamDrag}
+          onTouchMove={(e) => {
+            // A stream drag in progress owns the gesture; pinch-zoom otherwise.
+            if (dragStream()) {
+              e.evt.preventDefault();
+              return;
+            }
+            onTouchMove(e);
+          }}
+          onTouchEnd={() => {
+            endStreamDrag();
+            onTouchEnd();
+          }}
           style={{ cursor: "grab" }}
           onClick={(e) => {
             if (e.target === e.target.getStage()) closePanel();
@@ -1098,7 +1233,11 @@ export function OrgCanvas({
                         />
                       )}
                       <Text
-                        text={`${plural(t.teams, "team")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`}
+                        text={
+                          t.teams === 0
+                            ? "Empty — add a team to fill it"
+                            : `${plural(t.teams, "team")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`
+                        }
                         x={-t.hw + 66}
                         y={yStats}
                         width={inner}
@@ -1118,6 +1257,40 @@ export function OrgCanvas({
           </Layer>
 
           <Layer>
+            {/* Drag handles. Only the header strip grabs, not the whole box:
+                the hull covers most of the viewport, and swallowing drags there
+                would cost you pan-anywhere, which is the more common gesture. */}
+            {showTeams &&
+              streamAgg.map((t) => {
+                // No handle on the cross-cutting bucket (not a real unit) or on
+                // an empty stream (nothing to move — its box is a placeholder).
+                if (t.id === CROSS_CUTTING_ID || t.teams === 0) return null;
+                const grabbing = draggingStreamId === t.id;
+                const w = Math.min(t.hw * 2 - 40, 560);
+                return (
+                  <Rect
+                    key={`grip-${t.id}`}
+                    x={t.x - t.hw + 20}
+                    y={t.y - t.hh + 14}
+                    width={w}
+                    height={116}
+                    cornerRadius={22}
+                    fill={hueOf.get(t.id) ?? C.inkSoft}
+                    opacity={grabbing ? 0.14 : 0}
+                    onMouseEnter={() => {
+                      const c = stageRef.current?.container();
+                      if (c) c.style.cursor = "move";
+                    }}
+                    onMouseLeave={() => {
+                      const c = stageRef.current?.container();
+                      if (c) c.style.cursor = "grab";
+                    }}
+                    onMouseDown={(e) => startStreamDrag(e, t.id)}
+                    onTouchStart={(e) => startStreamDrag(e, t.id)}
+                  />
+                );
+              })}
+
             {!showTeams &&
               streamAgg.map((t) => {
                 const ov = streamOverlay(t.id, t.openRoles, t.cost);
@@ -1483,7 +1656,13 @@ export function OrgCanvas({
                   {creating ? `New ${creating}` : selected?.kind === "person" ? "Person" : "Team"}
                 </div>
                 <h2 style={{ margin: "2px 0 0", fontSize: 19 }}>
-                  {creating ? (creating === "person" ? "Add person" : "Add team") : selected?.name}
+                  {creating
+                    ? creating === "person"
+                      ? "Add person"
+                      : creating === "team"
+                        ? "Add team"
+                        : "Add value stream"
+                    : selected?.name}
                 </h2>
               </div>
               <button style={S.close} onClick={closePanel} aria-label="Close">
@@ -1496,6 +1675,9 @@ export function OrgCanvas({
               )}
               {creating === "team" && (
                 <TeamForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
+              )}
+              {creating === "stream" && (
+                <StreamForm parentId={streamParentId} people={people} onSaved={closePanel} onCancel={closePanel} />
               )}
               {!creating && selected?.kind === "person" && !editing && (
                 <PersonBody
@@ -2100,6 +2282,101 @@ function TeamForm({
           Delete team
         </button>
       )}
+    </>
+  );
+}
+
+/**
+ * Create a value stream — the top rung. Deliberately the shortest form in the
+ * app: a stream is a container, and everything interesting about it (teams,
+ * cost, headcount) is rolled up from what you put inside it. It hangs off the
+ * same parent as the streams that already exist, so the top rung stays the
+ * top rung rather than accidentally nesting.
+ */
+function StreamForm({
+  parentId,
+  people,
+  onSaved,
+  onCancel,
+}: {
+  parentId: string | null;
+  people: CanvasPerson[];
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [leadPersonId, setLeadPersonId] = useState("");
+  const [expectedRoi, setExpectedRoi] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    if (!name.trim()) {
+      setError("Name is required");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const res = await createOrgUnit({
+        name,
+        kind: "group" as const,
+        parentId,
+        leadPersonId,
+        targetHeadcount: "",
+        costPerMonth: "",
+        expectedRoi,
+        isExternal: false,
+        vendorName: "",
+      });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+      onSaved();
+    });
+  }
+
+  return (
+    <>
+      <label style={S.formLabel}>Name *</label>
+      <input style={S.formInput} value={name} onChange={(e) => setName(e.target.value)} />
+      <label style={S.formLabel}>Owner</label>
+      <select
+        style={S.formInput}
+        value={leadPersonId}
+        onChange={(e) => setLeadPersonId(e.target.value)}
+      >
+        <option value="">— none —</option>
+        {people.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <label style={S.formLabel}>Expected ROI / mo</label>
+      <input
+        style={S.formInput}
+        inputMode="decimal"
+        value={expectedRoi}
+        onChange={(e) => setExpectedRoi(e.target.value)}
+      />
+
+      {error && <p style={S.formError}>{error}</p>}
+
+      <p style={{ margin: "10px 0 0", fontSize: 12, color: C.inkSoft }}>
+        It lands empty, to the right of the map. Add a team to fill it.
+      </p>
+
+      <div style={S.formActions}>
+        <button style={S.applyBtn} onClick={submit} disabled={pending}>
+          {pending ? "Saving…" : "Create value stream"}
+        </button>
+        <button style={S.discardBtn} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     </>
   );
 }

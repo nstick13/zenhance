@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, mapNodes, disciplines, workspaces, eq, and } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, disciplines, workspaces, eq, and, sql } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
@@ -295,6 +295,40 @@ export async function saveMapNodePosition(
     .onConflictDoUpdate({
       target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
       set: { x: x.toFixed(2), y: y.toFixed(2), updatedAt: new Date() },
+    });
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Persist many positions at once — dragging a value stream moves every team in
+ * it and every seat in those teams, which would otherwise be dozens of
+ * round-trips for one gesture.
+ */
+export async function saveMapNodePositions(
+  rows: { nodeType: "unit" | "person"; nodeId: string; x: number; y: number }[],
+  boardId = "default",
+): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  if (rows.length === 0) return { ok: true, data: undefined };
+  if (rows.length > 2000) return fail("Too many positions in one write");
+  const values = rows.map((r) => {
+    if (r.nodeType !== "unit" && r.nodeType !== "person") throw new Error("Invalid node type");
+    if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) throw new Error("Invalid position");
+    return {
+      workspaceId: workspace.id,
+      boardId,
+      nodeType: r.nodeType,
+      nodeId: r.nodeId,
+      x: r.x.toFixed(2),
+      y: r.y.toFixed(2),
+    };
+  });
+  await db
+    .insert(mapNodes)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
+      set: { x: sql`excluded.x`, y: sql`excluded.y`, updatedAt: new Date() },
     });
   return { ok: true, data: undefined };
 }
