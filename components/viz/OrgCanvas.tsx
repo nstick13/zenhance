@@ -159,22 +159,24 @@ export function OrgCanvas({
 
   const seed = useMemo(
     () => buildCanvasMap({ people: peopleRows, units, assignments: effAssignments }, positionsFromRows(mapNodeRows)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peopleRows, units, effAssignments],
+    [peopleRows, units, effAssignments, mapNodeRows],
   );
 
   const [nodes, setNodes] = useState<CanvasNode[]>(seed.nodes);
   const trains = seed.trains;
 
-  // Re-derive node content (allocations, home) whenever real data or a
-  // staged scenario move changes, but keep each node's current x/y — the
-  // seed's ring positions are only a fallback for nodes with none yet.
-  // Adjusting state during render (not in an effect) per
-  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-state-based-on-a-prop.
+  // Re-derive node content (allocations, home) whenever real data or a staged
+  // scenario move changes, keeping each node's current x/y. When mapNodeRows
+  // changes (e.g. after Tidy up persists new positions), use the seed x/y
+  // directly so the layout actually reflects the server-computed positions.
   const [prevSeed, setPrevSeed] = useState(seed);
+  const [prevMapNodeRows, setPrevMapNodeRows] = useState(mapNodeRows);
   if (prevSeed !== seed) {
     setPrevSeed(seed);
+    const positionsReset = prevMapNodeRows !== mapNodeRows;
+    if (positionsReset) setPrevMapNodeRows(mapNodeRows);
     setNodes((prev) => {
+      if (positionsReset) return seed.nodes;
       const prevById = new Map(prev.map((n) => [n.id, n]));
       return seed.nodes.map((n) => {
         const existing = prevById.get(n.id);
