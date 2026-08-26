@@ -28,6 +28,7 @@ import {
   type CanvasSquad,
   type CanvasPerson,
   type CanvasTrain,
+  type CanvasAllocation,
 } from "@/lib/canvas/buildCanvasMap";
 
 const CROSS_CUTTING_MODE = "connected" as const;
@@ -314,6 +315,46 @@ export function OrgCanvas({
     }
     return m;
   }, [squads, people]);
+
+  // Ghost seat positions for cross-squad people — slotted into each squad's
+  // member ring after the regular members, using the same ring formula as
+  // buildCanvasMap so they don't overlap existing dots.
+  const ghostSeats = useMemo(() => {
+    const regularCountBySquad = new Map<string, number>();
+    for (const p of people) {
+      if (p.crossCuttingTier !== null || p.homeId === CROSS_CUTTING_ID) continue;
+      regularCountBySquad.set(p.homeId, (regularCountBySquad.get(p.homeId) ?? 0) + 1);
+    }
+    const ghostsBySquad = new Map<string, Array<{ person: CanvasPerson; alloc: CanvasAllocation }>>();
+    for (const p of people) {
+      if (p.crossCuttingTier !== "squad") continue;
+      const sorted = [...p.allocations].sort((a, b) => a.unitId.localeCompare(b.unitId));
+      for (const a of sorted) {
+        if (!ghostsBySquad.has(a.unitId)) ghostsBySquad.set(a.unitId, []);
+        ghostsBySquad.get(a.unitId)!.push({ person: p, alloc: a });
+      }
+    }
+    const result: Array<{ person: CanvasPerson; alloc: CanvasAllocation; gx: number; gy: number }> = [];
+    for (const [squadId, ghosts] of ghostsBySquad) {
+      const sq = byId.get(squadId);
+      if (!sq || sq.kind !== "squad" || (sq as CanvasSquad).isCrossCutting) continue;
+      ghosts.sort((a, b) => a.person.name.localeCompare(b.person.name));
+      const regularCount = regularCountBySquad.get(squadId) ?? 0;
+      const totalCount = regularCount + ghosts.length;
+      const radius = Math.max(90, 60 + totalCount * 6);
+      ghosts.forEach(({ person, alloc }, ghostIdx) => {
+        const i = regularCount + ghostIdx;
+        const angle = (2 * Math.PI * i) / Math.max(1, totalCount) - Math.PI / 2;
+        result.push({
+          person,
+          alloc,
+          gx: sq.x + Math.cos(angle) * radius,
+          gy: sq.y + Math.sin(angle) * radius,
+        });
+      });
+    }
+    return result;
+  }, [people, byId]);
 
   const trainAgg = useMemo(() => {
     return trains
@@ -871,44 +912,30 @@ export function OrgCanvas({
                 );
               })}
 
-            {/* Ghost seats — cross-squad people rendered at each squad ring they support */}
-            {showPeople &&
-              people
-                .filter((p) => p.crossCuttingTier === "squad")
-                .flatMap((p) =>
-                  p.allocations.flatMap((a) => {
-                    const sq = byId.get(a.unitId) as CanvasSquad | undefined;
-                    if (!sq || sq.isCrossCutting) return [];
-                    const dx = p.x - sq.x;
-                    const dy = p.y - sq.y;
-                    const dist = Math.hypot(dx, dy);
-                    const nx = dist > 1 ? dx / dist : 0;
-                    const ny = dist > 1 ? dy / dist : -1;
-                    const gx = sq.x + nx * (SQUAD_R + 32);
-                    const gy = sq.y + ny * (SQUAD_R + 32);
-                    const u = utilOf(p);
-                    const ov = personOverlay(p);
-                    return [
-                      <Group
-                        key={`ghost-${p.id}-${a.unitId}`}
-                        x={gx}
-                        y={gy}
-                        opacity={ov.dimmed ? 0.3 : 0.9}
-                        onClick={() => selectNode(p.id)}
-                        onTap={() => selectNode(p.id)}
-                        onMouseEnter={() => showHover(p.id)}
-                        onMouseLeave={() => setHover(null)}
-                      >
-                        <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={3.5} dash={[5, 3]} />
-                        {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
-                        <Text text={p.name} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
-                        {lod === "roles" && (
-                          <Text text={`${a.pct}%`} x={-70} y={44} width={140} align="center" fontSize={11.5} fontStyle="bold" fontFamily={FONT} fill={utilColor(u)} listening={false} />
-                        )}
-                      </Group>,
-                    ];
-                  })
-                )}
+            {/* Ghost seats — cross-squad people slotted into each squad's member ring */}
+            {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }) => {
+              const u = utilOf(p);
+              const ov = personOverlay(p);
+              return (
+                <Group
+                  key={`ghost-${p.id}-${a.unitId}`}
+                  x={gx}
+                  y={gy}
+                  opacity={ov.dimmed ? 0.3 : 0.9}
+                  onClick={() => selectNode(p.id)}
+                  onTap={() => selectNode(p.id)}
+                  onMouseEnter={() => showHover(p.id)}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={3.5} dash={[5, 3]} />
+                  {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
+                  <Text text={p.name} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                  {lod === "roles" && (
+                    <Text text={`${a.pct}%`} x={-70} y={44} width={140} align="center" fontSize={11.5} fontStyle="bold" fontFamily={FONT} fill={utilColor(u)} listening={false} />
+                  )}
+                </Group>
+              );
+            })}
 
             {showPeople &&
               people.filter((p) => p.crossCuttingTier !== "squad").map((p) => {
