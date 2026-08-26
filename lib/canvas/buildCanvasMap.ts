@@ -9,7 +9,7 @@ import { indexById, childUnitsByParent, rootUnits } from "@/lib/org/model";
  * "Value stream" (the top zoom rung) isn't a schema concept — it's the first level
  * where the org tree branches below its root, walking down through any
  * chain of single-child groups (root org -> "Delivery Group" -> {Atlas,
- * Orion, Vega, Infosys Contractors} in the demo org). "Squad" = any
+ * Orion, Vega, Infosys Contractors} in the demo org). "Team" = any
  * kind="team" unit at any depth below that.
  *
  * A person's map "home" is their majority-allocation team (>=60%); anyone
@@ -24,9 +24,9 @@ const HOME_THRESHOLD_PCT = 60;
 
 export type CanvasAllocation = { assignmentId: string; unitId: string; role: string; pct: number };
 
-export type CanvasSquad = {
+export type CanvasTeam = {
   id: string;
-  kind: "squad";
+  kind: "team";
   name: string;
   x: number;
   y: number;
@@ -58,10 +58,10 @@ export type CanvasPerson = {
   skills: string[];
   growthFocus: string | null;
   allocations: CanvasAllocation[];
-  crossCuttingTier: "squad" | "stream" | null;
+  crossCuttingTier: "team" | "stream" | null;
 };
 
-export type CanvasNode = CanvasSquad | CanvasPerson;
+export type CanvasNode = CanvasTeam | CanvasPerson;
 
 export type CanvasStream = {
   id: string;
@@ -113,18 +113,18 @@ const clampN = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, 
 const SEAT_ARC = 104;
 
 /**
- * A squad's circle grows with the number of seats it holds, so "big team" is
+ * A team's circle grows with the number of seats it holds, so "big team" is
  * legible from the size alone before you read a single label.
  * Shared by the layout (here) and the renderer (OrgCanvas).
  */
-export const squadNodeRadius = (seats: number): number => Math.round(clampN(58 + seats * 4.5, 62, 124));
+export const teamNodeRadius = (seats: number): number => Math.round(clampN(58 + seats * 4.5, 62, 124));
 
 /**
- * Radius of the member ring around a squad: clear of the (now variable) node,
+ * Radius of the member ring around a team: clear of the (now variable) node,
  * and wide enough that every seat gets ~SEAT_ARC px of arc.
  */
-export const squadRingRadius = (seats: number): number =>
-  Math.round(Math.max(squadNodeRadius(seats) + 54, (seats * SEAT_ARC) / (2 * Math.PI)));
+export const teamRingRadius = (seats: number): number =>
+  Math.round(Math.max(teamNodeRadius(seats) + 54, (seats * SEAT_ARC) / (2 * Math.PI)));
 
 const ring = (i: number, count: number, radius: number, cx: number, cy: number): Position => {
   const angle = (2 * Math.PI * i) / Math.max(1, count) - Math.PI / 2;
@@ -177,7 +177,7 @@ export function buildCanvasMap(
   }
   const usesCrossCutting = people.some((p) => homeOf.get(p.id) === CROSS_CUTTING_ID);
 
-  // --- group squads by stream, list streams -----------------------------------
+  // --- group teams by stream, list streams -----------------------------------
   const teamsByStream = new Map<string, OrgUnit[]>();
   for (const t of teams) {
     const stream = streamOf(t, topIds, unitsById);
@@ -186,10 +186,10 @@ export function buildCanvasMap(
   }
   for (const list of teamsByStream.values()) list.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Squad → stream lookup used to classify cross-cutting people by tier.
-  const squadToStreamId = new Map<string, string>();
-  for (const [streamId, squadList] of teamsByStream) {
-    for (const sq of squadList) squadToStreamId.set(sq.id, streamId);
+  // Team → stream lookup used to classify cross-cutting people by tier.
+  const teamToStreamId = new Map<string, string>();
+  for (const [streamId, teamList] of teamsByStream) {
+    for (const sq of teamList) teamToStreamId.set(sq.id, streamId);
   }
 
   const streamList: CanvasStream[] = tops
@@ -222,16 +222,16 @@ export function buildCanvasMap(
   }
 
   const nodes: CanvasNode[] = [];
-  const squadAnchor = new Map<string, Position>();
+  const teamAnchor = new Map<string, Position>();
 
   for (const t of streamList) {
     const anchor = streamAnchor.get(t.id)!;
     if (t.id === CROSS_CUTTING_ID) {
       const pos = positions.get(`unit:${CROSS_CUTTING_ID}`) ?? anchor;
-      squadAnchor.set(CROSS_CUTTING_ID, pos);
+      teamAnchor.set(CROSS_CUTTING_ID, pos);
       nodes.push({
         id: CROSS_CUTTING_ID,
-        kind: "squad",
+        kind: "team",
         name: CROSS_CUTTING_NAME,
         x: pos.x,
         y: pos.y,
@@ -249,16 +249,16 @@ export function buildCanvasMap(
       });
       continue;
     }
-    const squadTeams = teamsByStream.get(t.id) ?? [];
-    const squadRadius = Math.max(300, 240 + squadTeams.length * 22);
-    squadTeams.forEach((team, i) => {
-      const seed = ring(i, squadTeams.length, squadRadius, anchor.x, anchor.y);
+    const streamTeams = teamsByStream.get(t.id) ?? [];
+    const teamOrbitRadius = Math.max(300, 240 + streamTeams.length * 22);
+    streamTeams.forEach((team, i) => {
+      const seed = ring(i, streamTeams.length, teamOrbitRadius, anchor.x, anchor.y);
       const pos = positions.get(`unit:${team.id}`) ?? seed;
-      squadAnchor.set(team.id, pos);
+      teamAnchor.set(team.id, pos);
       const openRoles = assignments.filter((a) => a.orgUnitId === team.id && a.isOpenRole).length;
       nodes.push({
         id: team.id,
-        kind: "squad",
+        kind: "team",
         name: team.name,
         x: pos.x,
         y: pos.y,
@@ -277,7 +277,7 @@ export function buildCanvasMap(
     });
   }
 
-  // --- people ring around their home squad -----------------------------------
+  // --- people ring around their home team -----------------------------------
   const peopleByHome = new Map<string, Person[]>();
   for (const p of people) {
     const home = homeOf.get(p.id)!;
@@ -285,24 +285,24 @@ export function buildCanvasMap(
     peopleByHome.get(home)!.push(p);
   }
 
-  // Seats a squad holds = its home members plus a ghost seat for every
-  // cross-squad person allocated to it. Drives both circle and ring size.
+  // Seats a team holds = its home members plus a ghost seat for every
+  // cross-team person allocated to it. Drives both circle and ring size.
   const ghostSeatCount = new Map<string, number>();
   if (crossCuttingMode === "connected") {
     for (const p of people) {
       if (homeOf.get(p.id) !== CROSS_CUTTING_ID) continue;
       const asg = assignmentsByPerson.get(p.id) ?? [];
       if (asg.length === 0) continue;
-      // Both tiers take a seat in every squad they serve — cross-stream people
+      // Both tiers take a seat in every team they serve — cross-stream people
       // are only distinguished by the seat's accent, not by a separate node.
       for (const a of asg) ghostSeatCount.set(a.orgUnitId, (ghostSeatCount.get(a.orgUnitId) ?? 0) + 1);
     }
   }
-  const seatsOf = (squadId: string) =>
-    (peopleByHome.get(squadId)?.length ?? 0) + (ghostSeatCount.get(squadId) ?? 0);
+  const seatsOf = (teamId: string) =>
+    (peopleByHome.get(teamId)?.length ?? 0) + (ghostSeatCount.get(teamId) ?? 0);
 
   // Cross-cutting people with team allocations are rendered as ghost seats in
-  // each squad they serve (see OrgCanvas), so their own node position is never
+  // each team they serve (see OrgCanvas), so their own node position is never
   // drawn — the centroid below is only a stable fallback for anything that
   // reads node coordinates. People without any team allocation cluster in the
   // bucket and are drawn normally.
@@ -324,7 +324,7 @@ export function buildCanvasMap(
           // Weighted centroid of the team anchors this person contributes to
           let totalPct = 0, cx = 0, cy = 0;
           for (const a of asg) {
-            const anchor = squadAnchor.get(a.orgUnitId);
+            const anchor = teamAnchor.get(a.orgUnitId);
             if (!anchor) continue;
             const pct = a.allocationPct ?? 100;
             cx += anchor.x * pct;
@@ -333,15 +333,15 @@ export function buildCanvasMap(
           }
           seed = totalPct > 0
             ? { x: cx / totalPct, y: cy / totalPct }
-            : (squadAnchor.get(CROSS_CUTTING_ID) ?? { x: 0, y: 0 });
+            : (teamAnchor.get(CROSS_CUTTING_ID) ?? { x: 0, y: 0 });
         } else {
           bucketMembers.push(p);
           continue;
         }
-        // Classify: cross-squad if all allocations share one stream; cross-stream otherwise.
-        const streamSet = new Set(asg.map((a) => squadToStreamId.get(a.orgUnitId)).filter((t): t is string => !!t));
-        const tier: "squad" | "stream" = streamSet.size <= 1 ? "squad" : "stream";
-        // Always seed from squad positions for cross-cutting people — persisted positions
+        // Classify: cross-team if all allocations share one stream; cross-stream otherwise.
+        const streamSet = new Set(asg.map((a) => teamToStreamId.get(a.orgUnitId)).filter((t): t is string => !!t));
+        const tier: "team" | "stream" = streamSet.size <= 1 ? "team" : "stream";
+        // Always seed from team positions for cross-cutting people — persisted positions
         // from the old bucket layout are stale and cause off-screen connection lines.
         nodes.push({
           id: p.id, kind: "person", name: p.name, x: seed.x, y: seed.y,
@@ -353,10 +353,10 @@ export function buildCanvasMap(
       continue;
     }
 
-    const anchor = squadAnchor.get(homeId);
+    const anchor = teamAnchor.get(homeId);
     if (!anchor) continue;
     members.sort((a, b) => a.name.localeCompare(b.name));
-    const radius = squadRingRadius(seatsOf(homeId));
+    const radius = teamRingRadius(seatsOf(homeId));
     members.forEach((p, i) => {
       const seed = ring(i, members.length, radius, anchor.x, anchor.y);
       const pos = positions.get(`person:${p.id}`) ?? seed;
@@ -377,9 +377,9 @@ export function buildCanvasMap(
 
   // Place any truly unallocated cross-cutting people in the bucket
   if (bucketMembers.length > 0) {
-    const anchor = squadAnchor.get(CROSS_CUTTING_ID);
+    const anchor = teamAnchor.get(CROSS_CUTTING_ID);
     if (anchor) {
-      const radius = squadRingRadius(bucketMembers.length);
+      const radius = teamRingRadius(bucketMembers.length);
       bucketMembers.forEach((p, i) => {
         const seed = ring(i, bucketMembers.length, radius, anchor.x, anchor.y);
         const pos = positions.get(`person:${p.id}`) ?? seed;

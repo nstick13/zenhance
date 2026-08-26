@@ -29,13 +29,13 @@ export function PaletteSwitcher() {
         onClick={() => setOpen((v) => !v)}
         title={`Palette: ${PALETTES[current].name}`}
         aria-label="Change color palette"
-        className="h-5 w-5 rounded-full border border-slate-600 hover:border-slate-400 transition-colors"
+        className="h-5 w-5 rounded-full border border-line hover:border-ink-soft transition-colors"
         style={{ backgroundColor: PALETTES[current].accent }}
       />
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-7 z-20 flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 p-2 shadow-xl">
+          <div className="absolute right-0 top-7 z-20 flex items-center gap-2 rounded-lg border border-line bg-surface p-2 shadow-xl">
             {PALETTE_IDS.map((id) => (
               <button
                 key={id}

@@ -292,7 +292,7 @@ export async function tidyUpCanvasLayout(): Promise<ActionResult> {
       .values({
         workspaceId: workspace.id,
         boardId: "default",
-        nodeType: node.kind === "squad" ? "unit" : "person",
+        nodeType: node.kind === "team" ? "unit" : "person",
         nodeId: node.id,
         x: node.x.toFixed(2),
         y: node.y.toFixed(2),

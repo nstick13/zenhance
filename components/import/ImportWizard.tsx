@@ -66,7 +66,7 @@ function guessSheet(sheets: Sheet[], key: EntityKey): string {
 }
 
 const field =
-  "rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm outline-none focus:border-fuchsia-500";
+  "rounded-md border border-line bg-surface px-2 py-1.5 text-sm outline-none focus:border-ink";
 
 export function ImportWizard() {
   const router = useRouter();
@@ -166,7 +166,7 @@ export function ImportWizard() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <label className="cursor-pointer rounded-md bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400">
+        <label className="cursor-pointer rounded-md bg-ink px-4 py-2 text-sm font-medium text-white hover:bg-ink-soft">
           Choose file
           <input
             type="file"
@@ -175,10 +175,10 @@ export function ImportWizard() {
             onChange={onFile}
           />
         </label>
-        {fileName && <span className="text-sm text-slate-400">{fileName}</span>}
+        {fileName && <span className="text-sm text-ink-soft">{fileName}</span>}
         <button
           onClick={downloadTemplate}
-          className="ml-auto rounded-md border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
+          className="ml-auto rounded-md border border-line px-3 py-2 text-sm hover:bg-paper"
         >
           Download template
         </button>
@@ -189,10 +189,10 @@ export function ImportWizard() {
           {(Object.keys(TARGETS) as EntityKey[]).map((key) => {
             const sheet = sheets.find((s) => s.name === sheetChoice[key]);
             return (
-              <div key={key} className="rounded-lg border border-slate-800 p-4">
+              <div key={key} className="rounded-lg border border-line p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="font-medium capitalize">{key}</h3>
-                  <label className="text-sm text-slate-400">
+                  <label className="text-sm text-ink-soft">
                     Sheet:{" "}
                     <select
                       className={field}
@@ -212,9 +212,9 @@ export function ImportWizard() {
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-3">
                     {TARGETS[key].map((t) => (
                       <label key={t.field} className="text-sm">
-                        <span className="mb-1 block text-slate-400">
+                        <span className="mb-1 block text-ink-soft">
                           {t.label}
-                          {t.required && <span className="text-fuchsia-400"> *</span>}
+                          {t.required && <span className="text-grow"> *</span>}
                         </span>
                         <select
                           className={`${field} w-full`}
@@ -237,7 +237,7 @@ export function ImportWizard() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-500">Not importing {key}.</p>
+                  <p className="text-sm text-ink-soft">Not importing {key}.</p>
                 )}
               </div>
             );
@@ -247,12 +247,12 @@ export function ImportWizard() {
             <button
               onClick={runImport}
               disabled={pending}
-              className="rounded-md bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
+              className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-white hover:bg-ink-soft disabled:opacity-50"
             >
               {pending ? "Importing…" : "Import"}
             </button>
             {result?.ok && (
-              <span className="text-sm text-emerald-400">
+              <span className="text-sm text-grow">
                 Imported {result.created.people} people, {result.created.teams} teams,{" "}
                 {result.created.assignments} assignments.
               </span>

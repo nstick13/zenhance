@@ -25,10 +25,10 @@ import {
   buildCanvasMap,
   positionsFromRows,
   CROSS_CUTTING_ID,
-  squadNodeRadius,
-  squadRingRadius,
+  teamNodeRadius,
+  teamRingRadius,
   type CanvasNode,
-  type CanvasSquad,
+  type CanvasTeam,
   type CanvasPerson,
   type CanvasStream,
   type CanvasAllocation,
@@ -37,7 +37,7 @@ import {
 const CROSS_CUTTING_MODE = "connected" as const;
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
 
-/** "Marco Webb" -> "M. Webb". Ghost seats repeat the same person across squads;
+/** "Marco Webb" -> "M. Webb". Ghost seats repeat the same person across teams;
  *  the short form keeps the ring readable without dropping identity. */
 const shortName = (name: string) => {
   const parts = name.trim().split(/\s+/);
@@ -65,7 +65,7 @@ const C = {
   inkSoft: "#5c6570",
   line: "#e4e0d6",
   white: "#ffffff",
-  squad: "#10b981",
+  team: "#10b981",
   cross: "#f59e0b",
   external: "#8b5cf6",
   crossStream: "#6366f1", // seats held by someone who spans multiple streams
@@ -78,11 +78,11 @@ const C = {
 const FONT =
   "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif";
 
-type Lod = "streams" | "squads" | "people" | "roles";
+type Lod = "streams" | "teams" | "people" | "roles";
 
 const LOD_LABELS: [Lod, string][] = [
   ["streams", "Value streams"],
-  ["squads", "Squads"],
+  ["teams", "Teams"],
   ["people", "People"],
   ["roles", "Roles"],
 ];
@@ -102,19 +102,19 @@ const NO_OVERLAY: NodeOverlay = { dimmed: false, badge: null, heatPct: 0 };
 /** Identity colours for value streams — low-saturation "paper" register, used as
  *  a wash inside the stream rectangle and for its header type. Assigned by the
  *  stream's position in the (name-sorted) list, so a stream keeps its colour. */
-// Deliberately avoids violet (external vendor squads), the ghost amber, and the
+// Deliberately avoids violet (external vendor teams), the ghost amber, and the
 // utilisation red — a stream's identity must never read as a status.
 const STREAM_HUES = ["#0e7490", "#4f46e5", "#9d174d", "#15803d", "#a16207"];
 const streamHue = (i: number) => STREAM_HUES[i % STREAM_HUES.length];
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3;
-const SQUAD_DROP_PAD = 26; // slack beyond a squad's own radius for drop targeting
+const TEAM_DROP_PAD = 26; // slack beyond a team's own radius for drop targeting
 
 function lodFor(scale: number): Lod {
   if (scale >= 1.5) return "roles";
   if (scale >= 0.45) return "people";
-  if (scale >= 0.26) return "squads";
+  if (scale >= 0.26) return "teams";
   return "streams";
 }
 
@@ -127,7 +127,7 @@ const fitFontSize = (text: string, width: number, max: number, min: number) =>
   clamp(width / Math.max(1, text.length * 0.58), min, max);
 
 /** Intro choreography: each element gets a window inside the 0→1 intro clock,
- *  so the map assembles (hulls → squads → seats) instead of appearing whole. */
+ *  so the map assembles (hulls → teams → seats) instead of appearing whole. */
 const INTRO_MS = 820;
 const easeOut = (x: number) => 1 - Math.pow(1 - x, 3);
 const phase = (t: number, start: number, dur: number) => easeOut(clamp((t - start) / dur, 0, 1));
@@ -148,7 +148,7 @@ const money = (n: number) =>
       ? `$${Math.round(n / 1000)}k`
       : `$${Math.round(n)}`;
 
-type SquadStats = {
+type TeamStats = {
   heads: number;
   fte: number;
   cost: number;
@@ -234,7 +234,7 @@ export function OrgCanvas({
   const [introT, setIntroT] = useState(0);
   const [addMode, setAddMode] = useState(false); // Option/Alt held during a person drag
   const [editing, setEditing] = useState(false);
-  const [creating, setCreating] = useState<"person" | "squad" | null>(null);
+  const [creating, setCreating] = useState<"person" | "team" | null>(null);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -242,7 +242,7 @@ export function OrgCanvas({
 
   const lod = lodFor(scale);
 
-  const squads = useMemo(() => nodes.filter((n): n is CanvasSquad => n.kind === "squad"), [nodes]);
+  const teams = useMemo(() => nodes.filter((n): n is CanvasTeam => n.kind === "team"), [nodes]);
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const realStreams = useMemo(() => streams.filter((t) => t.id !== CROSS_CUTTING_ID), [streams]);
@@ -272,16 +272,16 @@ export function OrgCanvas({
     return max;
   }, [rollupMap]);
 
-  const squadOverlay = useCallback(
-    (squad: CanvasSquad): NodeOverlay => {
+  const teamOverlay = useCallback(
+    (team: CanvasTeam): NodeOverlay => {
       if (overlayType === "none") return NO_OVERLAY;
       if (overlayType === "allocation") return { ...NO_OVERLAY, dimmed: true };
       if (overlayType === "gaps") {
-        const gap = gapsMap.get(squad.id);
+        const gap = gapsMap.get(team.id);
         const hasGap = !!gap && gap.gap > 0;
         return { dimmed: !hasGap, badge: hasGap ? `${gap!.gap} open` : null, heatPct: 0 };
       }
-      const cost = rollupMap.get(squad.id)?.totalCost ?? 0;
+      const cost = rollupMap.get(team.id)?.totalCost ?? 0;
       return {
         dimmed: false,
         badge: cost > 0 ? `${money(cost)}/mo` : null,
@@ -321,9 +321,9 @@ export function OrgCanvas({
     [overlayType, rollupMap, maxUnitCost],
   );
 
-  const squadStats = useMemo(() => {
-    const m = new Map<string, SquadStats>();
-    for (const s of squads) {
+  const teamStats = useMemo(() => {
+    const m = new Map<string, TeamStats>();
+    for (const s of teams) {
       m.set(s.id, { heads: 0, fte: 0, cost: 0, openRoles: s.openRoles, target: s.targetHeadcount, shared: 0 });
     }
     for (const p of people) {
@@ -355,11 +355,11 @@ export function OrgCanvas({
       cc.shared = members.length;
     }
     return m;
-  }, [squads, people]);
+  }, [teams, people]);
 
-  // Seats per squad (home members + ghost seats). Drives the squad circle size
+  // Seats per team (home members + ghost seats). Drives the team circle size
   // and the member-ring radius, so a big team *looks* like a big team.
-  const seatsBySquad = useMemo(() => {
+  const seatsByTeam = useMemo(() => {
     const m = new Map<string, number>();
     const bump = (id: string) => m.set(id, (m.get(id) ?? 0) + 1);
     for (const p of people) {
@@ -372,41 +372,41 @@ export function OrgCanvas({
     return m;
   }, [people]);
 
-  const squadR = useCallback((id: string) => squadNodeRadius(seatsBySquad.get(id) ?? 0), [seatsBySquad]);
+  const teamR = useCallback((id: string) => teamNodeRadius(seatsByTeam.get(id) ?? 0), [seatsByTeam]);
 
   // Ghost seat positions for every cross-cutting person with allocations —
-  // cross-squad and cross-stream alike. Placed into the *largest
-  // angular gaps* of the squad's real member ring, measured from live node
+  // cross-team and cross-stream alike. Placed into the *largest
+  // angular gaps* of the team's real member ring, measured from live node
   // positions — so a ghost never lands on a member, and the layout survives
-  // dragging members (or the squad itself) around.
+  // dragging members (or the team itself) around.
   const ghostSeats = useMemo(() => {
-    const membersBySquad = new Map<string, CanvasPerson[]>();
+    const membersByTeam = new Map<string, CanvasPerson[]>();
     for (const p of people) {
       if (p.crossCuttingTier !== null || p.homeId === CROSS_CUTTING_ID) continue;
-      if (!membersBySquad.has(p.homeId)) membersBySquad.set(p.homeId, []);
-      membersBySquad.get(p.homeId)!.push(p);
+      if (!membersByTeam.has(p.homeId)) membersByTeam.set(p.homeId, []);
+      membersByTeam.get(p.homeId)!.push(p);
     }
-    const ghostsBySquad = new Map<string, Array<{ person: CanvasPerson; alloc: CanvasAllocation }>>();
+    const ghostsByTeam = new Map<string, Array<{ person: CanvasPerson; alloc: CanvasAllocation }>>();
     for (const p of people) {
       if (p.crossCuttingTier === null) continue;
       for (const a of p.allocations) {
-        if (!ghostsBySquad.has(a.unitId)) ghostsBySquad.set(a.unitId, []);
-        ghostsBySquad.get(a.unitId)!.push({ person: p, alloc: a });
+        if (!ghostsByTeam.has(a.unitId)) ghostsByTeam.set(a.unitId, []);
+        ghostsByTeam.get(a.unitId)!.push({ person: p, alloc: a });
       }
     }
     const result: Array<{ person: CanvasPerson; alloc: CanvasAllocation; gx: number; gy: number }> = [];
-    for (const [squadId, ghosts] of ghostsBySquad) {
-      const sq = byId.get(squadId);
-      if (!sq || sq.kind !== "squad" || (sq as CanvasSquad).isCrossCutting) continue;
+    for (const [teamId, ghosts] of ghostsByTeam) {
+      const sq = byId.get(teamId);
+      if (!sq || sq.kind !== "team" || (sq as CanvasTeam).isCrossCutting) continue;
       ghosts.sort((a, b) => a.person.name.localeCompare(b.person.name));
 
-      const polar = (membersBySquad.get(squadId) ?? [])
+      const polar = (membersByTeam.get(teamId) ?? [])
         .map((m) => ({ a: Math.atan2(m.y - sq.y, m.x - sq.x), r: Math.hypot(m.x - sq.x, m.y - sq.y) }))
         .filter((q) => q.r > 1);
-      const seats = seatsBySquad.get(squadId) ?? ghosts.length;
-      const nominal = squadRingRadius(seats);
+      const seats = seatsByTeam.get(teamId) ?? ghosts.length;
+      const nominal = teamRingRadius(seats);
       const ringR = polar.length
-        ? clamp(polar.reduce((s, q) => s + q.r, 0) / polar.length, squadNodeRadius(seats) + 40, 360)
+        ? clamp(polar.reduce((s, q) => s + q.r, 0) / polar.length, teamNodeRadius(seats) + 40, 360)
         : nominal;
 
       const slots: number[] = [];
@@ -440,18 +440,18 @@ export function OrgCanvas({
       });
     }
     return result;
-  }, [people, byId, seatsBySquad]);
+  }, [people, byId, seatsByTeam]);
 
   const streamAgg = useMemo(() => {
     return streams
       .map((t) => {
-        const own = squads.filter((s) => s.streamId === t.id);
+        const own = teams.filter((s) => s.streamId === t.id);
         if (own.length === 0) return null;
-        // A stream is drawn as a rounded rectangle sized to contain its squads
-        // *and* their member rings — so more squads reads as a bigger block.
+        // A stream is drawn as a rounded rectangle sized to contain its teams
+        // *and* their member rings — so more teams reads as a bigger block.
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         for (const n of own) {
-          const rr = squadRingRadius(seatsBySquad.get(n.id) ?? 0) + 52; // + label headroom
+          const rr = teamRingRadius(seatsByTeam.get(n.id) ?? 0) + 52; // + label headroom
           minX = Math.min(minX, n.x - rr);
           maxX = Math.max(maxX, n.x + rr);
           minY = Math.min(minY, n.y - rr);
@@ -467,16 +467,16 @@ export function OrgCanvas({
         let cost = 0;
         let openRoles = 0;
         for (const s of own) {
-          const st = squadStats.get(s.id);
+          const st = teamStats.get(s.id);
           if (!st) continue;
           heads += st.heads;
           cost += st.cost;
           openRoles += st.openRoles;
         }
-        return { ...t, x: cx, y: cy, hw, hh, heads, cost, openRoles, squads: own.length };
+        return { ...t, x: cx, y: cy, hw, hh, heads, cost, openRoles, teams: own.length };
       })
       .filter((t): t is NonNullable<typeof t> => t !== null);
-  }, [streams, squads, squadStats, seatsBySquad]);
+  }, [streams, teams, teamStats, seatsByTeam]);
 
   // --- sizing ----------------------------------------------------------------
   useEffect(() => {
@@ -626,26 +626,26 @@ export function OrgCanvas({
     pinch.current = null;
   }, []);
 
-  // --- drag: reposition + persist, plus drop-on-squad reassignment -----------
-  const nearestSquad = useCallback(
-    (x: number, y: number): CanvasSquad | null => {
-      let nearest: CanvasSquad | null = null;
+  // --- drag: reposition + persist, plus drop-on-team reassignment -----------
+  const nearestTeam = useCallback(
+    (x: number, y: number): CanvasTeam | null => {
+      let nearest: CanvasTeam | null = null;
       let best = Infinity;
-      for (const s of squads) {
+      for (const s of teams) {
         if (s.isCrossCutting) continue;
         const d = Math.hypot(s.x - x, s.y - y);
-        if (d < squadNodeRadius(seatsBySquad.get(s.id) ?? 0) + SQUAD_DROP_PAD && d < best) {
+        if (d < teamNodeRadius(seatsByTeam.get(s.id) ?? 0) + TEAM_DROP_PAD && d < best) {
           best = d;
           nearest = s;
         }
       }
       return nearest;
     },
-    [squads, seatsBySquad],
+    [teams, seatsByTeam],
   );
 
   // Nearest stream whose hull actually contains (x, y) — used to reparent a
-  // dragged squad onto a different stream. Excludes the synthetic
+  // dragged team onto a different stream. Excludes the synthetic
   // cross-cutting bucket, which isn't a real org unit.
   const nearestStream = useCallback(
     (x: number, y: number) => {
@@ -672,17 +672,17 @@ export function OrgCanvas({
         return;
       }
       setAddMode(!!e.evt.altKey);
-      const target = nearestSquad(e.target.x(), e.target.y());
+      const target = nearestTeam(e.target.x(), e.target.y());
       setDropTargetId(target?.id ?? null);
     },
-    [lod, nearestSquad],
+    [lod, nearestTeam],
   );
 
-  const onSquadDragMove = useCallback(
-    (e: KonvaEventObject<DragEvent>, squad: CanvasSquad) => {
-      if (squad.isCrossCutting) return;
+  const onTeamDragMove = useCallback(
+    (e: KonvaEventObject<DragEvent>, team: CanvasTeam) => {
+      if (team.isCrossCutting) return;
       const target = nearestStream(e.target.x(), e.target.y());
-      setDropStreamId(target && target.id !== squad.streamId ? target.id : null);
+      setDropStreamId(target && target.id !== team.streamId ? target.id : null);
     },
     [nearestStream],
   );
@@ -695,39 +695,39 @@ export function OrgCanvas({
       setDropStreamId(null);
       setAddMode(false);
       setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
-      const nodeType = node.kind === "squad" ? "unit" : "person";
+      const nodeType = node.kind === "team" ? "unit" : "person";
       startTransition(async () => {
         const result = await saveMapNodePosition(nodeType, node.id, x, y);
         if (!result.ok) console.error("Failed to save node position:", result.error);
       });
 
-      if (node.kind === "squad") {
+      if (node.kind === "team") {
         if (node.isCrossCutting) return;
         const target = nearestStream(x, y);
         if (!target || target.id === node.streamId) return;
         const targetStreamId = target.id;
         startTransition(async () => {
           const result = await moveOrgUnit(node.id, targetStreamId);
-          if (!result.ok) console.error("Failed to move squad to stream:", result.error);
+          if (!result.ok) console.error("Failed to move team to stream:", result.error);
           else router.refresh();
         });
         return;
       }
 
       if (node.kind !== "person" || lod === "streams" || node.allocations.length === 0) return;
-      const target = nearestSquad(x, y);
+      const target = nearestTeam(x, y);
       if (!target) return;
-      const targetSquadId = target.id;
+      const targetTeamId = target.id;
       const home = [...node.allocations].sort((a, b) => b.pct - a.pct)[0];
-      if (node.allocations.some((a) => a.unitId === targetSquadId)) return;
+      if (node.allocations.some((a) => a.unitId === targetTeamId)) return;
 
       // Option/Alt-drag *adds* a team instead of moving them to it — the gesture
-      // for "they now support this squad too". Not stageable in scenario mode,
+      // for "they now support this team too". Not stageable in scenario mode,
       // which stages moves (a swapped assignmentId), not new rows.
       if (e.evt.altKey) {
         startTransition(async () => {
           const result = await createAssignment({
-            orgUnitId: targetSquadId,
+            orgUnitId: targetTeamId,
             personId: node.id,
             roleOnTeam: node.title ?? "",
             allocationPct: 20,
@@ -739,22 +739,22 @@ export function OrgCanvas({
         return;
       }
 
-      if (home.unitId === targetSquadId) return;
+      if (home.unitId === targetTeamId) return;
       if (scenario) {
         setMoves((prev) => {
           const next = new Map(prev);
-          next.set(home.assignmentId, targetSquadId);
+          next.set(home.assignmentId, targetTeamId);
           return next;
         });
         return;
       }
       startTransition(async () => {
-        const result = await moveAssignment(home.assignmentId, targetSquadId);
+        const result = await moveAssignment(home.assignmentId, targetTeamId);
         if (!result.ok) console.error("Failed to reassign:", result.error);
         else router.refresh();
       });
     },
-    [startTransition, lod, nearestSquad, nearestStream, scenario, router],
+    [startTransition, lod, nearestTeam, nearestStream, scenario, router],
   );
 
   function toggleScenario() {
@@ -800,7 +800,7 @@ export function OrgCanvas({
     setCreating(null);
   }
 
-  function startCreate(kind: "person" | "squad") {
+  function startCreate(kind: "person" | "team") {
     setSelectedId(null);
     setEditing(false);
     setCreating(kind);
@@ -817,7 +817,7 @@ export function OrgCanvas({
   const hovered = hover ? byId.get(hover.id) : null;
   const panelOpen = !!selected || !!creating;
 
-  const showSquads = lod !== "streams";
+  const showTeams = lod !== "streams";
   const showPeople = lod === "people" || lod === "roles";
 
   return (
@@ -863,8 +863,8 @@ export function OrgCanvas({
           <button style={S.btn} onClick={() => startCreate("person")}>
             + Person
           </button>
-          <button style={S.btn} onClick={() => startCreate("squad")}>
-            + Squad
+          <button style={S.btn} onClick={() => startCreate("team")}>
+            + Team
           </button>
         </div>
         <div style={S.overlayGroup}>
@@ -923,12 +923,12 @@ export function OrgCanvas({
                   height={t.hh * 2}
                   cornerRadius={40}
                   fill={C.white}
-                  opacity={showSquads ? 0.72 : 0}
+                  opacity={showTeams ? 0.72 : 0}
                   stroke={dropStreamId === t.id ? "#34d399" : C.line}
                   strokeWidth={dropStreamId === t.id ? 4 / scale : 2 / scale}
                   perfectDrawEnabled={false}
                 />
-                {showSquads && (
+                {showTeams && (
                   <Rect
                     x={-t.hw}
                     y={-t.hh}
@@ -940,7 +940,7 @@ export function OrgCanvas({
                     perfectDrawEnabled={false}
                   />
                 )}
-                {showSquads && (() => {
+                {showTeams && (() => {
                   // Header: the stream's identity, then who is accountable for it,
                   // then its size. Each on its own line, and the name shrinks to fit
                   // a narrow stream rather than wrapping into the lines below it.
@@ -990,7 +990,7 @@ export function OrgCanvas({
                         />
                       )}
                       <Text
-                        text={`${plural(t.squads, "squad")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`}
+                        text={`${plural(t.teams, "team")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`}
                         x={-t.hw + 66}
                         y={yStats}
                         width={inner}
@@ -1010,11 +1010,11 @@ export function OrgCanvas({
           </Layer>
 
           <Layer>
-            {!showSquads &&
+            {!showTeams &&
               streamAgg.map((t) => {
                 const ov = streamOverlay(t.id, t.openRoles, t.cost);
-                // Collapsed stream card — width grows with squad count.
-                const bw = clamp(140 + t.squads * 26, 150, 300);
+                // Collapsed stream card — width grows with team count.
+                const bw = clamp(140 + t.teams * 26, 150, 300);
                 const bh = 104;
                 const tw = bw * 2 - 36;
                 return (
@@ -1077,21 +1077,21 @@ export function OrgCanvas({
                 );
               })}
 
-            {showSquads &&
-              squads.map((s, si) => {
-                const st = squadStats.get(s.id);
-                // Structural colour: a squad wears its value stream's identity.
-                // External vendor squads keep violet — "who employs them" outranks
+            {showTeams &&
+              teams.map((s, si) => {
+                const st = teamStats.get(s.id);
+                // Structural colour: a team wears its value stream's identity.
+                // External vendor teams keep violet — "who employs them" outranks
                 // "which stream they serve" for reading the map.
                 const accent = s.isCrossCutting
                   ? C.cross
                   : s.isExternal
                     ? C.external
-                    : (hueOf.get(s.streamId) ?? C.squad);
+                    : (hueOf.get(s.streamId) ?? C.team);
                 const inP = phase(introT, 0.12 + si * 0.04, 0.34);
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
-                const ov = squadOverlay(s);
-                const r = squadR(s.id);
+                const ov = teamOverlay(s);
+                const r = teamR(s.id);
                 const tw = r * 1.72; // keeps the widest line inside the circle, not just inside the bounding box
                 const nameSize = clamp(Math.round(r * 0.215), 15, 24);
                 const subSize = clamp(Math.round(r * 0.165), 12, 18);
@@ -1116,7 +1116,7 @@ export function OrgCanvas({
                     scaleX={0.62 + 0.38 * inP}
                     scaleY={0.62 + 0.38 * inP}
                     draggable
-                    onDragMove={(e) => onSquadDragMove(e, s)}
+                    onDragMove={(e) => onTeamDragMove(e, s)}
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
                     onMouseEnter={() => showHover(s.id)}
                     onMouseLeave={() => setHover(null)}
@@ -1174,7 +1174,7 @@ export function OrgCanvas({
               })}
 
             {/* Ghost seats — a borrowed seat for someone whose home is elsewhere.
-                Dashed + smaller than a real seat; the wedge is this squad's
+                Dashed + smaller than a real seat; the wedge is this team's
                 share of them. Amber = shared inside this stream; indigo + an
                 outer halo = shared across streams (they hold seats in another
                 stream too). Person-level state (over-allocation, utilisation
@@ -1184,7 +1184,7 @@ export function OrgCanvas({
               const sel = selectedId === p.id;
               const spansStreams = p.crossCuttingTier === "stream";
               const accent = spansStreams ? C.crossStream : C.cross;
-              // Settle outward from the squad they orbit, so the ring is seen forming.
+              // Settle outward from the team they orbit, so the ring is seen forming.
               const home = byId.get(a.unitId);
               const inP = phase(introT, 0.34 + gi * 0.012, 0.34);
               const ix = home ? home.x + (gx - home.x) * inP : gx;
@@ -1315,7 +1315,7 @@ export function OrgCanvas({
             <i style={{ ...S.sw, background: C.utilOver }} /> over
           </span>
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple squads
+            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple teams
           </span>
           <span>
             <i style={{ ...S.sw, border: `2px dashed ${C.crossStream}`, background: "transparent" }} /> multiple value streams
@@ -1328,7 +1328,7 @@ export function OrgCanvas({
             <span style={{ fontSize: 11.5, color: "#ffffffbf" }}>
               {hovered.kind === "person"
                 ? `${hovered.title ?? ""} · ${utilOf(hovered) || "—"}${utilOf(hovered) ? "%" : ""}`
-                : `${squadStats.get(hovered.id)?.heads ?? 0} people · ${money(squadStats.get(hovered.id)?.cost ?? 0)}/mo`}
+                : `${teamStats.get(hovered.id)?.heads ?? 0} people · ${money(teamStats.get(hovered.id)?.cost ?? 0)}/mo`}
             </span>
           </div>
         )}
@@ -1340,10 +1340,10 @@ export function OrgCanvas({
             <div style={S.panelHead}>
               <div>
                 <div style={S.panelType}>
-                  {creating ? `New ${creating}` : selected?.kind === "person" ? "Person" : "Squad"}
+                  {creating ? `New ${creating}` : selected?.kind === "person" ? "Person" : "Team"}
                 </div>
                 <h2 style={{ margin: "2px 0 0", fontSize: 19 }}>
-                  {creating ? (creating === "person" ? "Add person" : "Add squad") : selected?.name}
+                  {creating ? (creating === "person" ? "Add person" : "Add team") : selected?.name}
                 </h2>
               </div>
               <button style={S.close} onClick={closePanel} aria-label="Close">
@@ -1352,16 +1352,16 @@ export function OrgCanvas({
             </div>
             <div style={S.panelBody}>
               {creating === "person" && (
-                <PersonForm mode="create" squads={squads} onSaved={closePanel} onCancel={closePanel} />
+                <PersonForm mode="create" teams={teams} onSaved={closePanel} onCancel={closePanel} />
               )}
-              {creating === "squad" && (
-                <SquadForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
+              {creating === "team" && (
+                <TeamForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
               )}
               {!creating && selected?.kind === "person" && !editing && (
                 <PersonBody
                   person={selected}
                   byId={byId}
-                  squads={squads}
+                  teams={teams}
                   onSelect={selectNode}
                   onEdit={() => setEditing(true)}
                 />
@@ -1370,25 +1370,25 @@ export function OrgCanvas({
                 <PersonForm
                   mode="edit"
                   person={selected}
-                  squads={squads}
+                  teams={teams}
                   onSaved={() => setEditing(false)}
                   onCancel={() => setEditing(false)}
                   onDeleted={closePanel}
                 />
               )}
-              {!creating && selected?.kind === "squad" && !editing && (
-                <SquadBody
-                  squad={selected}
-                  stats={squadStats.get(selected.id)}
+              {!creating && selected?.kind === "team" && !editing && (
+                <TeamBody
+                  team={selected}
+                  stats={teamStats.get(selected.id)}
                   people={people}
                   onSelect={selectNode}
                   onEdit={() => setEditing(true)}
                 />
               )}
-              {!creating && selected?.kind === "squad" && editing && (
-                <SquadForm
+              {!creating && selected?.kind === "team" && editing && (
+                <TeamForm
                   mode="edit"
-                  squad={selected}
+                  team={selected}
                   streams={realStreams}
                   people={people}
                   onSaved={() => setEditing(false)}
@@ -1408,13 +1408,13 @@ export function OrgCanvas({
 function PersonBody({
   person,
   byId,
-  squads,
+  teams,
   onSelect,
   onEdit,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
-  squads: CanvasSquad[];
+  teams: CanvasTeam[];
   onSelect: (id: string) => void;
   onEdit: () => void;
 }) {
@@ -1429,7 +1429,7 @@ function PersonBody({
         </button>
       </div>
       <Meter label="Delivery load" value={u} />
-      <Assignments person={person} byId={byId} squads={squads} onSelect={onSelect} />
+      <Assignments person={person} byId={byId} teams={teams} onSelect={onSelect} />
       <Section title="Facts">
         <div style={S.facts}>
           <Fact label="Cost / mo" value={money(person.costPerMonth)} />
@@ -1453,30 +1453,30 @@ function PersonBody({
   );
 }
 
-function SquadBody({
-  squad,
+function TeamBody({
+  team,
   stats,
   people,
   onSelect,
   onEdit,
 }: {
-  squad: CanvasSquad;
-  stats: SquadStats | undefined;
+  team: CanvasTeam;
+  stats: TeamStats | undefined;
   people: CanvasPerson[];
   onSelect: (id: string) => void;
   onEdit: () => void;
 }) {
-  const members = squad.isCrossCutting
-    ? people.filter((p) => p.homeId === squad.id)
-    : people.filter((p) => p.allocations.some((a) => a.unitId === squad.id));
+  const members = team.isCrossCutting
+    ? people.filter((p) => p.homeId === team.id)
+    : people.filter((p) => p.allocations.some((a) => a.unitId === team.id));
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ color: C.inkSoft, fontSize: 13 }}>
-          {squad.streamName}
-          {squad.vendorName ? ` · ${squad.vendorName}` : ""}
+          {team.streamName}
+          {team.vendorName ? ` · ${team.vendorName}` : ""}
         </div>
-        {!squad.isCrossCutting && (
+        {!team.isCrossCutting && (
           <button style={S.editBtn} onClick={onEdit}>
             Edit
           </button>
@@ -1487,15 +1487,15 @@ function SquadBody({
           <Fact label="People" value={String(stats?.heads ?? 0)} />
           <Fact label="FTE" value={(stats?.fte ?? 0).toFixed(1)} />
           <Fact label="Cost / mo" value={money(stats?.cost ?? 0)} />
-          <Fact label="Target" value={squad.targetHeadcount?.toString() ?? "—"} />
-          <Fact label="Open roles" value={String(squad.openRoles)} tone={squad.openRoles ? C.utilOver : undefined} />
+          <Fact label="Target" value={team.targetHeadcount?.toString() ?? "—"} />
+          <Fact label="Open roles" value={String(team.openRoles)} tone={team.openRoles ? C.utilOver : undefined} />
           <Fact label="Shared in" value={String(stats?.shared ?? 0)} />
         </div>
       </Section>
       <Section title={`People (${members.length})`}>
         <ul style={S.list}>
           {members.map((p) => {
-            const a = p.allocations.find((x) => x.unitId === squad.id);
+            const a = p.allocations.find((x) => x.unitId === team.id);
             return (
               <li key={p.id} style={{ ...S.li, cursor: "pointer" }} onClick={() => onSelect(p.id)}>
                 <span style={{ ...S.sw, background: utilColor(utilOf(p)) }} />
@@ -1512,11 +1512,11 @@ function SquadBody({
   );
 }
 
-// --- panel forms: create/edit person or squad -------------------------------
+// --- panel forms: create/edit person or team -------------------------------
 type PersonFormState = {
   name: string;
   title: string;
-  squadId: string;
+  teamId: string;
   costPerMonth: string;
   skills: string;
   startDate: string;
@@ -1527,7 +1527,7 @@ type PersonFormState = {
 const emptyPersonForm: PersonFormState = {
   name: "",
   title: "",
-  squadId: "",
+  teamId: "",
   costPerMonth: "",
   skills: "",
   startDate: "",
@@ -1545,7 +1545,7 @@ function personToForm(p: CanvasPerson): PersonFormState {
   return {
     name: p.name,
     title: p.title ?? "",
-    squadId: personHomeAllocation(p)?.unitId ?? "",
+    teamId: personHomeAllocation(p)?.unitId ?? "",
     costPerMonth: p.costPerMonth ? String(p.costPerMonth) : "",
     skills: p.skills.join(", "),
     startDate: p.startDate ?? "",
@@ -1557,14 +1557,14 @@ function personToForm(p: CanvasPerson): PersonFormState {
 function PersonForm({
   mode,
   person,
-  squads,
+  teams,
   onSaved,
   onCancel,
   onDeleted,
 }: {
   mode: "create" | "edit";
   person?: CanvasPerson;
-  squads: CanvasSquad[];
+  teams: CanvasTeam[];
   onSaved: () => void;
   onCancel: () => void;
   onDeleted?: () => void;
@@ -1574,12 +1574,12 @@ function PersonForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const home = person ? personHomeAllocation(person) : null;
-  const realSquads = squads.filter((s) => !s.isCrossCutting);
+  const realTeams = teams.filter((s) => !s.isCrossCutting);
 
   function submit() {
     setError(null);
     startTransition(async () => {
-      const { squadId, ...personFields } = form;
+      const { teamId, ...personFields } = form;
       let personId: string;
       if (mode === "edit" && person) {
         const res = await updatePerson(person.id, personFields);
@@ -1597,19 +1597,19 @@ function PersonForm({
         personId = res.data.id;
       }
 
-      const currentSquadId = home?.unitId ?? "";
-      if (squadId !== currentSquadId) {
-        if (squadId && home) {
-          await moveAssignment(home.assignmentId, squadId);
-        } else if (squadId && !home) {
+      const currentTeamId = home?.unitId ?? "";
+      if (teamId !== currentTeamId) {
+        if (teamId && home) {
+          await moveAssignment(home.assignmentId, teamId);
+        } else if (teamId && !home) {
           await createAssignment({
-            orgUnitId: squadId,
+            orgUnitId: teamId,
             personId,
             roleOnTeam: "",
             allocationPct: 100,
             isOpenRole: false,
           });
-        } else if (!squadId && home) {
+        } else if (!teamId && home) {
           await deleteAssignment(home.assignmentId);
         }
       }
@@ -1635,14 +1635,14 @@ function PersonForm({
       <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
       <label style={S.formLabel}>Title</label>
       <input style={S.formInput} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-      <label style={S.formLabel}>Squad</label>
+      <label style={S.formLabel}>Team</label>
       <select
         style={S.formInput}
-        value={form.squadId}
-        onChange={(e) => setForm({ ...form, squadId: e.target.value })}
+        value={form.teamId}
+        onChange={(e) => setForm({ ...form, teamId: e.target.value })}
       >
         <option value="">— unassigned —</option>
-        {realSquads.map((s) => (
+        {realTeams.map((s) => (
           <option key={s.id} value={s.id}>
             {s.name}
           </option>
@@ -1703,7 +1703,7 @@ function PersonForm({
   );
 }
 
-type SquadFormState = {
+type TeamFormState = {
   name: string;
   streamId: string;
   leadPersonId: string;
@@ -1714,7 +1714,7 @@ type SquadFormState = {
   vendorName: string;
 };
 
-function emptySquadForm(streams: CanvasStream[]): SquadFormState {
+function emptyTeamForm(streams: CanvasStream[]): TeamFormState {
   return {
     name: "",
     streamId: streams[0]?.id ?? "",
@@ -1727,10 +1727,10 @@ function emptySquadForm(streams: CanvasStream[]): SquadFormState {
   };
 }
 
-// Assumes the squad's real parentId is its stream directly — true today (the
+// Assumes the team's real parentId is its stream directly — true today (the
 // demo org has no sub-group nesting between stream and team; see the "Sub-groups"
 // story in docs/ROADMAP.md). Revisit if that nesting lands.
-function squadToForm(s: CanvasSquad): SquadFormState {
+function teamToForm(s: CanvasTeam): TeamFormState {
   return {
     name: s.name,
     streamId: s.streamId,
@@ -1743,9 +1743,9 @@ function squadToForm(s: CanvasSquad): SquadFormState {
   };
 }
 
-function SquadForm({
+function TeamForm({
   mode,
-  squad,
+  team,
   streams,
   people,
   onSaved,
@@ -1753,7 +1753,7 @@ function SquadForm({
   onDeleted,
 }: {
   mode: "create" | "edit";
-  squad?: CanvasSquad;
+  team?: CanvasTeam;
   streams: CanvasStream[];
   people: CanvasPerson[];
   onSaved: () => void;
@@ -1761,7 +1761,7 @@ function SquadForm({
   onDeleted?: () => void;
 }) {
   const router = useRouter();
-  const [form, setForm] = useState<SquadFormState>(squad ? squadToForm(squad) : emptySquadForm(streams));
+  const [form, setForm] = useState<TeamFormState>(team ? teamToForm(team) : emptyTeamForm(streams));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -1784,7 +1784,7 @@ function SquadForm({
         vendorName: form.vendorName,
       };
       const res =
-        mode === "edit" && squad ? await updateOrgUnit(squad.id, payload) : await createOrgUnit(payload);
+        mode === "edit" && team ? await updateOrgUnit(team.id, payload) : await createOrgUnit(payload);
       if (!res.ok) {
         setError(res.error);
         return;
@@ -1795,10 +1795,10 @@ function SquadForm({
   }
 
   function remove() {
-    if (!squad) return;
-    if (!confirm(`Delete "${squad.name}" and its assignments?`)) return;
+    if (!team) return;
+    if (!confirm(`Delete "${team.name}" and its assignments?`)) return;
     startTransition(async () => {
-      await deleteOrgUnit(squad.id);
+      await deleteOrgUnit(team.id);
       router.refresh();
       onDeleted?.();
     });
@@ -1858,11 +1858,11 @@ function SquadForm({
       <div style={S.formCheckboxRow}>
         <input
           type="checkbox"
-          id="squad-external"
+          id="team-external"
           checked={form.isExternal}
           onChange={(e) => setForm({ ...form, isExternal: e.target.checked })}
         />
-        <label htmlFor="squad-external">External / vendor team</label>
+        <label htmlFor="team-external">External / vendor team</label>
       </div>
       {form.isExternal && (
         <>
@@ -1879,7 +1879,7 @@ function SquadForm({
 
       <div style={S.formActions}>
         <button style={S.applyBtn} onClick={submit} disabled={pending}>
-          {pending ? "Saving…" : mode === "edit" ? "Save changes" : "Create squad"}
+          {pending ? "Saving…" : mode === "edit" ? "Save changes" : "Create team"}
         </button>
         <button style={S.discardBtn} onClick={onCancel}>
           Cancel
@@ -1887,7 +1887,7 @@ function SquadForm({
       </div>
       {mode === "edit" && (
         <button style={S.dangerBtn} onClick={remove} disabled={pending}>
-          Delete squad
+          Delete team
         </button>
       )}
     </>
@@ -1897,30 +1897,30 @@ function SquadForm({
 /**
  * Editable team memberships for one person. This is the only place in the map
  * where you can put someone on a *second* team — dragging a dot and the Edit
- * form's Squad picker both *move* the primary assignment rather than adding to
+ * form's Team picker both *move* the primary assignment rather than adding to
  * it, which is why a multi-team person previously could only be created from
  * /teams or an import.
  */
 function Assignments({
   person,
   byId,
-  squads,
+  teams,
   onSelect,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
-  squads: CanvasSquad[];
+  teams: CanvasTeam[];
   onSelect: (id: string) => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [addSquad, setAddSquad] = useState("");
+  const [addTeam, setAddTeam] = useState("");
   const [addPct, setAddPct] = useState("20");
 
   const taken = new Set(person.allocations.map((a) => a.unitId));
-  const options = squads.filter((s) => !s.isCrossCutting && !taken.has(s.id));
+  const options = teams.filter((s) => !s.isCrossCutting && !taken.has(s.id));
   const total = utilOf(person);
 
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>) => {
@@ -1985,8 +1985,8 @@ function Assignments({
         <div style={S.addRow}>
           <select
             style={{ ...S.formInput, flex: 1 }}
-            value={addSquad}
-            onChange={(e) => setAddSquad(e.target.value)}
+            value={addTeam}
+            onChange={(e) => setAddTeam(e.target.value)}
           >
             <option value="">Choose a team…</option>
             {options.map((sq) => (
@@ -2007,11 +2007,11 @@ function Assignments({
           <span style={{ color: C.inkSoft }}>%</span>
           <button
             style={S.editBtn}
-            disabled={pending || !addSquad}
+            disabled={pending || !addTeam}
             onClick={() =>
               run(async () => {
                 const res = await createAssignment({
-                  orgUnitId: addSquad,
+                  orgUnitId: addTeam,
                   personId: person.id,
                   roleOnTeam: person.title ?? "",
                   allocationPct: addPct,
@@ -2019,7 +2019,7 @@ function Assignments({
                 });
                 if (res.ok) {
                   setAdding(false);
-                  setAddSquad("");
+                  setAddTeam("");
                   setAddPct("20");
                 }
                 return res;
@@ -2041,7 +2041,7 @@ function Assignments({
       )}
       {error && <p style={{ ...S.empty, color: C.utilOver }}>{error}</p>}
       <p style={{ ...S.empty, marginTop: 8, fontSize: 11.5 }}>
-        Tip: hold ⌥ while dragging someone onto a squad to add that team instead of moving them.
+        Tip: hold ⌥ while dragging someone onto a team to add that team instead of moving them.
       </p>
     </Section>
   );
@@ -2151,8 +2151,8 @@ const S = {
     height: 34,
     padding: "0 12px",
     borderRadius: 8,
-    border: `1px solid ${active ? C.squad : C.line}`,
-    background: active ? C.squad : C.white,
+    border: `1px solid ${active ? C.team : C.line}`,
+    background: active ? C.team : C.white,
     color: active ? C.white : C.ink,
     fontFamily: FONT,
     fontSize: 12.5,
@@ -2176,7 +2176,7 @@ const S = {
     padding: "0 12px",
     borderRadius: 8,
     border: "none",
-    background: C.squad,
+    background: C.team,
     color: C.white,
     fontFamily: FONT,
     fontSize: 12.5,

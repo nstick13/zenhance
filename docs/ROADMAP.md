@@ -7,9 +7,9 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 ## Status — as of 2026-08-26
 - **Version 0.1.23**, deployed to **production** on Vercel (Neon Postgres + Clerk auth).
 - **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
-- **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, squad reparenting, inline create/edit/delete for people and squads, and (v0.1.16–22) the cross-cutting seat model.
-- **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each squad they serve — amber for multiple squads, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
-- **Sizing carries meaning** (v0.1.19): squad circles scale with seat count, member rings scale to give each seat ~104px of arc, value streams are rectangles sized to their contents.
+- **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, team reparenting, inline create/edit/delete for people and teams, and (v0.1.16–22) the cross-cutting seat model.
+- **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each team they serve — amber for multiple teams, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
+- **Sizing carries meaning** (v0.1.19): team circles scale with seat count, member rings scale to give each seat ~104px of arc, value streams are rectangles sized to their contents.
 - **Terminology (v0.1.21):** the top rung is a **value stream**, not a "release train." App-level only — no migration was needed, since `org_units.kind` is just `group | team`.
 - **Marketing site** live at https://zenhance.vercel.app.
 
@@ -21,16 +21,16 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ### S1 — Look & feel + stream ownership *(shipped v0.1.23)*
 Pure viz, no schema. Fixes the flat first impression and lands the first slice of stream ownership.
-- ✅ **Value stream identity colour** — each stream gets a stable hue (`STREAM_HUES`), used as a wash in its rectangle, its header type, and the stroke of every squad inside it. Deliberately avoids violet (external vendors), ghost amber, and utilisation red, so identity never reads as status.
-- ✅ **Stream header block** — accent bar + name + `Led by <lead>` · squads · people · cost. **"No owner" renders in red** — the first ownership finding, free.
-- ✅ **Entrance choreography** — an 820ms intro clock assembles the map (hulls → squads → seats settling outward into their rings) instead of showing it pre-built. Honours `prefers-reduced-motion`.
+- ✅ **Value stream identity colour** — each stream gets a stable hue (`STREAM_HUES`), used as a wash in its rectangle, its header type, and the stroke of every team inside it. Deliberately avoids violet (external vendors), ghost amber, and utilisation red, so identity never reads as status.
+- ✅ **Stream header block** — accent bar + name + `Led by <lead>` · teams · people · cost. **"No owner" renders in red** — the first ownership finding, free.
+- ✅ **Entrance choreography** — an 820ms intro clock assembles the map (hulls → teams → seats settling outward into their rings) instead of showing it pre-built. Honours `prefers-reduced-motion`.
 - ✅ **Open on a view, not a fit** — lands on the value stream with the most open roles rather than framing the whole world at the least informative zoom.
-- ✅ **Depth** — soft shadows under squad circles and stream cards.
+- ✅ **Depth** — soft shadows under team circles and stream cards.
 
 ### S2 — Recognized person attributes  ⬅ **next**
 Small migration, big unlock. See the *People roles & job function* story under Data Model for the open questions (discipline vs role-on-team; taxonomy vs free text).
 - `role` / discipline — **workspace-defined list**, not free text (free text is un-analyzable).
-- `employmentType` — FTE / contractor / vendor. Today this is team-level only (`orgUnits.isExternal`), which is why a contractor sitting inside a normal squad is invisible.
+- `employmentType` — FTE / contractor / vendor. Today this is team-level only (`orgUnits.isExternal`), which is why a contractor sitting inside a normal team is invisible.
 - `location` / `timezone`.
 - Extend the **import column-mapping** and the **person panel's inline edit** for all three. "Ingest greedily, display selectively."
 
@@ -62,7 +62,7 @@ Still wanted, still the documented moat, and it now has a home as the *Reporting
   - Open design Qs: fuzzy vs substring; how matches behave across zoom/bloom levels; whether filter narrows the *layout* (hide) or just *emphasis* (dim).
 - **Burnout risk overlay** — schema already has `person.last_vacation_at`; combine with tenure for a risk heat/badge overlay (parallels the cost overlay pattern in `getOverlayProps`).
 - **Cross-cutting / shared roles** *(discuss in the Analytics chat)* — model and visualize people who support **across** the structure rather than sitting inside one team: e.g. someone covering security or compliance for an entire value stream / "delivery group," or an IT function that serves many teams. Today the demo data treats people as members of specific teams; we need to represent a person whose support spans a whole group (or multiple groups) and decide how that reads in the radial map — a satellite around the group? an edge to every team they touch? a separate "function" layer? This ties directly into the multiple-allocation analytics (these people are *the* over-allocated, shared resources) and into the Data Model (sub-groups, edge types). Bring real examples (security/compliance/release-value stream support) to the discussion.
-  - **Design decision (2026-08-26) — two tiers, configurable rendering.** Distinguish *cross-squad* (splits within a value stream) from *cross-stream* (spans multiple value streams). Agreed direction: **cross-squad → ghost seats** (duplicate presence rendered at each squad ring, dashed/lighter border to signal "shared," no connection lines needed); **cross-stream → satellite + lines** (one node placed near heaviest-allocation value stream, dashed lines to others). Rendering mode must be **user-configurable per workspace** — not hardcoded — because the right metaphor depends on org structure and team size. Also needed: the immediate bug fix (auto-invalidate stale `map_nodes` positions for cross-cutting people on load, rather than requiring manual Tidy Up).
+  - **Design decision (2026-08-26) — two tiers, configurable rendering.** Distinguish *cross-team* (splits within a value stream) from *cross-stream* (spans multiple value streams). Agreed direction: **cross-team → ghost seats** (duplicate presence rendered at each team ring, dashed/lighter border to signal "shared," no connection lines needed); **cross-stream → satellite + lines** (one node placed near heaviest-allocation value stream, dashed lines to others). Rendering mode must be **user-configurable per workspace** — not hardcoded — because the right metaphor depends on org structure and team size. Also needed: the immediate bug fix (auto-invalidate stale `map_nodes` positions for cross-cutting people on load, rather than requiring manual Tidy Up).
 - **More viz stories — TBD.** The bigger "what analytics does the living structure unlock?" exploration lands here after the design chat.
 
 ---
@@ -100,7 +100,7 @@ Still wanted, still the documented moat, and it now has a home as the *Reporting
 
 *(none open)*
 
-- ~~**Cross-cutting connection lines appear at wrong LOD / from off-screen origin (v0.1.15).**~~ **Resolved.** Fixed in v0.1.17 (positions always re-seed from squad centroids), then made moot in v0.1.20 when connection lines were removed entirely in favour of ghost seats.
+- ~~**Cross-cutting connection lines appear at wrong LOD / from off-screen origin (v0.1.15).**~~ **Resolved.** Fixed in v0.1.17 (positions always re-seed from team centroids), then made moot in v0.1.20 when connection lines were removed entirely in favour of ghost seats.
 
 ---
 

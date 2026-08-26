@@ -15,34 +15,34 @@ export default async function AppLayout({
   const { workspace } = await requireWorkspace();
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-slate-800 px-6 py-3">
+    <div className="flex min-h-screen flex-col bg-paper text-ink">
+      <header className="flex items-center justify-between border-b border-line bg-surface px-6 py-3">
         <div className="flex items-center gap-6">
           <Link href="/org" className="text-lg font-semibold tracking-tight">
             <span style={{ color: "var(--accent-text)" }}>Zen</span>hance
           </Link>
-          <nav className="flex items-center gap-4 text-sm text-slate-400">
-            <Link href="/org" className="hover:text-slate-100">
+          <nav className="flex items-center gap-4 text-sm text-ink-soft">
+            <Link href="/org" className="hover:text-ink">
               Org
             </Link>
-            <Link href="/people" className="hover:text-slate-100">
+            <Link href="/people" className="hover:text-ink">
               People
             </Link>
-            <Link href="/teams" className="hover:text-slate-100">
+            <Link href="/teams" className="hover:text-ink">
               Teams
             </Link>
-            <Link href="/import" className="hover:text-slate-100">
+            <Link href="/import" className="hover:text-ink">
               Import
             </Link>
           </nav>
         </div>
-        <div className="flex items-center gap-3 text-sm text-slate-400">
+        <div className="flex items-center gap-3 text-sm text-ink-soft">
           <PaletteSwitcher />
           <span>{workspace.name}</span>
           {isClerkEnabled() ? (
             <UserButtonSlot />
           ) : (
-            <span className="rounded bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">
+            <span className="rounded bg-paper px-2 py-0.5 text-xs text-ink-soft">
               dev auth
             </span>
           )}
