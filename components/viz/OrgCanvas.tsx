@@ -119,6 +119,12 @@ function lodFor(scale: number): Lod {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Largest font size at which `text` still fits `width` on one line. */
+const fitFontSize = (text: string, width: number, max: number, min: number) =>
+  clamp(width / Math.max(1, text.length * 0.58), min, max);
+
 /** Intro choreography: each element gets a window inside the 0→1 intro clock,
  *  so the map assembles (hulls → squads → seats) instead of appearing whole. */
 const INTRO_MS = 820;
@@ -449,7 +455,7 @@ export function OrgCanvas({
           minY = Math.min(minY, n.y - rr);
           maxY = Math.max(maxY, n.y + rr);
         }
-        const PAD_X = 70, PAD_TOP = 126, PAD_BOTTOM = 60; // PAD_TOP clears the stream header block
+        const PAD_X = 70, PAD_TOP = 150, PAD_BOTTOM = 60; // PAD_TOP clears the stream header block
         minX -= PAD_X; maxX += PAD_X; minY -= PAD_TOP; maxY += PAD_BOTTOM;
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
@@ -910,37 +916,70 @@ export function OrgCanvas({
                     perfectDrawEnabled={false}
                   />
                 )}
-                {showSquads && (
-                  <>
-                    {/* Header: the stream's identity, and who is accountable for it. */}
-                    <Rect x={-t.hw + 46} y={-t.hh + 40} width={5} height={62} cornerRadius={3} fill={hue} opacity={0.75} />
-                    <Text
-                      text={t.name.toUpperCase()}
-                      x={-t.hw + 66}
-                      y={-t.hh + 38}
-                      width={t.hw * 2 - 112}
-                      fontSize={34}
-                      fontStyle="bold"
-                      fontFamily={FONT}
-                      fill={hue}
-                      opacity={0.75}
-                    />
-                    <Text
-                      text={[
-                        t.leadName ? `Led by ${t.leadName}` : "No owner",
-                        `${t.squads} squads · ${t.heads} people`,
-                        `${money(t.cost)}/mo`,
-                      ].join("   ·   ")}
-                      x={-t.hw + 66}
-                      y={-t.hh + 78}
-                      width={t.hw * 2 - 112}
-                      fontSize={17}
-                      fontFamily={FONT}
-                      fill={t.leadName ? C.inkSoft : C.utilOver}
-                      opacity={t.leadName ? 0.8 : 0.9}
-                    />
-                  </>
-                )}
+                {showSquads && (() => {
+                  // Header: the stream's identity, then who is accountable for it,
+                  // then its size. Each on its own line, and the name shrinks to fit
+                  // a narrow stream rather than wrapping into the lines below it.
+                  const label = t.name.toUpperCase();
+                  const inner = t.hw * 2 - 112;
+                  const nameSize = fitFontSize(label, inner, 34, 15);
+                  const isBucket = t.id === CROSS_CUTTING_ID;
+                  const yName = -t.hh + 38;
+                  const yOwner = yName + nameSize + 12;
+                  const yStats = yOwner + (isBucket ? 0 : 21);
+                  return (
+                    <>
+                      <Rect
+                        x={-t.hw + 46}
+                        y={yName - 2}
+                        width={5}
+                        height={yStats - yName + 20}
+                        cornerRadius={3}
+                        fill={hue}
+                        opacity={0.75}
+                      />
+                      <Text
+                        text={label}
+                        x={-t.hw + 66}
+                        y={yName}
+                        width={inner}
+                        wrap="none"
+                        ellipsis
+                        fontSize={nameSize}
+                        fontStyle="bold"
+                        fontFamily={FONT}
+                        fill={hue}
+                        opacity={0.75}
+                      />
+                      {!isBucket && (
+                        <Text
+                          text={t.leadName ? `Led by ${t.leadName}` : "No owner"}
+                          x={-t.hw + 66}
+                          y={yOwner}
+                          width={inner}
+                          wrap="none"
+                          ellipsis
+                          fontSize={16}
+                          fontStyle={t.leadName ? "normal" : "bold"}
+                          fontFamily={FONT}
+                          fill={t.leadName ? C.inkSoft : C.utilOver}
+                        />
+                      )}
+                      <Text
+                        text={`${plural(t.squads, "squad")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`}
+                        x={-t.hw + 66}
+                        y={yStats}
+                        width={inner}
+                        wrap="none"
+                        ellipsis
+                        fontSize={16}
+                        fontFamily={FONT}
+                        fill={C.inkSoft}
+                        opacity={0.85}
+                      />
+                    </>
+                  );
+                })()}
               </Group>
               );
             })}
@@ -1029,9 +1068,21 @@ export function OrgCanvas({
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
                 const ov = squadOverlay(s);
                 const r = squadR(s.id);
-                const tw = r * 1.85;
+                const tw = r * 1.72; // keeps the widest line inside the circle, not just inside the bounding box
                 const nameSize = clamp(Math.round(r * 0.215), 15, 24);
                 const subSize = clamp(Math.round(r * 0.165), 12, 18);
+                // Lay the label block out as one stack and centre it, so a name
+                // that needs two lines pushes the stats down instead of sitting
+                // on top of them.
+                const perLine = Math.max(6, Math.floor(tw / (nameSize * 0.52)));
+                const nameLines = clamp(Math.ceil(s.name.length / perLine), 1, 2);
+                const nameH = nameLines * nameSize * 1.18;
+                const lineH = subSize * 1.35;
+                const rows = (st ? 1 : 0) + (gap > 0 ? 1 : 0) + (ov.badge ? 1 : 0);
+                const yName = -(nameH + rows * lineH) / 2;
+                const yStat = yName + nameH;
+                const yGap = yStat + (st ? lineH : 0);
+                const yBadge = yGap + (gap > 0 ? lineH : 0);
                 return (
                   <Group
                     key={s.id}
@@ -1061,11 +1112,11 @@ export function OrgCanvas({
                       perfectDrawEnabled={false}
                     />
                     {ov.heatPct > 0 && <Circle radius={r} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
-                    <Text text={s.name} x={-tw / 2} y={-nameSize - 8} width={tw} align="center" fontSize={nameSize} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    <Text text={s.name} x={-tw / 2} y={yName} width={tw} align="center" fontSize={nameSize} lineHeight={1.18} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     <Text
                       text={st ? `${st.heads} · ${st.fte.toFixed(1)} FTE` : ""}
                       x={-tw / 2}
-                      y={-2}
+                      y={yStat}
                       width={tw}
                       align="center"
                       fontSize={subSize}
@@ -1074,13 +1125,13 @@ export function OrgCanvas({
                       listening={false}
                     />
                     {gap > 0 && (
-                      <Text text={`${gap} short`} x={-tw / 2} y={subSize + 5} width={tw} align="center" fontSize={subSize} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
+                      <Text text={`${gap} short`} x={-tw / 2} y={yGap} width={tw} align="center" fontSize={subSize} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
                     )}
                     {ov.badge && (
                       <Text
                         text={ov.badge}
                         x={-tw / 2}
-                        y={gap > 0 ? subSize * 2 + 10 : subSize + 5}
+                        y={yBadge}
                         width={tw}
                         align="center"
                         fontSize={subSize - 0.5}
