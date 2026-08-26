@@ -4,44 +4,52 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
-## Status — as of 2026-06-16
-- **Version 0.1.2**, deployed to **production** on Vercel.
-- **Infra is fully live: Neon Postgres + Clerk auth + Vercel.** The old "create Clerk/Neon accounts" blocker is **resolved** — production deploy is no longer gated on Nate provisioning anything.
-- **Foundations shipped (v1 core):** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + person/team panels; drag-to-reassign + scenario mode; analytics overlays (allocation / gaps / cost-ROI) + summary bar; palette switcher (5 themes); zoom & pan (F1); multi-level group zoom + drag-in-zoom (F2).
-- **Marketing site shipped (2026-06-16):** public Home / Features / Pricing / About at https://zenhance.vercel.app (see Backlog).
+## Status — as of 2026-08-26
+- **Version 0.1.23**, deployed to **production** on Vercel (Neon Postgres + Clerk auth).
+- **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
+- **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, squad reparenting, inline create/edit/delete for people and squads, and (v0.1.16–22) the cross-cutting seat model.
+- **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each squad they serve — amber for multiple squads, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
+- **Sizing carries meaning** (v0.1.19): squad circles scale with seat count, member rings scale to give each seat ~104px of arc, value streams are rectangles sized to their contents.
+- **Terminology (v0.1.21):** the top rung is a **value stream**, not a "release train." App-level only — no migration was needed, since `org_units.kind` is just `group | team`.
+- **Marketing site** live at https://zenhance.vercel.app.
 
 ---
 
 ## ▶ Next build (start here)
 
-> **⚠️ 2026-08-25 — v2 supersedes the two tracks below.** Greg's working Konva prototype prompted a
-> direction change: the map becomes a **free-form canvas** with persisted positions, and the radial view
-> becomes a mode. Read **[V2.md](V2.md)** first — it holds the decisions, the architecture impact and the
-> staged plan (V2.0 viewport → V2.1 parity → V2.2 new capabilities → V2.3 touch polish). The feel study is
-> built and verified at `app/lab/canvas` (`/lab/canvas`).
->
-> **V2.0 (viewport) is shipped and accepted (S1, v0.1.8)** — live at `/org?view=canvas`. **Next: V2.1
-> (parity) = S2** — port overlays, the findings rail, scenario mode, drag-to-reassign, and search onto
-> canvas, then make it the default.
->
-> Track 2 below (`reports_to` + formal layer) is **still wanted** and now has a home: it is the *Reporting*
-> layer toggle in the canvas map. Track 1 (analytics findings UI) **already shipped** — porting it onto
-> canvas is V2.1.
+> **The through-line:** Nate's three instincts (2026-08-26) — *"make it configurable," "the load screen is uninspiring," "show who owns a value stream"* — converge on one sequence. You cannot offer "colour by discipline" or "show FTE vs contractor inside a team" until those are real fields; and the moment they are, three findings from [PRODUCT.md](PRODUCT.md)'s menu unlock for free. **The field layer is the unlock; the display config is what makes it feel personal.**
 
-### Previously next (pre-v2, kept for context) — design is done, this session ships code
-> Don't re-open the design. The *why* is settled in [PRODUCT.md](PRODUCT.md); the *feel* is built in `app/lab/analytics` (see [LAB.md](LAB.md)); code locations are in [CODEMAP.md](CODEMAP.md). Two tracks, do **Track 1 first** (ships value on existing data, low risk).
+### S1 — Look & feel + stream ownership *(shipped v0.1.23)*
+Pure viz, no schema. Fixes the flat first impression and lands the first slice of stream ownership.
+- ✅ **Value stream identity colour** — each stream gets a stable hue (`STREAM_HUES`), used as a wash in its rectangle, its header type, and the stroke of every squad inside it. Deliberately avoids violet (external vendors), ghost amber, and utilisation red, so identity never reads as status.
+- ✅ **Stream header block** — accent bar + name + `Led by <lead>` · squads · people · cost. **"No owner" renders in red** — the first ownership finding, free.
+- ✅ **Entrance choreography** — an 820ms intro clock assembles the map (hulls → squads → seats settling outward into their rings) instead of showing it pre-built. Honours `prefers-reduced-motion`.
+- ✅ **Open on a view, not a fit** — lands on the value stream with the most open roles rather than framing the whole world at the least informative zoom.
+- ✅ **Depth** — soft shadows under squad circles and stream cards.
 
-**Track 1 — Analytics "findings" UI (productionize the lab).** No schema change.
-- Findings math = **pure functions** in `lib/analytics/*` + Vitest fixtures (house pattern). Ship the two that need **only existing data**: **over-allocation** (`overAlloc` already computed in `RadialOrg.tsx` ~101–122) and **shared-person coupling** (team↔team, `GROUP BY` over `assignments`).
-- Build the **findings rail + ambient/focus map interaction** per `app/lab/analytics`: ambient = presence dots (equal weight, category colour, no severity); focus = spotlight + card **Signal→Narrative**. Wire into `RadialOrg` overlays (`getOverlayProps`, ~985) + a side rail.
-- When it lands: **archive** `app/lab/analytics` → `app/lab/_archive/` and update the [LAB.md](LAB.md) registry.
+### S2 — Recognized person attributes  ⬅ **next**
+Small migration, big unlock. See the *People roles & job function* story under Data Model for the open questions (discipline vs role-on-team; taxonomy vs free text).
+- `role` / discipline — **workspace-defined list**, not free text (free text is un-analyzable).
+- `employmentType` — FTE / contractor / vendor. Today this is team-level only (`orgUnits.isExternal`), which is why a contractor sitting inside a normal squad is invisible.
+- `location` / `timezone`.
+- Extend the **import column-mapping** and the **person panel's inline edit** for all three. "Ingest greedily, display selectively."
 
-**Track 2 — `reports_to` + formal layer** (bigger; can be its own session).
-- **Schema:** `people.managerId` self-ref, nullable, workspace-scoped + migration (`lib/db/schema.ts`).
-- **Import:** extend `ImportWizard` column-mapping for `manager`; add the **three-door entry picker** (delivery / formal / by-hand).
-- **Render:** formal **mode** reusing `tree`/`linkRadial` in `RadialOrg.tsx` ~213–264 (person-nodes by `managerId`).
-- **Demo data:** extend `seed.ts` / `demoSeed.ts` with a `reports_to` chain that **diverges** from teams + contractors + time zones — the mess *is* the pitch; the delta can't demo without it.
-- **New fields** for the fuller analytics menu (separate, after): `employment_type`, `timezone`, structured `role`.
+### S3 — The lens config
+Per-workspace, persisted. This is the "other people would want other things" story, and it needs S2 to have anything to key off.
+- **Colour by:** utilisation (today) / discipline / employment type / value stream.
+- **Label by:** name / name + title / initials.
+- **Toggles:** cross-cutting render mode (the configurable-rendering note under Analytics folds in here), the shared-people rail (built and removed in v0.1.21–22 — bring it back as an option, not a fixture), stat lines, stream headers.
+
+### S4 — The findings S2 unlocks
+Each was already blocked on nothing but a missing field. Paid-tier material.
+- **Bus factor** (needs `role`) · **per-person outsourcing exposure** (needs `employmentType`) · **distribution drag** (needs `timezone`).
+
+### Later — `reports_to` + the formal layer
+Still wanted, still the documented moat, and it now has a home as the *Reporting* layer toggle on the canvas. Sequenced **after** the above deliberately: [PRODUCT.md](PRODUCT.md) says delivery-first is the common entry door and that depth investment belongs in delivery analytics. Build steps: `people.managerId` self-ref + migration; import mapping for `manager`; the three-door entry picker; formal render mode; demo data whose reporting chain **diverges** from the teams (the mess is the pitch).
+
+### Also wanted, unscheduled
+- **Full product cabinet** — S1 ships a single owner per stream from the existing `orgUnits.leadPersonId`. A real cabinet (product owner + eng lead + delivery lead) needs role-tagged people attached to a *group* unit; `assignments` are currently restricted to `kind === "team"`, so this is new modeling. Do it after S2's role field exists.
+- **Ownership analytics** — streams with no owner (partly shipped: the red "No owner"), one person owning several streams, an owner barely allocated to the stream they own.
 
 ---
 
@@ -90,13 +98,9 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 
 ## Known bugs
 
-- **Cross-cutting connection lines appear at wrong LOD / from off-screen origin (v0.1.15).**
-  The dashed lines from cross-cutting people to their squads are gated on `showPeople`, but persisted
-  positions from the old cross-cutting bucket layout place those people far off-screen. The lines then
-  originate from an invisible point and slash diagonally across the canvas. **Fix:** run Tidy Up after
-  upgrading (resets positions to new weighted-centroid seed), then the lines originate from the correct
-  on-screen node. Longer-term: auto-migrate stale cross-cutting positions on first load in connected mode
-  rather than requiring a manual Tidy Up.
+*(none open)*
+
+- ~~**Cross-cutting connection lines appear at wrong LOD / from off-screen origin (v0.1.15).**~~ **Resolved.** Fixed in v0.1.17 (positions always re-seed from squad centroids), then made moot in v0.1.20 when connection lines were removed entirely in favour of ghost seats.
 
 ---
 

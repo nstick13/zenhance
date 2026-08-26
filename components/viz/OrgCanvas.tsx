@@ -98,6 +98,14 @@ const OVERLAY_OPTIONS: { type: OverlayType; label: string }[] = [
 type NodeOverlay = { dimmed: boolean; badge: string | null; heatPct: number };
 const NO_OVERLAY: NodeOverlay = { dimmed: false, badge: null, heatPct: 0 };
 
+/** Identity colours for value streams — low-saturation "paper" register, used as
+ *  a wash inside the stream rectangle and for its header type. Assigned by the
+ *  stream's position in the (name-sorted) list, so a stream keeps its colour. */
+// Deliberately avoids violet (external vendor squads), the ghost amber, and the
+// utilisation red — a stream's identity must never read as a status.
+const STREAM_HUES = ["#0e7490", "#4f46e5", "#9d174d", "#15803d", "#a16207"];
+const streamHue = (i: number) => STREAM_HUES[i % STREAM_HUES.length];
+
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3;
 const SQUAD_DROP_PAD = 26; // slack beyond a squad's own radius for drop targeting
@@ -110,6 +118,12 @@ function lodFor(scale: number): Lod {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Intro choreography: each element gets a window inside the 0→1 intro clock,
+ *  so the map assembles (hulls → squads → seats) instead of appearing whole. */
+const INTRO_MS = 820;
+const easeOut = (x: number) => 1 - Math.pow(1 - x, 3);
+const phase = (t: number, start: number, dur: number) => easeOut(clamp((t - start) / dur, 0, 1));
 
 const utilOf = (p: CanvasPerson) => p.allocations.reduce((s, a) => s + a.pct, 0);
 
@@ -210,6 +224,7 @@ export function OrgCanvas({
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropStreamId, setDropStreamId] = useState<string | null>(null);
+  const [introT, setIntroT] = useState(0);
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
@@ -223,6 +238,14 @@ export function OrgCanvas({
   const people = useMemo(() => nodes.filter((n): n is CanvasPerson => n.kind === "person"), [nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const realStreams = useMemo(() => streams.filter((t) => t.id !== CROSS_CUTTING_ID), [streams]);
+
+  /** Stable identity colour per value stream. */
+  const hueOf = useMemo(() => {
+    const m = new Map<string, string>();
+    realStreams.forEach((t, i) => m.set(t.id, streamHue(i)));
+    m.set(CROSS_CUTTING_ID, C.inkSoft);
+    return m;
+  }, [realStreams]);
 
   // --- analytics overlays (V2.1 parity, ported from RadialOrg's getOverlayProps) ---
   const overAlloc = useMemo(() => overAllocatedPersonIds(effAssignments), [effAssignments]);
@@ -426,7 +449,7 @@ export function OrgCanvas({
           minY = Math.min(minY, n.y - rr);
           maxY = Math.max(maxY, n.y + rr);
         }
-        const PAD_X = 70, PAD_TOP = 104, PAD_BOTTOM = 60;
+        const PAD_X = 70, PAD_TOP = 126, PAD_BOTTOM = 60; // PAD_TOP clears the stream header block
         minX -= PAD_X; maxX += PAD_X; minY -= PAD_TOP; maxY += PAD_BOTTOM;
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
@@ -478,12 +501,50 @@ export function OrgCanvas({
     setScale(s);
   }, [nodes, size]);
 
+  /** Frame one box (a value stream rectangle) rather than the whole world. */
+  const frameBox = useCallback(
+    (box: { x: number; y: number; hw: number; hh: number }) => {
+      const stage = stageRef.current;
+      if (!stage || size.w === 0) return;
+      const s = clamp(
+        Math.min(size.w / (box.hw * 2 * 1.12), size.h / (box.hh * 2 * 1.12)),
+        MIN_SCALE,
+        MAX_SCALE,
+      );
+      stage.scale({ x: s, y: s });
+      stage.position({ x: size.w / 2 - box.x * s, y: size.h / 2 - box.y * s });
+      stage.batchDraw();
+      setScale(s);
+    },
+    [size],
+  );
+
+  // Open on a *view*, not on "fit everything": land on the value stream with the
+  // most open roles (tie-break on headcount) — the one worth looking at — and
+  // let the map assemble itself rather than appearing fully built.
   const didFit = useRef(false);
   useEffect(() => {
     if (didFit.current || size.w === 0) return;
     didFit.current = true;
-    fit();
-  }, [fit, size]);
+    const opening = streamAgg
+      .filter((t) => t.id !== CROSS_CUTTING_ID)
+      .sort((a, b) => b.openRoles - a.openRoles || b.heads - a.heads)[0];
+    if (opening) frameBox(opening);
+    else fit();
+
+    // Reduced motion: same code path, zero-length clock — the first frame lands on 1.
+    const reduced = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const dur = reduced ? 1 : INTRO_MS;
+    const started = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = clamp((now - started) / dur, 0, 1);
+      setIntroT(t);
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [fit, frameBox, streamAgg, size]);
 
   const zoomBy = useCallback(
     (factor: number) => {
@@ -799,8 +860,11 @@ export function OrgCanvas({
           }}
         >
           <Layer listening={false}>
-            {streamAgg.map((t) => (
-              <Group key={`hull-${t.id}`} x={t.x} y={t.y}>
+            {streamAgg.map((t) => {
+              const hue = hueOf.get(t.id) ?? C.inkSoft;
+              const inP = phase(introT, 0, 0.45);
+              return (
+              <Group key={`hull-${t.id}`} x={t.x} y={t.y} opacity={inP}>
                 {dropStreamId === t.id && (
                   <Rect
                     x={-t.hw - 16}
@@ -819,26 +883,57 @@ export function OrgCanvas({
                   height={t.hh * 2}
                   cornerRadius={40}
                   fill={C.white}
-                  opacity={showSquads ? 0.55 : 0}
+                  opacity={showSquads ? 0.72 : 0}
                   stroke={dropStreamId === t.id ? "#34d399" : C.line}
                   strokeWidth={dropStreamId === t.id ? 4 / scale : 2 / scale}
                   perfectDrawEnabled={false}
                 />
                 {showSquads && (
-                  <Text
-                    text={t.name.toUpperCase()}
-                    x={-t.hw + 46}
-                    y={-t.hh + 40}
-                    width={t.hw * 2 - 92}
-                    fontSize={34}
-                    fontStyle="bold"
-                    fontFamily={FONT}
-                    fill={C.inkSoft}
-                    opacity={0.45}
+                  <Rect
+                    x={-t.hw}
+                    y={-t.hh}
+                    width={t.hw * 2}
+                    height={t.hh * 2}
+                    cornerRadius={40}
+                    fill={hue}
+                    opacity={0.05}
+                    perfectDrawEnabled={false}
                   />
                 )}
+                {showSquads && (
+                  <>
+                    {/* Header: the stream's identity, and who is accountable for it. */}
+                    <Rect x={-t.hw + 46} y={-t.hh + 40} width={5} height={62} cornerRadius={3} fill={hue} opacity={0.75} />
+                    <Text
+                      text={t.name.toUpperCase()}
+                      x={-t.hw + 66}
+                      y={-t.hh + 38}
+                      width={t.hw * 2 - 112}
+                      fontSize={34}
+                      fontStyle="bold"
+                      fontFamily={FONT}
+                      fill={hue}
+                      opacity={0.75}
+                    />
+                    <Text
+                      text={[
+                        t.leadName ? `Led by ${t.leadName}` : "No owner",
+                        `${t.squads} squads · ${t.heads} people`,
+                        `${money(t.cost)}/mo`,
+                      ].join("   ·   ")}
+                      x={-t.hw + 66}
+                      y={-t.hh + 78}
+                      width={t.hw * 2 - 112}
+                      fontSize={17}
+                      fontFamily={FONT}
+                      fill={t.leadName ? C.inkSoft : C.utilOver}
+                      opacity={t.leadName ? 0.8 : 0.9}
+                    />
+                  </>
+                )}
               </Group>
-            ))}
+              );
+            })}
           </Layer>
 
           <Layer>
@@ -858,7 +953,21 @@ export function OrgCanvas({
                     onMouseEnter={() => showHover(t.id)}
                     onMouseLeave={() => setHover(null)}
                   >
-                    <Rect x={-bw} y={-bh} width={bw * 2} height={bh * 2} cornerRadius={26} fill={C.white} stroke={C.ink} strokeWidth={5} />
+                    <Rect
+                      x={-bw}
+                      y={-bh}
+                      width={bw * 2}
+                      height={bh * 2}
+                      cornerRadius={26}
+                      fill={C.white}
+                      stroke={hueOf.get(t.id) ?? C.ink}
+                      strokeWidth={5}
+                      shadowColor={C.ink}
+                      shadowBlur={26}
+                      shadowOpacity={0.1}
+                      shadowOffsetY={5}
+                      perfectDrawEnabled={false}
+                    />
                     {ov.heatPct > 0 && (
                       <Rect x={-bw} y={-bh} width={bw * 2} height={bh * 2} cornerRadius={26} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />
                     )}
@@ -896,9 +1005,17 @@ export function OrgCanvas({
               })}
 
             {showSquads &&
-              squads.map((s) => {
+              squads.map((s, si) => {
                 const st = squadStats.get(s.id);
-                const accent = s.isCrossCutting ? C.cross : s.isExternal ? C.external : C.squad;
+                // Structural colour: a squad wears its value stream's identity.
+                // External vendor squads keep violet — "who employs them" outranks
+                // "which stream they serve" for reading the map.
+                const accent = s.isCrossCutting
+                  ? C.cross
+                  : s.isExternal
+                    ? C.external
+                    : (hueOf.get(s.streamId) ?? C.squad);
+                const inP = phase(introT, 0.12 + si * 0.04, 0.34);
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
                 const ov = squadOverlay(s);
                 const r = squadR(s.id);
@@ -910,7 +1027,9 @@ export function OrgCanvas({
                     key={s.id}
                     x={s.x}
                     y={s.y}
-                    opacity={ov.dimmed ? 0.3 : 1}
+                    opacity={(ov.dimmed ? 0.3 : 1) * inP}
+                    scaleX={0.62 + 0.38 * inP}
+                    scaleY={0.62 + 0.38 * inP}
                     draggable
                     onDragMove={(e) => onSquadDragMove(e, s)}
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
@@ -925,6 +1044,11 @@ export function OrgCanvas({
                       fill={C.white}
                       stroke={dropTargetId === s.id ? "#34d399" : selectedId === s.id ? C.ink : accent}
                       strokeWidth={dropTargetId === s.id ? 5 : selectedId === s.id ? 6 : 4}
+                      shadowColor={C.ink}
+                      shadowBlur={22}
+                      shadowOpacity={0.08}
+                      shadowOffsetY={4}
+                      perfectDrawEnabled={false}
                     />
                     {ov.heatPct > 0 && <Circle radius={r} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
                     <Text text={s.name} x={-tw / 2} y={-nameSize - 8} width={tw} align="center" fontSize={nameSize} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
@@ -966,17 +1090,22 @@ export function OrgCanvas({
                 outer halo = shared across streams (they hold seats in another
                 stream too). Person-level state (over-allocation, utilisation
                 colour) lives on the person's panel, not on a borrowed seat. */}
-            {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }) => {
+            {showPeople && ghostSeats.map(({ person: p, alloc: a, gx, gy }, gi) => {
               const ov = personOverlay(p);
               const sel = selectedId === p.id;
               const spansStreams = p.crossCuttingTier === "stream";
               const accent = spansStreams ? C.crossStream : C.cross;
+              // Settle outward from the squad they orbit, so the ring is seen forming.
+              const home = byId.get(a.unitId);
+              const inP = phase(introT, 0.34 + gi * 0.012, 0.34);
+              const ix = home ? home.x + (gx - home.x) * inP : gx;
+              const iy = home ? home.y + (gy - home.y) * inP : gy;
               return (
                 <Group
                   key={`ghost-${p.id}-${a.unitId}`}
-                  x={gx}
-                  y={gy}
-                  opacity={ov.dimmed ? 0.28 : 1}
+                  x={ix}
+                  y={iy}
+                  opacity={(ov.dimmed ? 0.28 : 1) * inP}
                   onClick={() => selectNode(p.id)}
                   onTap={() => selectNode(p.id)}
                   onMouseEnter={() => showHover(p.id)}
@@ -1015,16 +1144,20 @@ export function OrgCanvas({
             })}
 
             {showPeople &&
-              people.filter((p) => p.crossCuttingTier === null).map((p) => {
+              people.filter((p) => p.crossCuttingTier === null).map((p, pi) => {
                 const u = utilOf(p);
                 const shared = p.allocations.length > 1;
                 const ov = personOverlay(p);
+                const home = byId.get(p.homeId);
+                const inP = phase(introT, 0.34 + pi * 0.012, 0.34);
+                const ix = home ? home.x + (p.x - home.x) * inP : p.x;
+                const iy = home ? home.y + (p.y - home.y) * inP : p.y;
                 return (
                   <Group
                     key={p.id}
-                    x={p.x}
-                    y={p.y}
-                    opacity={ov.dimmed ? 0.3 : 1}
+                    x={ix}
+                    y={iy}
+                    opacity={(ov.dimmed ? 0.3 : 1) * inP}
                     draggable
                     onDragMove={onPersonDragMove}
                     onDragEnd={(e) => onNodeDragEnd(e, p)}

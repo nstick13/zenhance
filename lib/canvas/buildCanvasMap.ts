@@ -63,7 +63,14 @@ export type CanvasPerson = {
 
 export type CanvasNode = CanvasSquad | CanvasPerson;
 
-export type CanvasStream = { id: string; name: string; expectedRoi: number | null };
+export type CanvasStream = {
+  id: string;
+  name: string;
+  expectedRoi: number | null;
+  /** Who is accountable for this value stream — drawn in the stream header. */
+  leadPersonId: string | null;
+  leadName: string | null;
+};
 
 export type CanvasMapData = { streams: CanvasStream[]; nodes: CanvasNode[] };
 
@@ -191,9 +198,12 @@ export function buildCanvasMap(
       id: t.id,
       name: t.name,
       expectedRoi: t.expectedRoi != null ? Number(t.expectedRoi) : null,
+      leadPersonId: t.leadPersonId,
+      leadName: t.leadPersonId ? (peopleById.get(t.leadPersonId)?.name ?? null) : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  if (usesCrossCutting) streamList.push({ id: CROSS_CUTTING_ID, name: CROSS_CUTTING_NAME, expectedRoi: null });
+  if (usesCrossCutting)
+    streamList.push({ id: CROSS_CUTTING_ID, name: CROSS_CUTTING_NAME, expectedRoi: null, leadPersonId: null, leadName: null });
 
   // --- anchors: streams laid out in a grid, cross-cutting set apart ----------
   const STREAM_SPACING = 1400;
