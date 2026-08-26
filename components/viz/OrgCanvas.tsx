@@ -210,7 +210,6 @@ export function OrgCanvas({
   const [overlayType, setOverlayType] = useState<OverlayType>("none");
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropStreamId, setDropStreamId] = useState<string | null>(null);
-  const [railFocus, setRailFocus] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
@@ -343,27 +342,6 @@ export function OrgCanvas({
   }, [people]);
 
   const squadR = useCallback((id: string) => squadNodeRadius(seatsBySquad.get(id) ?? 0), [seatsBySquad]);
-
-  // Everyone who holds seats outside their own squad, split by how far they
-  // reach. Feeds the rail above the canvas — the one place cross-cutting people
-  // are enumerable rather than scattered across it.
-  const sharedPeople = useMemo(() => {
-    const rows = people
-      .filter((p) => p.crossCuttingTier !== null && p.allocations.length > 0)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        tier: p.crossCuttingTier as "squad" | "stream",
-        teams: p.allocations.length,
-        pct: p.allocations.reduce((t, a) => t + a.pct, 0),
-      }));
-    rows.sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name));
-    return {
-      streams: rows.filter((r) => r.tier === "stream"),
-      squads: rows.filter((r) => r.tier === "squad"),
-    };
-  }, [people]);
-
 
   // Ghost seat positions for every cross-cutting person with allocations —
   // cross-squad and cross-stream alike. Placed into the *largest
@@ -993,22 +971,19 @@ export function OrgCanvas({
               const sel = selectedId === p.id;
               const spansStreams = p.crossCuttingTier === "stream";
               const accent = spansStreams ? C.crossStream : C.cross;
-              const focused = railFocus === p.id;
-              const muted = railFocus !== null && !focused;
               return (
                 <Group
                   key={`ghost-${p.id}-${a.unitId}`}
                   x={gx}
                   y={gy}
-                  opacity={muted ? 0.16 : ov.dimmed ? 0.28 : 1}
+                  opacity={ov.dimmed ? 0.28 : 1}
                   onClick={() => selectNode(p.id)}
                   onTap={() => selectNode(p.id)}
                   onMouseEnter={() => showHover(p.id)}
                   onMouseLeave={() => setHover(null)}
                 >
-                  {focused && <Circle radius={GHOST_R + 13} fill={accent} opacity={0.16} listening={false} />}
                   {spansStreams && (
-                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={focused ? 2 : 1.25} opacity={focused ? 0.85 : 0.5} listening={false} />
+                    <Circle radius={GHOST_R + 5.5} stroke={accent} strokeWidth={1.25} opacity={0.5} listening={false} />
                   )}
                   <Circle radius={GHOST_R} fill={C.white} />
                   <Arc
@@ -1020,7 +995,7 @@ export function OrgCanvas({
                     opacity={0.18}
                     listening={false}
                   />
-                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel || focused ? 3.5 : 2.5} dash={[4, 4]} />
+                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
                   <Text
                     text={shortName(p.name)}
                     x={-56}
@@ -1049,7 +1024,7 @@ export function OrgCanvas({
                     key={p.id}
                     x={p.x}
                     y={p.y}
-                    opacity={railFocus !== null ? 0.16 : ov.dimmed ? 0.3 : 1}
+                    opacity={ov.dimmed ? 0.3 : 1}
                     draggable
                     onDragMove={onPersonDragMove}
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
@@ -1106,41 +1081,6 @@ export function OrgCanvas({
           ))}
           <span style={{ color: C.inkSoft, fontVariantNumeric: "tabular-nums" }}>{scale.toFixed(2)}×</span>
         </div>
-
-        {showPeople && (sharedPeople.streams.length > 0 || sharedPeople.squads.length > 0) && (
-          <div style={S.rail} onMouseLeave={() => setRailFocus(null)}>
-            {([
-              ["stream", "multiple value streams", sharedPeople.streams, C.crossStream],
-              ["squad", "multiple squads", sharedPeople.squads, C.cross],
-            ] as const)
-              .filter(([, , rows]) => rows.length > 0)
-              .map(([tier, label, rows, accent]) => (
-                <div key={tier} style={S.railGroup}>
-                  <span style={S.railLabel}>
-                    <i style={{ ...S.sw, border: `2px dashed ${accent}`, background: "transparent" }} />
-                    {label}
-                    <b style={{ marginLeft: 6, color: C.ink }}>{rows.length}</b>
-                  </span>
-                  {rows.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      style={S.railChip(railFocus === r.id || selectedId === r.id, accent)}
-                      onMouseEnter={() => setRailFocus(r.id)}
-                      onFocus={() => setRailFocus(r.id)}
-                      onClick={() => selectNode(r.id)}
-                      title={`${r.name} — ${r.teams} teams, ${r.pct}% allocated`}
-                    >
-                      {r.name}
-                      <span style={{ color: C.inkSoft, marginLeft: 6, fontVariantNumeric: "tabular-nums" }}>
-                        {r.teams}×
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ))}
-          </div>
-        )}
 
         <div style={S.legend}>
           <span>
@@ -1996,44 +1936,6 @@ const S = {
     pointerEvents: "none" as const,
   },
   sw: { display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 5, verticalAlign: "middle" },
-  rail: {
-    position: "absolute" as const,
-    top: 14,
-    left: "50%",
-    transform: "translateX(-50%)",
-    maxWidth: "calc(100% - 28px)",
-    display: "flex",
-    alignItems: "center",
-    gap: 18,
-    padding: "8px 14px",
-    background: "#ffffffeb",
-    border: `1px solid ${C.line}`,
-    borderRadius: 999,
-    fontSize: 12,
-    overflowX: "auto" as const,
-    whiteSpace: "nowrap" as const,
-    zIndex: 20,
-  },
-  railGroup: { display: "flex", alignItems: "center", gap: 6 },
-  railLabel: {
-    color: C.inkSoft,
-    fontWeight: 600,
-    marginRight: 2,
-    display: "inline-flex",
-    alignItems: "center",
-  },
-  railChip: (on: boolean, accent: string) => ({
-    border: `1px solid ${on ? accent : C.line}`,
-    background: on ? `${accent}1f` : C.white,
-    color: C.ink,
-    borderRadius: 999,
-    padding: "3px 9px",
-    fontSize: 12,
-    fontWeight: 600,
-    fontFamily: "inherit",
-    cursor: "pointer",
-    lineHeight: 1.5,
-  }),
   bubble: {
     position: "absolute" as const,
     transform: "translate(-50%, calc(-100% - 14px))",
