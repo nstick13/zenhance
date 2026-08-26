@@ -18,6 +18,7 @@ import {
   createOrgUnit,
   updateOrgUnit,
   deleteOrgUnit,
+  tidyUpCanvasLayout,
 } from "@/lib/data/actions";
 import {
   buildCanvasMap,
@@ -559,6 +560,13 @@ export function OrgCanvas({
     setMoves(new Map());
   }
 
+  function tidyUp() {
+    startTransition(async () => {
+      await tidyUpCanvasLayout();
+      router.refresh();
+    });
+  }
+
   // --- panel: select / edit / create -----------------------------------------
   function selectNode(id: string) {
     setSelectedId(id);
@@ -637,6 +645,11 @@ export function OrgCanvas({
           </button>
           <button style={S.btn} onClick={() => startCreate("squad")}>
             + Squad
+          </button>
+        </div>
+        <div style={S.overlayGroup}>
+          <button style={S.btn} onClick={tidyUp} disabled={isPending}>
+            {isPending ? "Tidying…" : "Tidy up"}
           </button>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>

@@ -11,6 +11,8 @@ import {
   assignmentInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
+import { getOrgSnapshot } from "@/lib/data/queries";
+import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
 
 /**
  * Mutations. Each action resolves the tenant via requireWorkspace() and scopes
@@ -252,6 +254,39 @@ export async function moveAssignment(
     .update(assignments)
     .set({ orgUnitId })
     .where(and(eq(assignments.id, id), eq(assignments.workspaceId, workspace.id)));
+  revalidateAll();
+  return { ok: true, data: undefined };
+}
+
+/** Tidy up canvas layout — recompute positions from org structure and persist them. */
+export async function tidyUpCanvasLayout(): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const snapshot = await getOrgSnapshot();
+
+  // Recompute layout from scratch (empty positions map = fresh seed layout)
+  const mapData = buildCanvasMap(
+    { people: snapshot.people, units: snapshot.units, assignments: snapshot.assignments },
+    new Map(),
+  );
+
+  // Batch upsert all positions
+  for (const node of mapData.nodes) {
+    await db
+      .insert(mapNodes)
+      .values({
+        workspaceId: workspace.id,
+        boardId: "default",
+        nodeType: node.kind === "squad" ? "unit" : "person",
+        nodeId: node.id,
+        x: node.x.toFixed(2),
+        y: node.y.toFixed(2),
+      })
+      .onConflictDoUpdate({
+        target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
+        set: { x: node.x.toFixed(2), y: node.y.toFixed(2), updatedAt: new Date() },
+      });
+  }
+
   revalidateAll();
   return { ok: true, data: undefined };
 }
