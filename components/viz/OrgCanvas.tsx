@@ -11,6 +11,7 @@ import {
   moveAssignment,
   moveOrgUnit,
   createAssignment,
+  updateAssignment,
   deleteAssignment,
   createPerson,
   updatePerson,
@@ -231,6 +232,7 @@ export function OrgCanvas({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropStreamId, setDropStreamId] = useState<string | null>(null);
   const [introT, setIntroT] = useState(0);
+  const [addMode, setAddMode] = useState(false); // Option/Alt held during a person drag
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "squad" | null>(null);
 
@@ -669,6 +671,7 @@ export function OrgCanvas({
         setDropTargetId(null);
         return;
       }
+      setAddMode(!!e.evt.altKey);
       const target = nearestSquad(e.target.x(), e.target.y());
       setDropTargetId(target?.id ?? null);
     },
@@ -690,6 +693,7 @@ export function OrgCanvas({
       const y = e.target.y();
       setDropTargetId(null);
       setDropStreamId(null);
+      setAddMode(false);
       setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
       const nodeType = node.kind === "squad" ? "unit" : "person";
       startTransition(async () => {
@@ -715,6 +719,26 @@ export function OrgCanvas({
       if (!target) return;
       const targetSquadId = target.id;
       const home = [...node.allocations].sort((a, b) => b.pct - a.pct)[0];
+      if (node.allocations.some((a) => a.unitId === targetSquadId)) return;
+
+      // Option/Alt-drag *adds* a team instead of moving them to it — the gesture
+      // for "they now support this squad too". Not stageable in scenario mode,
+      // which stages moves (a swapped assignmentId), not new rows.
+      if (e.evt.altKey) {
+        startTransition(async () => {
+          const result = await createAssignment({
+            orgUnitId: targetSquadId,
+            personId: node.id,
+            roleOnTeam: node.title ?? "",
+            allocationPct: 20,
+            isOpenRole: false,
+          });
+          if (!result.ok) console.error("Failed to add to team:", result.error);
+          else router.refresh();
+        });
+        return;
+      }
+
       if (home.unitId === targetSquadId) return;
       if (scenario) {
         setMoves((prev) => {
@@ -1099,11 +1123,15 @@ export function OrgCanvas({
                     onClick={() => selectNode(s.id)}
                     onTap={() => selectNode(s.id)}
                   >
-                    {dropTargetId === s.id && <Circle radius={r + 14} fill="#34d399" opacity={0.18} listening={false} />}
+                    {dropTargetId === s.id && (
+                      <Circle radius={r + 14} fill={addMode ? C.cross : "#34d399"} opacity={0.2} listening={false} />
+                    )}
                     <Circle
                       radius={r}
                       fill={C.white}
-                      stroke={dropTargetId === s.id ? "#34d399" : selectedId === s.id ? C.ink : accent}
+                      stroke={
+                        dropTargetId === s.id ? (addMode ? C.cross : "#34d399") : selectedId === s.id ? C.ink : accent
+                      }
                       strokeWidth={dropTargetId === s.id ? 5 : selectedId === s.id ? 6 : 4}
                       shadowColor={C.ink}
                       shadowBlur={22}
@@ -1330,7 +1358,13 @@ export function OrgCanvas({
                 <SquadForm mode="create" streams={realStreams} people={people} onSaved={closePanel} onCancel={closePanel} />
               )}
               {!creating && selected?.kind === "person" && !editing && (
-                <PersonBody person={selected} byId={byId} onSelect={selectNode} onEdit={() => setEditing(true)} />
+                <PersonBody
+                  person={selected}
+                  byId={byId}
+                  squads={squads}
+                  onSelect={selectNode}
+                  onEdit={() => setEditing(true)}
+                />
               )}
               {!creating && selected?.kind === "person" && editing && (
                 <PersonForm
@@ -1374,11 +1408,13 @@ export function OrgCanvas({
 function PersonBody({
   person,
   byId,
+  squads,
   onSelect,
   onEdit,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
+  squads: CanvasSquad[];
   onSelect: (id: string) => void;
   onEdit: () => void;
 }) {
@@ -1393,23 +1429,7 @@ function PersonBody({
         </button>
       </div>
       <Meter label="Delivery load" value={u} />
-      <Section title="Allocations">
-        {person.allocations.length === 0 ? (
-          <p style={S.empty}>No delivery allocation — leadership or unassigned.</p>
-        ) : (
-          <ul style={S.list}>
-            {person.allocations.map((a) => (
-              <li key={a.unitId} style={S.li} onClick={() => onSelect(a.unitId)}>
-                <span style={{ ...S.sw, background: C.squad }} />
-                <span style={{ flex: 1 }}>{byId.get(a.unitId)?.name ?? a.unitId}</span>
-                <span style={{ color: C.inkSoft, fontVariantNumeric: "tabular-nums" }}>
-                  {a.role} · {a.pct}%
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      <Assignments person={person} byId={byId} squads={squads} onSelect={onSelect} />
       <Section title="Facts">
         <div style={S.facts}>
           <Fact label="Cost / mo" value={money(person.costPerMonth)} />
@@ -1477,7 +1497,7 @@ function SquadBody({
           {members.map((p) => {
             const a = p.allocations.find((x) => x.unitId === squad.id);
             return (
-              <li key={p.id} style={S.li} onClick={() => onSelect(p.id)}>
+              <li key={p.id} style={{ ...S.li, cursor: "pointer" }} onClick={() => onSelect(p.id)}>
                 <span style={{ ...S.sw, background: utilColor(utilOf(p)) }} />
                 <span style={{ flex: 1 }}>{p.name}</span>
                 <span style={{ color: C.inkSoft, fontVariantNumeric: "tabular-nums" }}>
@@ -1874,6 +1894,159 @@ function SquadForm({
   );
 }
 
+/**
+ * Editable team memberships for one person. This is the only place in the map
+ * where you can put someone on a *second* team — dragging a dot and the Edit
+ * form's Squad picker both *move* the primary assignment rather than adding to
+ * it, which is why a multi-team person previously could only be created from
+ * /teams or an import.
+ */
+function Assignments({
+  person,
+  byId,
+  squads,
+  onSelect,
+}: {
+  person: CanvasPerson;
+  byId: Map<string, CanvasNode>;
+  squads: CanvasSquad[];
+  onSelect: (id: string) => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addSquad, setAddSquad] = useState("");
+  const [addPct, setAddPct] = useState("20");
+
+  const taken = new Set(person.allocations.map((a) => a.unitId));
+  const options = squads.filter((s) => !s.isCrossCutting && !taken.has(s.id));
+  const total = utilOf(person);
+
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>) => {
+    setError(null);
+    startTransition(async () => {
+      const res = await fn();
+      if (!res.ok) setError(res.error ?? "Something went wrong");
+      else router.refresh();
+    });
+  };
+
+  return (
+    <Section title="Teams">
+      {person.allocations.length === 0 ? (
+        <p style={S.empty}>No delivery allocation — leadership or unassigned.</p>
+      ) : (
+        <ul style={S.list}>
+          {person.allocations.map((a) => (
+            <li key={a.assignmentId} style={S.li}>
+              <button style={S.linkish} onClick={() => onSelect(a.unitId)} title="Show on map">
+                {byId.get(a.unitId)?.name ?? a.unitId}
+              </button>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                defaultValue={a.pct}
+                disabled={pending}
+                style={S.pctInput}
+                aria-label={`Allocation % on ${byId.get(a.unitId)?.name ?? "team"}`}
+                onBlur={(e) => {
+                  const next = Number(e.target.value);
+                  if (!Number.isFinite(next) || next === a.pct) return;
+                  run(() => updateAssignment(a.assignmentId, { allocationPct: next }));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+              />
+              <span style={{ color: C.inkSoft }}>%</span>
+              <button
+                style={S.rowX}
+                disabled={pending}
+                onClick={() => run(() => deleteAssignment(a.assignmentId))}
+                aria-label={`Remove from ${byId.get(a.unitId)?.name ?? "team"}`}
+                title="Remove from this team"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {person.allocations.length > 0 && (
+        <div style={{ ...S.allocTotal, color: total > 100 ? C.utilOver : C.inkSoft }}>
+          {total}% allocated{total > 100 ? " — over-allocated" : ""}
+        </div>
+      )}
+
+      {adding ? (
+        <div style={S.addRow}>
+          <select
+            style={{ ...S.formInput, flex: 1 }}
+            value={addSquad}
+            onChange={(e) => setAddSquad(e.target.value)}
+          >
+            <option value="">Choose a team…</option>
+            {options.map((sq) => (
+              <option key={sq.id} value={sq.id}>
+                {sq.name}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={addPct}
+            onChange={(e) => setAddPct(e.target.value)}
+            style={S.pctInput}
+            aria-label="Allocation %"
+          />
+          <span style={{ color: C.inkSoft }}>%</span>
+          <button
+            style={S.editBtn}
+            disabled={pending || !addSquad}
+            onClick={() =>
+              run(async () => {
+                const res = await createAssignment({
+                  orgUnitId: addSquad,
+                  personId: person.id,
+                  roleOnTeam: person.title ?? "",
+                  allocationPct: addPct,
+                  isOpenRole: false,
+                });
+                if (res.ok) {
+                  setAdding(false);
+                  setAddSquad("");
+                  setAddPct("20");
+                }
+                return res;
+              })
+            }
+          >
+            Add
+          </button>
+          <button style={S.rowX} onClick={() => setAdding(false)} aria-label="Cancel">
+            ✕
+          </button>
+        </div>
+      ) : (
+        options.length > 0 && (
+          <button style={S.addBtn} onClick={() => setAdding(true)}>
+            + Add to another team
+          </button>
+        )
+      )}
+      {error && <p style={{ ...S.empty, color: C.utilOver }}>{error}</p>}
+      <p style={{ ...S.empty, marginTop: 8, fontSize: 11.5 }}>
+        Tip: hold ⌥ while dragging someone onto a squad to add that team instead of moving them.
+      </p>
+    </Section>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section style={{ marginTop: 18 }}>
@@ -2168,8 +2341,57 @@ const S = {
   fact: { background: C.paper, borderRadius: 10, padding: "9px 12px" },
   factLabel: { fontSize: 10.5, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: C.inkSoft, marginBottom: 2 },
   list: { listStyle: "none", margin: 0, padding: 0 },
-  li: { display: "flex", alignItems: "center", gap: 9, padding: "10px 8px", borderRadius: 10, cursor: "pointer", minHeight: 44, fontSize: 13.5 },
+  li: { display: "flex", alignItems: "center", gap: 9, padding: "10px 8px", borderRadius: 10, minHeight: 44, fontSize: 13.5 },
   tag: { background: C.paper, borderRadius: 999, padding: "4px 10px", fontSize: 12, color: C.inkSoft },
   track: { height: 8, borderRadius: 999, background: C.paper, overflow: "hidden", marginTop: 6 },
   empty: { margin: 0, fontSize: 13, color: C.inkSoft },
+  linkish: {
+    flex: 1,
+    textAlign: "left" as const,
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    font: "inherit",
+    fontSize: 13.5,
+    color: C.ink,
+    cursor: "pointer",
+  },
+  pctInput: {
+    width: 54,
+    borderRadius: 8,
+    border: `1px solid ${C.line}`,
+    background: C.paper,
+    padding: "6px 8px",
+    fontSize: 13,
+    fontFamily: FONT,
+    color: C.ink,
+    textAlign: "right" as const,
+    outline: "none",
+  },
+  rowX: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    border: "none",
+    background: "transparent",
+    color: C.inkSoft,
+    fontSize: 13,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  allocTotal: { marginTop: 6, fontSize: 12.5, fontWeight: 600, fontVariantNumeric: "tabular-nums" as const },
+  addRow: { display: "flex", alignItems: "center", gap: 6, marginTop: 10 },
+  addBtn: {
+    marginTop: 10,
+    width: "100%",
+    height: 36,
+    borderRadius: 10,
+    border: `1px dashed ${C.line}`,
+    background: "transparent",
+    color: C.inkSoft,
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
 };

@@ -80,3 +80,10 @@ export const assignmentInput = z
     path: ["personId"],
   });
 export type AssignmentInput = z.infer<typeof assignmentInput>;
+
+/** Partial edit of an existing assignment (allocation % and/or role on team). */
+export const assignmentPatch = z.object({
+  allocationPct: z.coerce.number().int().min(1).max(100).optional(),
+  roleOnTeam: optionalString.optional(),
+});
+export type AssignmentPatch = z.infer<typeof assignmentPatch>;

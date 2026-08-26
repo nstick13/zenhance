@@ -9,6 +9,7 @@ import {
   personInput,
   orgUnitInput,
   assignmentInput,
+  assignmentPatch,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
 import { getOrgSnapshot } from "@/lib/data/queries";
@@ -194,6 +195,21 @@ export async function createAssignment(
     .returning({ id: assignments.id });
   revalidateAll();
   return { ok: true, data: { id: row.id } };
+}
+
+/** Edit an existing assignment in place — the allocation % and/or role. */
+export async function updateAssignment(id: string, raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = assignmentPatch.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  const patch = parsed.data;
+  if (Object.keys(patch).length === 0) return { ok: true, data: undefined };
+  await db
+    .update(assignments)
+    .set(patch)
+    .where(and(eq(assignments.id, id), eq(assignments.workspaceId, workspace.id)));
+  revalidateAll();
+  return { ok: true, data: undefined };
 }
 
 export async function deleteAssignment(id: string): Promise<ActionResult> {
