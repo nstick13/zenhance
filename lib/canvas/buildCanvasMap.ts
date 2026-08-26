@@ -104,10 +104,14 @@ const ring = (i: number, count: number, radius: number, cx: number, cy: number):
   return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
 };
 
+export type CrossCuttingMode = "bucket" | "connected";
+
 export function buildCanvasMap(
   snapshot: { people: Person[]; units: OrgUnit[]; assignments: Assignment[] },
   positions: Map<string, Position>,
+  options?: { crossCuttingMode?: CrossCuttingMode },
 ): CanvasMapData {
+  const crossCuttingMode = options?.crossCuttingMode ?? "connected";
   const { people, units, assignments } = snapshot;
   const unitsById = indexById(units);
   const peopleById = indexById(people);
@@ -244,7 +248,53 @@ export function buildCanvasMap(
     if (!peopleByHome.has(home)) peopleByHome.set(home, []);
     peopleByHome.get(home)!.push(p);
   }
+
+  // In connected mode, cross-cutting people with team allocations are placed at
+  // the weighted centroid of those team anchors rather than in the bucket.
+  // People truly without any team allocation still cluster in the bucket.
+  const bucketMembers: Person[] = [];
+
   for (const [homeId, members] of peopleByHome) {
+    if (homeId === CROSS_CUTTING_ID && crossCuttingMode === "connected") {
+      members.sort((a, b) => a.name.localeCompare(b.name));
+      for (const p of members) {
+        const asg = assignmentsByPerson.get(p.id) ?? [];
+        const allocations: CanvasAllocation[] = asg.map((a) => ({
+          assignmentId: a.id,
+          unitId: a.orgUnitId,
+          role: a.roleOnTeam ?? "",
+          pct: a.allocationPct ?? 100,
+        }));
+        let seed: Position;
+        if (asg.length > 0) {
+          // Weighted centroid of the team anchors this person contributes to
+          let totalPct = 0, cx = 0, cy = 0;
+          for (const a of asg) {
+            const anchor = squadAnchor.get(a.orgUnitId);
+            if (!anchor) continue;
+            const pct = a.allocationPct ?? 100;
+            cx += anchor.x * pct;
+            cy += anchor.y * pct;
+            totalPct += pct;
+          }
+          seed = totalPct > 0
+            ? { x: cx / totalPct, y: cy / totalPct }
+            : (squadAnchor.get(CROSS_CUTTING_ID) ?? { x: 0, y: 0 });
+        } else {
+          bucketMembers.push(p);
+          continue;
+        }
+        const pos = positions.get(`person:${p.id}`) ?? seed;
+        nodes.push({
+          id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,
+          title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
+          managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
+          skills: p.skills, growthFocus: p.growthFocus, allocations,
+        });
+      }
+      continue;
+    }
+
     const anchor = squadAnchor.get(homeId);
     if (!anchor) continue;
     members.sort((a, b) => a.name.localeCompare(b.name));
@@ -256,25 +306,34 @@ export function buildCanvasMap(
         assignmentId: a.id,
         unitId: a.orgUnitId,
         role: a.roleOnTeam ?? "",
-        pct: a.allocationPct ?? 0,
+        pct: a.allocationPct ?? 100,
       }));
       nodes.push({
-        id: p.id,
-        kind: "person",
-        name: p.name,
-        x: pos.x,
-        y: pos.y,
-        title: p.title,
-        homeId,
-        costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
-        managerId: p.managerId,
-        lastVacationAt: p.lastVacationAt,
-        startDate: p.startDate,
-        skills: p.skills,
-        growthFocus: p.growthFocus,
-        allocations,
+        id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,
+        title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
+        managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
+        skills: p.skills, growthFocus: p.growthFocus, allocations,
       });
     });
+  }
+
+  // Place any truly unallocated cross-cutting people in the bucket
+  if (bucketMembers.length > 0) {
+    const anchor = squadAnchor.get(CROSS_CUTTING_ID);
+    if (anchor) {
+      const radius = Math.max(90, 60 + bucketMembers.length * 6);
+      bucketMembers.forEach((p, i) => {
+        const seed = ring(i, bucketMembers.length, radius, anchor.x, anchor.y);
+        const pos = positions.get(`person:${p.id}`) ?? seed;
+        nodes.push({
+          id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,
+          title: p.title, homeId: CROSS_CUTTING_ID,
+          costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
+          managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
+          skills: p.skills, growthFocus: p.growthFocus, allocations: [],
+        });
+      });
+    }
   }
 
   return { trains: trainList, nodes };

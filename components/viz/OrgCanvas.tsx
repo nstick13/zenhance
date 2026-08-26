@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Stage, Layer, Group, Circle, Text } from "react-konva";
+import { Stage, Layer, Group, Circle, Text, Line } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
@@ -29,6 +29,9 @@ import {
   type CanvasPerson,
   type CanvasTrain,
 } from "@/lib/canvas/buildCanvasMap";
+
+const CROSS_CUTTING_MODE = "connected" as const;
+const SQUAD_R = 78; // must match the squad Circle radius below
 import { overAllocatedPersonIds, allocationByPerson } from "@/lib/org/model";
 import { computeGaps } from "@/lib/analytics/gaps";
 import { computeRollup } from "@/lib/analytics/rollup";
@@ -158,7 +161,11 @@ export function OrgCanvas({
   }, [assignments, moves]);
 
   const seed = useMemo(
-    () => buildCanvasMap({ people: peopleRows, units, assignments: effAssignments }, positionsFromRows(mapNodeRows)),
+    () => buildCanvasMap(
+      { people: peopleRows, units, assignments: effAssignments },
+      positionsFromRows(mapNodeRows),
+      { crossCuttingMode: CROSS_CUTTING_MODE },
+    ),
     [peopleRows, units, effAssignments, mapNodeRows],
   );
 
@@ -760,6 +767,48 @@ export function OrgCanvas({
                   </Group>
                 );
               })}
+
+            {/* Cross-cutting connection lines — drawn under squads/people */}
+            {showSquads && showPeople && CROSS_CUTTING_MODE === "connected" &&
+              people
+                .filter((p) => p.homeId === CROSS_CUTTING_ID && p.allocations.length > 0)
+                .map((p) =>
+                  p.allocations.map((a) => {
+                    const sq = byId.get(a.unitId);
+                    if (!sq) return null;
+                    const dx = p.x - sq.x;
+                    const dy = p.y - sq.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist < 1) return null;
+                    // Terminate at squad circle edge
+                    const ex = sq.x + (dx / dist) * SQUAD_R;
+                    const ey = sq.y + (dy / dist) * SQUAD_R;
+                    const mx = (p.x + ex) / 2;
+                    const my = (p.y + ey) / 2;
+                    return (
+                      <Group key={`conn-${p.id}-${a.unitId}`} listening={false}>
+                        <Line
+                          points={[p.x, p.y, ex, ey]}
+                          stroke={C.squad}
+                          strokeWidth={2 / scale}
+                          dash={[8 / scale, 5 / scale]}
+                          opacity={0.45}
+                        />
+                        <Text
+                          x={mx - 20 / scale}
+                          y={my - 10 / scale}
+                          width={40 / scale}
+                          align="center"
+                          text={`${a.pct}%`}
+                          fontSize={11 / scale}
+                          fontFamily={FONT}
+                          fill={C.inkSoft}
+                          opacity={0.8}
+                        />
+                      </Group>
+                    );
+                  })
+                )}
 
             {showSquads &&
               squads.map((s) => {
