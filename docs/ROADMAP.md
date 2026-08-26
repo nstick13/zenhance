@@ -5,12 +5,16 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
 ## Status — as of 2026-08-26
-- **Version 0.1.23**, deployed to **production** on Vercel (Neon Postgres + Clerk auth).
+- **Version 0.1.29**, deployed to **production** on Vercel (Neon Postgres + Clerk auth). Migration `0003` must be applied by hand in Neon's SQL editor before that deploy works — Drizzle's `select()` names every column, so any query touching `people` fails until the new columns exist.
 - **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
 - **V2 canvas is the live map** (`components/viz/OrgCanvas.tsx`, `/org?view=canvas`) — see [V2.md](V2.md) for the full build log. Shipped through V2.2: persisted positions, analytics overlays, scenario mode, drag-to-reassign, team reparenting, inline create/edit/delete for people and teams, and (v0.1.16–22) the cross-cutting seat model.
 - **Cross-cutting people are done** (v0.1.16–22): everyone whose home is elsewhere holds a **ghost seat** in each team they serve — amber for multiple teams, indigo + halo for multiple value streams. No floating nodes, no connection lines. The old two-tier "satellite + lines" design and the shared-people rail were both built, looked at, and rejected.
 - **Sizing carries meaning** (v0.1.19): team circles scale with seat count, member rings scale to give each seat ~104px of arc, value streams are rectangles sized to their contents.
 - **Terminology (v0.1.21):** the top rung is a **value stream**, not a "release train." App-level only — no migration was needed, since `org_units.kind` is just `group | team`.
+- **`/org` is the canvas** (v0.1.27). The radial is at `/org?view=radial`, kept only until its FindingsRail and formal layer port.
+- **Vocabulary is settled:** top rung = **value stream** (never "release train"), middle = **team** (never "squad" — the DB always said `kind: "team"`).
+- **Paper palette across the whole app** (v0.1.27–28) via Tailwind tokens in `globals.css`. Marketing keeps its own dark treatment by choice.
+- **Multi-team membership is editable from the map** (v0.1.26) — panel Teams section, or ⌥-drag a person onto a team to add rather than move.
 - **Marketing site** live at https://zenhance.vercel.app.
 
 ---
@@ -28,26 +32,43 @@ Pure viz, no schema. Fixes the flat first impression and lands the first slice o
 - ✅ **Depth** — soft shadows under team circles and stream cards.
 
 ### S2 — Recognized person attributes  *(schema + editing shipped v0.1.29; import mapping outstanding)*
-Small migration, big unlock. See the *People roles & job function* story under Data Model for the open questions (discipline vs role-on-team; taxonomy vs free text).
-- `role` / discipline — **workspace-defined list**, not free text (free text is un-analyzable).
-- `employmentType` — FTE / contractor / vendor. Today this is team-level only (`orgUnits.isExternal`), which is why a contractor sitting inside a normal team is invisible.
-- `location` / `timezone`.
-- Extend the **import column-mapping** and the **person panel's inline edit** for all three. "Ingest greedily, display selectively."
+**Done:** `disciplines` table per workspace + `people.disciplineId`; `people.employment` (fixed enum `fte|contractor|vendor|unknown`); `people.location`; `people.timezone` (IANA). Migration `0003_silent_power_pack.sql`, applied by hand in Neon's SQL editor (and locally with `psql -f`) — **not** recorded in Drizzle's `__drizzle_migrations` ledger, same as `0001`, so a future `db:migrate` may try to replay it. Editing lives in the canvas person panel/form and `/people`. `ensureDiscipline` is find-or-create.
 
-### S3 — The lens config  ⬅ **next**
-Per-workspace, persisted. This is the "other people would want other things" story, and it needs S2 to have anything to key off.
+**Three fields, deliberately distinct — do not conflate:**
+| Field | Answers | Scope | Structure |
+|---|---|---|---|
+| `people.disciplineId` | what they *are* | person, global | workspace-defined list |
+| `assignments.roleOnTeam` | what they do *here* | per assignment | free text |
+| `people.title` | their HR label | person, global | free text |
+
+**Outstanding:** import column-mapping for the four new fields, including a **title → discipline suggestion** at ingest (most orgs' exports only have a title; without the suggestion the analyzable field stays empty and quietly disables half the findings). Unrecognised values should auto-create via `ensureDiscipline` rather than blocking the import on taxonomy setup.
+
+### S3 — The lens config  ⬅ **recommended next**
+Per-workspace, persisted. The data it keys off now exists.
 - **Colour by:** utilisation (today) / discipline / employment type / value stream.
 - **Label by:** name / name + title / initials.
-- **Toggles:** cross-cutting render mode (the configurable-rendering note under Analytics folds in here), the shared-people rail (built and removed in v0.1.21–22 — bring it back as an option, not a fixture), stat lines, stream headers.
+- **Toggles:** cross-cutting render mode; the shared-people rail (built v0.1.21, removed v0.1.22 — it should return as an *option*, not a fixture); stat lines; stream headers.
+- *Why this before finishing S2:* the demo org already carries the data, colour-by-discipline is the most direct proof of the configurability thesis, and import mapping is the bigger chunk that benefits from knowing which fields earn a place on the map. **Flip the order if a real pilot is closer than a pitch** — display for data nobody can import is backwards for an actual customer.
 
 ### S4 — The findings S2 unlocks
-Each was already blocked on nothing but a missing field. Paid-tier material.
-- **Bus factor** (needs `role`) · **per-person outsourcing exposure** (needs `employmentType`) · **distribution drag** (needs `timezone`).
+Each was blocked on nothing but a missing field. Paid-tier material. The demo org now has a planted example of each:
+- **Bus factor** (`disciplineId`) — Devraj Patel is the only Security discipline, across 4 teams.
+- **Per-person outsourcing exposure** (`employment`) — contractors sitting *inside* Earthlight, Dawnbreak and Lighthouse, not just in the Infosys vendor bubble.
+- **Distribution drag** (`timezone`) — Earthlight spans New York, São Paulo, Stockholm, Lagos and Dubai.
+- **Role coverage** (`disciplineId`) — Tideway has no QA at all.
+
+### The analytics design conversation  🧭 *design-first, still owed*
+Nate raised this and it is not settled. **Do not port the findings rail cold.** Three questions:
+1. **Is "on 2+ teams" a finding, a fact, or a filter?** `computeOverAllocFindings` currently skips only when `teamCount <= 1 && totalPct <= 100`, so anyone on 2+ teams fires as "over-allocation" regardless of load — Grace Okafor at **80%** is labelled over-allocated. That is a definition question, not a bug fix; see the detector/policy/exceptions model in the agent memory.
+2. **What belongs at the top of the canvas?** Findings are one candidate; so are the value stream cabinet, scenario state, and search. The shared-people rail was built and rejected there once already.
+3. **What is the *config*** for findings — decide that before building the thing it configures.
+Verified 2026-08-26: `computeAllFindings` fires **9** findings on the demo org (6 over-allocation, 3 coupling) with real narratives. The engine is sound; only the presentation and the definitions are open.
 
 ### Later — `reports_to` + the formal layer
 Still wanted, still the documented moat, and it now has a home as the *Reporting* layer toggle on the canvas. Sequenced **after** the above deliberately: [PRODUCT.md](PRODUCT.md) says delivery-first is the common entry door and that depth investment belongs in delivery analytics. Build steps: `people.managerId` self-ref + migration; import mapping for `manager`; the three-door entry picker; formal render mode; demo data whose reporting chain **diverges** from the teams (the mess is the pitch).
 
 ### Also wanted, unscheduled
+- **Retire the radial** — `/org` is the canvas as of v0.1.27; the radial lives at `/org?view=radial` and is kept **only** because it still owns the FindingsRail and the formal (`managerId`) layer. Archive `RadialOrg.tsx` once both port.
 - **Full product cabinet** — S1 ships a single owner per stream from the existing `orgUnits.leadPersonId`. A real cabinet (product owner + eng lead + delivery lead) needs role-tagged people attached to a *group* unit; `assignments` are currently restricted to `kind === "team"`, so this is new modeling. Do it after S2's role field exists.
 - **Ownership analytics** — streams with no owner (partly shipped: the red "No owner"), one person owning several streams, an owner barely allocated to the stream they own.
 
