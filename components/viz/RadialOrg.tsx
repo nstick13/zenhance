@@ -1651,10 +1651,10 @@ function SummaryBar({
       </div>
 
       <a
-        href="/org?view=canvas"
+        href="/org"
         className="ml-auto shrink-0 rounded px-2.5 py-1 text-xs font-medium text-slate-500 hover:text-slate-300"
       >
-        Canvas map (v2) →
+        ← Back to the map
       </a>
     </div>
   );

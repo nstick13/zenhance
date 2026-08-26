@@ -827,7 +827,7 @@ export function OrgCanvas({
           <span style={S.dot} />
           <strong style={{ fontSize: 16, letterSpacing: "0.01em" }}>Zenhance</strong>
         </div>
-        <a style={S.viewLink} href="/org">
+        <a style={S.viewLink} href="/org?view=radial">
           ⟲ Radial view
         </a>
         <div style={S.overlayGroup}>

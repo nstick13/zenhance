@@ -12,6 +12,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
 | v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
 | **Team memberships (add / edit % / remove)** | `OrgCanvas.tsx` — `Assignments` panel component; `createAssignment`/`updateAssignment`/`deleteAssignment` in `lib/data/actions.ts`; Option-drag branch in `onNodeDragEnd` |
+| **Paper palette tokens for non-canvas pages** | `app/globals.css` `@theme static` — `--color-paper|surface|ink|ink-soft|line|grow|alert` |
 | **v2 canvas look & feel** (stream identity hues, stream header block, intro choreography, open-on-a-view) | `OrgCanvas.tsx` — `STREAM_HUES`/`hueOf`, hull render block, `introT` + `phase()`, `frameBox` |
 | **v2 canvas data transform** (flat node list, cross-cutting tier classification, ring layout seed) | `lib/canvas/buildCanvasMap.ts` — `crossCuttingTier` on `CanvasPerson`; gap-based `ghostSeats` memo + ghost render block in `OrgCanvas.tsx`; `sharedPeople` memo + `S.rail` chips for the top rail |
 | Greg's original prototype (the v2 trigger) | `docs/reference/greg-preview-v1.html` — see `docs/reference/README.md` |

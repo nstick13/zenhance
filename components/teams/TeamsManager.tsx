@@ -12,7 +12,7 @@ import {
 } from "@/lib/data/actions";
 
 const field =
-  "w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-fuchsia-500";
+  "w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink-soft";
 
 type UnitForm = {
   name: string;
@@ -143,12 +143,12 @@ export function TeamsManager({
   return (
     <div className="grid grid-cols-[300px_1fr] gap-6">
       {/* Tree */}
-      <div className="rounded-lg border border-slate-800">
-        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-          <span className="text-sm font-medium text-slate-300">Structure</span>
+      <div className="rounded-lg border border-line">
+        <div className="flex items-center justify-between border-b border-line px-3 py-2">
+          <span className="text-sm font-medium text-ink">Structure</span>
           <button
             onClick={openCreateUnit}
-            className="rounded bg-fuchsia-500 px-2 py-1 text-xs font-medium text-white hover:bg-fuchsia-400"
+            className="rounded bg-ink px-2 py-1 text-xs font-medium text-white hover:bg-ink-soft"
           >
             + Unit
           </button>
@@ -156,10 +156,10 @@ export function TeamsManager({
         <ul className="py-1">
           {ordered.length === 0 && (
             <li className="px-3 py-6 text-center text-sm">
-              <p className="text-slate-500">No teams yet.</p>
-              <p className="mt-1 text-xs text-slate-600">
+              <p className="text-ink-soft">No teams yet.</p>
+              <p className="mt-1 text-xs text-ink-soft">
                 Create one above, or{" "}
-                <a href="/import" className="text-fuchsia-400 hover:underline">
+                <a href="/import" className="text-grow hover:underline">
                   import a spreadsheet
                 </a>
                 .
@@ -171,18 +171,18 @@ export function TeamsManager({
               <button
                 onClick={() => setSelectedId(unit.id)}
                 style={{ paddingLeft: 12 + depth * 16 }}
-                className={`flex w-full items-center gap-2 py-1.5 pr-3 text-left text-sm hover:bg-slate-800 ${
-                  unit.id === selectedId ? "bg-slate-800 text-fuchsia-300" : "text-slate-300"
+                className={`flex w-full items-center gap-2 py-1.5 pr-3 text-left text-sm hover:bg-paper ${
+                  unit.id === selectedId ? "bg-paper font-medium text-ink" : "text-ink-soft hover:text-ink"
                 }`}
               >
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    unit.kind === "group" ? "bg-indigo-400" : "bg-fuchsia-400"
+                    unit.kind === "group" ? "bg-ink-soft" : "bg-grow"
                   }`}
                 />
                 {unit.name}
                 {unit.isExternal && (
-                  <span className="ml-1 rounded bg-amber-500/10 px-1 text-[10px] text-amber-400">
+                  <span className="ml-1 rounded bg-paper px-1 text-[10px] text-ink-soft">
                     ext
                   </span>
                 )}
@@ -195,13 +195,13 @@ export function TeamsManager({
       {/* Detail */}
       <div className="space-y-6">
         {showUnitForm && (
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+          <div className="rounded-lg border border-line bg-surface p-4">
             <h3 className="mb-3 font-medium">
               {editingUnit ? "Edit unit" : "New unit"}
             </h3>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Name *</span>
+                <span className="mb-1 block text-ink-soft">Name *</span>
                 <input
                   className={field}
                   value={unitForm.name}
@@ -209,7 +209,7 @@ export function TeamsManager({
                 />
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Kind</span>
+                <span className="mb-1 block text-ink-soft">Kind</span>
                 <select
                   className={field}
                   value={unitForm.kind}
@@ -222,7 +222,7 @@ export function TeamsManager({
                 </select>
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Parent</span>
+                <span className="mb-1 block text-ink-soft">Parent</span>
                 <select
                   className={field}
                   value={unitForm.parentId}
@@ -241,7 +241,7 @@ export function TeamsManager({
                 </select>
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Lead</span>
+                <span className="mb-1 block text-ink-soft">Lead</span>
                 <select
                   className={field}
                   value={unitForm.leadPersonId}
@@ -258,7 +258,7 @@ export function TeamsManager({
                 </select>
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Target headcount</span>
+                <span className="mb-1 block text-ink-soft">Target headcount</span>
                 <input
                   className={field}
                   inputMode="numeric"
@@ -269,7 +269,7 @@ export function TeamsManager({
                 />
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Expected ROI ($)</span>
+                <span className="mb-1 block text-ink-soft">Expected ROI ($)</span>
                 <input
                   className={field}
                   inputMode="decimal"
@@ -287,11 +287,11 @@ export function TeamsManager({
                     setUnitForm({ ...unitForm, isExternal: e.target.checked })
                   }
                 />
-                <span className="text-slate-400">External / contractor team</span>
+                <span className="text-ink-soft">External / contractor team</span>
               </label>
               {unitForm.isExternal && (
                 <label className="text-sm">
-                  <span className="mb-1 block text-slate-400">Vendor</span>
+                  <span className="mb-1 block text-ink-soft">Vendor</span>
                   <input
                     className={field}
                     value={unitForm.vendorName}
@@ -302,7 +302,7 @@ export function TeamsManager({
                 </label>
               )}
               <label className="text-sm">
-                <span className="mb-1 block text-slate-400">Unit cost / month ($)</span>
+                <span className="mb-1 block text-ink-soft">Unit cost / month ($)</span>
                 <input
                   className={field}
                   inputMode="decimal"
@@ -313,18 +313,18 @@ export function TeamsManager({
                 />
               </label>
             </div>
-            {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+            {error && <p className="mt-3 text-sm text-alert">{error}</p>}
             <div className="mt-4 flex gap-2">
               <button
                 onClick={submitUnit}
                 disabled={pending}
-                className="rounded-md bg-fuchsia-500 px-3 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
+                className="rounded-md bg-ink px-3 py-2 text-sm font-medium text-white hover:bg-ink-soft disabled:opacity-50"
               >
                 {pending ? "Saving…" : editingUnit ? "Save changes" : "Create unit"}
               </button>
               <button
                 onClick={() => setShowUnitForm(false)}
-                className="rounded-md border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
+                className="rounded-md border border-line px-3 py-2 text-sm hover:bg-paper"
               >
                 Cancel
               </button>
@@ -333,11 +333,11 @@ export function TeamsManager({
         )}
 
         {selected ? (
-          <div className="rounded-lg border border-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <div className="rounded-lg border border-line">
+            <div className="flex items-center justify-between border-b border-line px-4 py-3">
               <div>
                 <h2 className="font-semibold">{selected.name}</h2>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-ink-soft">
                   {selected.kind === "group" ? "Group" : "Team"}
                   {selected.leadPersonId &&
                     ` · Lead: ${peopleById[selected.leadPersonId]?.name ?? "—"}`}
@@ -346,10 +346,10 @@ export function TeamsManager({
                 </p>
               </div>
               <div className="flex gap-2 text-sm">
-                <button onClick={openEditUnit} className="text-slate-400 hover:text-slate-100">
+                <button onClick={openEditUnit} className="text-ink-soft hover:text-ink">
                   Edit
                 </button>
-                <button onClick={removeUnit} className="text-slate-500 hover:text-red-400">
+                <button onClick={removeUnit} className="text-ink-soft hover:text-alert">
                   Delete
                 </button>
               </div>
@@ -363,7 +363,7 @@ export function TeamsManager({
             />
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-slate-800 p-8 text-center text-slate-500">
+          <div className="rounded-lg border border-dashed border-line p-8 text-center text-ink-soft">
             Select a unit, or create one to get started.
           </div>
         )}
@@ -420,29 +420,29 @@ function AssignmentEditor({
 
   return (
     <div className="p-4">
-      <h3 className="mb-2 text-sm font-medium text-slate-300">Members</h3>
-      <ul className="mb-4 divide-y divide-slate-800 rounded-md border border-slate-800">
+      <h3 className="mb-2 text-sm font-medium text-ink">Members</h3>
+      <ul className="mb-4 divide-y divide-slate-800 rounded-md border border-line">
         {assignments.length === 0 && (
-          <li className="px-3 py-3 text-sm text-slate-500">No members yet.</li>
+          <li className="px-3 py-3 text-sm text-ink-soft">No members yet.</li>
         )}
         {assignments.map((a) => (
           <li key={a.id} className="flex items-center justify-between px-3 py-2 text-sm">
             <span>
               {a.isOpenRole ? (
-                <span className="text-amber-400">○ Open role</span>
+                <span className="text-ink-soft">○ Open role</span>
               ) : (
                 <span className="font-medium">
                   {a.personId ? peopleById[a.personId]?.name ?? "Unknown" : "—"}
                 </span>
               )}
-              {a.roleOnTeam && <span className="text-slate-400"> · {a.roleOnTeam}</span>}
+              {a.roleOnTeam && <span className="text-ink-soft"> · {a.roleOnTeam}</span>}
               {a.allocationPct !== 100 && (
-                <span className="text-slate-500"> · {a.allocationPct}%</span>
+                <span className="text-ink-soft"> · {a.allocationPct}%</span>
               )}
             </span>
             <button
               onClick={() => remove(a.id)}
-              className="text-slate-500 hover:text-red-400"
+              className="text-ink-soft hover:text-alert"
             >
               Remove
             </button>
@@ -452,7 +452,7 @@ function AssignmentEditor({
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-sm">
-          <span className="mb-1 block text-slate-400">Person</span>
+          <span className="mb-1 block text-ink-soft">Person</span>
           <select
             className={`${field} w-48`}
             disabled={isOpen}
@@ -468,7 +468,7 @@ function AssignmentEditor({
           </select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-slate-400">Role</span>
+          <span className="mb-1 block text-ink-soft">Role</span>
           <input
             className={`${field} w-36`}
             value={role}
@@ -476,7 +476,7 @@ function AssignmentEditor({
           />
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-slate-400">Alloc %</span>
+          <span className="mb-1 block text-ink-soft">Alloc %</span>
           <input
             className={`${field} w-20`}
             inputMode="numeric"
@@ -484,7 +484,7 @@ function AssignmentEditor({
             onChange={(e) => setAllocation(e.target.value)}
           />
         </label>
-        <label className="flex items-center gap-2 pb-2 text-sm text-slate-400">
+        <label className="flex items-center gap-2 pb-2 text-sm text-ink-soft">
           <input
             type="checkbox"
             checked={isOpen}
@@ -495,12 +495,12 @@ function AssignmentEditor({
         <button
           onClick={add}
           disabled={pending}
-          className="mb-0.5 rounded-md bg-fuchsia-500 px-3 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
+          className="mb-0.5 rounded-md bg-ink px-3 py-2 text-sm font-medium text-white hover:bg-ink-soft disabled:opacity-50"
         >
           Add
         </button>
       </div>
-      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-sm text-alert">{error}</p>}
     </div>
   );
 }

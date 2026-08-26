@@ -33,7 +33,18 @@ body {
    considers unused, which blanks the gradients to black. `@theme static` forces
    every token in this block to be emitted regardless of usage; the per-palette
    overrides below reuse the same names, so they survive too. */
+/* "Paper" register — the palette the v2 canvas uses (components/viz/OrgCanvas.tsx's
+   `C`). Exposed as Tailwind colour tokens so the admin pages (/people, /teams)
+   can share one visual language with the map instead of the older dark theme. */
 @theme static {
+  --color-paper: #f6f4ee;
+  --color-surface: #ffffff;
+  --color-ink: #22272e;
+  --color-ink-soft: #5c6570;
+  --color-line: #e4e0d6;
+  --color-grow: #10b981;
+  --color-alert: #ef4444;
+
   --accent-text:        #e879f9;
   --accent-bg:          rgba(232, 121, 249, 0.15);
   --accent-ring:        #f0abfc;

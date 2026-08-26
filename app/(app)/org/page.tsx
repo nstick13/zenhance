@@ -52,23 +52,24 @@ export default async function OrgPage({
     );
   }
 
-  if (view === "canvas") {
-    const mapNodeRows = await getMapNodes();
+  // The canvas is the product; the radial is the alternate lens at ?view=radial.
+  if (view === "radial") {
     return (
       <div className="h-[calc(100vh-57px)]">
-        <OrgCanvasLoader
-          people={people}
-          units={units}
-          assignments={assignments}
-          mapNodeRows={mapNodeRows}
-        />
+        <RadialOrg people={people} units={units} assignments={assignments} />
       </div>
     );
   }
 
+  const mapNodeRows = await getMapNodes();
   return (
     <div className="h-[calc(100vh-57px)]">
-      <RadialOrg people={people} units={units} assignments={assignments} />
+      <OrgCanvasLoader
+        people={people}
+        units={units}
+        assignments={assignments}
+        mapNodeRows={mapNodeRows}
+      />
     </div>
   );
 }
