@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Stage, Layer, Group, Circle, Text, Line, Arc } from "react-konva";
+import { Stage, Layer, Group, Circle, Rect, Text, Line, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow } from "@/lib/db/schema";
@@ -24,6 +24,8 @@ import {
   buildCanvasMap,
   positionsFromRows,
   CROSS_CUTTING_ID,
+  squadNodeRadius,
+  squadRingRadius,
   type CanvasNode,
   type CanvasSquad,
   type CanvasPerson,
@@ -32,7 +34,6 @@ import {
 } from "@/lib/canvas/buildCanvasMap";
 
 const CROSS_CUTTING_MODE = "connected" as const;
-const SQUAD_R = 78; // must match the squad Circle radius below
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
 
 /** "Marco Webb" -> "M. Webb". Ghost seats repeat the same person across squads;
@@ -98,7 +99,7 @@ const NO_OVERLAY: NodeOverlay = { dimmed: false, badge: null, heatPct: 0 };
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3;
-const SQUAD_DROP_RADIUS = 100;
+const SQUAD_DROP_PAD = 26; // slack beyond a squad's own radius for drop targeting
 
 function lodFor(scale: number): Lod {
   if (scale >= 1.5) return "roles";
@@ -324,6 +325,23 @@ export function OrgCanvas({
     return m;
   }, [squads, people]);
 
+  // Seats per squad (home members + ghost seats). Drives the squad circle size
+  // and the member-ring radius, so a big team *looks* like a big team.
+  const seatsBySquad = useMemo(() => {
+    const m = new Map<string, number>();
+    const bump = (id: string) => m.set(id, (m.get(id) ?? 0) + 1);
+    for (const p of people) {
+      if (p.crossCuttingTier === "squad") {
+        for (const a of p.allocations) bump(a.unitId);
+      } else if (p.homeId !== CROSS_CUTTING_ID || p.crossCuttingTier === null) {
+        bump(p.homeId);
+      }
+    }
+    return m;
+  }, [people]);
+
+  const squadR = useCallback((id: string) => squadNodeRadius(seatsBySquad.get(id) ?? 0), [seatsBySquad]);
+
   // Ghost seat positions for cross-squad people. Placed into the *largest
   // angular gaps* of the squad's real member ring, measured from live node
   // positions — so a ghost never lands on a member, and the layout survives
@@ -352,9 +370,11 @@ export function OrgCanvas({
       const polar = (membersBySquad.get(squadId) ?? [])
         .map((m) => ({ a: Math.atan2(m.y - sq.y, m.x - sq.x), r: Math.hypot(m.x - sq.x, m.y - sq.y) }))
         .filter((q) => q.r > 1);
+      const seats = seatsBySquad.get(squadId) ?? ghosts.length;
+      const nominal = squadRingRadius(seats);
       const ringR = polar.length
-        ? clamp(polar.reduce((s, q) => s + q.r, 0) / polar.length, 96, 320)
-        : Math.max(96, 60 + ghosts.length * 6);
+        ? clamp(polar.reduce((s, q) => s + q.r, 0) / polar.length, squadNodeRadius(seats) + 40, 360)
+        : nominal;
 
       const slots: number[] = [];
       if (polar.length === 0) {
@@ -387,16 +407,29 @@ export function OrgCanvas({
       });
     }
     return result;
-  }, [people, byId]);
+  }, [people, byId, seatsBySquad]);
 
   const trainAgg = useMemo(() => {
     return trains
       .map((t) => {
         const own = squads.filter((s) => s.trainId === t.id);
         if (own.length === 0) return null;
-        const cx = own.reduce((s, n) => s + n.x, 0) / own.length;
-        const cy = own.reduce((s, n) => s + n.y, 0) / own.length;
-        const radius = own.reduce((r, n) => Math.max(r, Math.hypot(n.x - cx, n.y - cy)), 0) + 230;
+        // A train is drawn as a rounded rectangle sized to contain its squads
+        // *and* their member rings — so more squads reads as a bigger block.
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const n of own) {
+          const rr = squadRingRadius(seatsBySquad.get(n.id) ?? 0) + 52; // + label headroom
+          minX = Math.min(minX, n.x - rr);
+          maxX = Math.max(maxX, n.x + rr);
+          minY = Math.min(minY, n.y - rr);
+          maxY = Math.max(maxY, n.y + rr);
+        }
+        const PAD_X = 70, PAD_TOP = 104, PAD_BOTTOM = 60;
+        minX -= PAD_X; maxX += PAD_X; minY -= PAD_TOP; maxY += PAD_BOTTOM;
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const hw = (maxX - minX) / 2;
+        const hh = (maxY - minY) / 2;
         let heads = 0;
         let cost = 0;
         let openRoles = 0;
@@ -407,10 +440,10 @@ export function OrgCanvas({
           cost += st.cost;
           openRoles += st.openRoles;
         }
-        return { ...t, x: cx, y: cy, radius, heads, cost, openRoles, squads: own.length };
+        return { ...t, x: cx, y: cy, hw, hh, heads, cost, openRoles, squads: own.length };
       })
       .filter((t): t is NonNullable<typeof t> => t !== null);
-  }, [trains, squads, squadStats]);
+  }, [trains, squads, squadStats, seatsBySquad]);
 
   // --- sizing ----------------------------------------------------------------
   useEffect(() => {
@@ -516,18 +549,18 @@ export function OrgCanvas({
   const nearestSquad = useCallback(
     (x: number, y: number): CanvasSquad | null => {
       let nearest: CanvasSquad | null = null;
-      let best = SQUAD_DROP_RADIUS;
+      let best = Infinity;
       for (const s of squads) {
         if (s.isCrossCutting) continue;
         const d = Math.hypot(s.x - x, s.y - y);
-        if (d < best) {
+        if (d < squadNodeRadius(seatsBySquad.get(s.id) ?? 0) + SQUAD_DROP_PAD && d < best) {
           best = d;
           nearest = s;
         }
       }
       return nearest;
     },
-    [squads],
+    [squads, seatsBySquad],
   );
 
   // Nearest train whose hull actually contains (x, y) — used to reparent a
@@ -539,9 +572,10 @@ export function OrgCanvas({
       let best = Infinity;
       for (const t of trainAgg) {
         if (t.id === CROSS_CUTTING_ID) continue;
-        const d = Math.hypot(t.x - x, t.y - y);
-        if (d < t.radius && d < best) {
-          best = d;
+        if (Math.abs(x - t.x) > t.hw || Math.abs(y - t.y) > t.hh) continue;
+        const area = t.hw * t.hh; // nested boxes: the tightest one wins
+        if (area < best) {
+          best = area;
           nearest = t;
         }
       }
@@ -766,10 +800,22 @@ export function OrgCanvas({
             {trainAgg.map((t) => (
               <Group key={`hull-${t.id}`} x={t.x} y={t.y}>
                 {dropTrainId === t.id && (
-                  <Circle radius={t.radius + 18} fill="#34d399" opacity={0.14} />
+                  <Rect
+                    x={-t.hw - 16}
+                    y={-t.hh - 16}
+                    width={t.hw * 2 + 32}
+                    height={t.hh * 2 + 32}
+                    cornerRadius={52}
+                    fill="#34d399"
+                    opacity={0.14}
+                  />
                 )}
-                <Circle
-                  radius={t.radius}
+                <Rect
+                  x={-t.hw}
+                  y={-t.hh}
+                  width={t.hw * 2}
+                  height={t.hh * 2}
+                  cornerRadius={40}
                   fill={C.white}
                   opacity={showSquads ? 0.55 : 0}
                   stroke={dropTrainId === t.id ? "#34d399" : C.line}
@@ -779,10 +825,9 @@ export function OrgCanvas({
                 {showSquads && (
                   <Text
                     text={t.name.toUpperCase()}
-                    x={-t.radius}
-                    y={-t.radius + 24}
-                    width={t.radius * 2}
-                    align="center"
+                    x={-t.hw + 46}
+                    y={-t.hh + 40}
+                    width={t.hw * 2 - 92}
                     fontSize={34}
                     fontStyle="bold"
                     fontFamily={FONT}
@@ -798,6 +843,10 @@ export function OrgCanvas({
             {!showSquads &&
               trainAgg.map((t) => {
                 const ov = trainOverlay(t.id, t.openRoles, t.cost);
+                // Collapsed train card — width grows with squad count.
+                const bw = clamp(140 + t.squads * 26, 150, 300);
+                const bh = 104;
+                const tw = bw * 2 - 36;
                 return (
                   <Group
                     key={t.id}
@@ -807,14 +856,16 @@ export function OrgCanvas({
                     onMouseEnter={() => showHover(t.id)}
                     onMouseLeave={() => setHover(null)}
                   >
-                    <Circle radius={150} fill={C.white} stroke={C.ink} strokeWidth={5} />
-                    {ov.heatPct > 0 && <Circle radius={150} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
-                    <Text text={t.name} x={-140} y={-42} width={280} align="center" fontSize={34} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    <Rect x={-bw} y={-bh} width={bw * 2} height={bh * 2} cornerRadius={26} fill={C.white} stroke={C.ink} strokeWidth={5} />
+                    {ov.heatPct > 0 && (
+                      <Rect x={-bw} y={-bh} width={bw * 2} height={bh * 2} cornerRadius={26} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />
+                    )}
+                    <Text text={t.name} x={-tw / 2} y={-42} width={tw} align="center" fontSize={34} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     <Text
                       text={`${t.heads} people · ${money(t.cost)}/mo`}
-                      x={-140}
+                      x={-tw / 2}
                       y={4}
-                      width={280}
+                      width={tw}
                       align="center"
                       fontSize={20}
                       fontFamily={FONT}
@@ -822,14 +873,14 @@ export function OrgCanvas({
                       listening={false}
                     />
                     {t.openRoles > 0 && (
-                      <Text text={`${t.openRoles} open`} x={-140} y={32} width={280} align="center" fontSize={19} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
+                      <Text text={`${t.openRoles} open`} x={-tw / 2} y={32} width={tw} align="center" fontSize={19} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
                     )}
                     {ov.badge && (
                       <Text
                         text={ov.badge}
-                        x={-140}
+                        x={-tw / 2}
                         y={t.openRoles > 0 ? 58 : 32}
-                        width={280}
+                        width={tw}
                         align="center"
                         fontSize={18}
                         fontStyle="bold"
@@ -855,8 +906,9 @@ export function OrgCanvas({
                     const dist = Math.hypot(dx, dy);
                     if (dist < 1) return null;
                     // Terminate at squad circle edge
-                    const ex = sq.x + (dx / dist) * SQUAD_R;
-                    const ey = sq.y + (dy / dist) * SQUAD_R;
+                    const r = squadR(sq.id);
+                    const ex = sq.x + (dx / dist) * r;
+                    const ey = sq.y + (dy / dist) * r;
                     const mx = (p.x + ex) / 2;
                     const my = (p.y + ey) / 2;
                     return (
@@ -890,6 +942,10 @@ export function OrgCanvas({
                 const accent = s.isCrossCutting ? C.cross : s.isExternal ? C.external : C.squad;
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
                 const ov = squadOverlay(s);
+                const r = squadR(s.id);
+                const tw = r * 1.85;
+                const nameSize = clamp(Math.round(r * 0.215), 15, 24);
+                const subSize = clamp(Math.round(r * 0.165), 12, 18);
                 return (
                   <Group
                     key={s.id}
@@ -904,37 +960,37 @@ export function OrgCanvas({
                     onClick={() => selectNode(s.id)}
                     onTap={() => selectNode(s.id)}
                   >
-                    {dropTargetId === s.id && <Circle radius={92} fill="#34d399" opacity={0.18} listening={false} />}
+                    {dropTargetId === s.id && <Circle radius={r + 14} fill="#34d399" opacity={0.18} listening={false} />}
                     <Circle
-                      radius={78}
+                      radius={r}
                       fill={C.white}
                       stroke={dropTargetId === s.id ? "#34d399" : selectedId === s.id ? C.ink : accent}
                       strokeWidth={dropTargetId === s.id ? 5 : selectedId === s.id ? 6 : 4}
                     />
-                    {ov.heatPct > 0 && <Circle radius={78} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
-                    <Text text={s.name} x={-72} y={-24} width={144} align="center" fontSize={17} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                    {ov.heatPct > 0 && <Circle radius={r} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />}
+                    <Text text={s.name} x={-tw / 2} y={-nameSize - 8} width={tw} align="center" fontSize={nameSize} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     <Text
                       text={st ? `${st.heads} · ${st.fte.toFixed(1)} FTE` : ""}
-                      x={-72}
+                      x={-tw / 2}
                       y={-2}
-                      width={144}
+                      width={tw}
                       align="center"
-                      fontSize={13}
+                      fontSize={subSize}
                       fontFamily={FONT}
                       fill={C.inkSoft}
                       listening={false}
                     />
                     {gap > 0 && (
-                      <Text text={`${gap} short`} x={-72} y={16} width={144} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
+                      <Text text={`${gap} short`} x={-tw / 2} y={subSize + 5} width={tw} align="center" fontSize={subSize} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
                     )}
                     {ov.badge && (
                       <Text
                         text={ov.badge}
-                        x={-72}
-                        y={gap > 0 ? 34 : 16}
-                        width={144}
+                        x={-tw / 2}
+                        y={gap > 0 ? subSize * 2 + 10 : subSize + 5}
+                        width={tw}
                         align="center"
-                        fontSize={12.5}
+                        fontSize={subSize - 0.5}
                         fontStyle="bold"
                         fontFamily={FONT}
                         fill={C.heat}

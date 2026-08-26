@@ -100,6 +100,25 @@ function trainOf(unit: OrgUnit, topIds: Set<string>, unitsById: Map<string, OrgU
   return cur;
 }
 
+const clampN = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Px of arc each seat needs before its name label starts crowding its neighbour. */
+const SEAT_ARC = 104;
+
+/**
+ * A squad's circle grows with the number of seats it holds, so "big team" is
+ * legible from the size alone before you read a single label.
+ * Shared by the layout (here) and the renderer (OrgCanvas).
+ */
+export const squadNodeRadius = (seats: number): number => Math.round(clampN(58 + seats * 4.5, 62, 124));
+
+/**
+ * Radius of the member ring around a squad: clear of the (now variable) node,
+ * and wide enough that every seat gets ~SEAT_ARC px of arc.
+ */
+export const squadRingRadius = (seats: number): number =>
+  Math.round(Math.max(squadNodeRadius(seats) + 54, (seats * SEAT_ARC) / (2 * Math.PI)));
+
 const ring = (i: number, count: number, radius: number, cx: number, cy: number): Position => {
   const angle = (2 * Math.PI * i) / Math.max(1, count) - Math.PI / 2;
   return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
@@ -160,6 +179,12 @@ export function buildCanvasMap(
   }
   for (const list of teamsByTrain.values()) list.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Squad → train lookup used to classify cross-cutting people by tier.
+  const squadToTrainId = new Map<string, string>();
+  for (const [trainId, squadList] of teamsByTrain) {
+    for (const sq of squadList) squadToTrainId.set(sq.id, trainId);
+  }
+
   const trainList: CanvasTrain[] = tops
     .filter((t) => (teamsByTrain.get(t.id)?.length ?? 0) > 0)
     .map((t) => ({
@@ -215,7 +240,7 @@ export function buildCanvasMap(
       continue;
     }
     const squadTeams = teamsByTrain.get(t.id) ?? [];
-    const squadRadius = Math.max(280, 220 + squadTeams.length * 20);
+    const squadRadius = Math.max(300, 240 + squadTeams.length * 22);
     squadTeams.forEach((team, i) => {
       const seed = ring(i, squadTeams.length, squadRadius, anchor.x, anchor.y);
       const pos = positions.get(`unit:${team.id}`) ?? seed;
@@ -250,11 +275,21 @@ export function buildCanvasMap(
     peopleByHome.get(home)!.push(p);
   }
 
-  // Squad → train lookup used to classify cross-cutting people by tier.
-  const squadToTrainId = new Map<string, string>();
-  for (const [trainId, squadList] of teamsByTrain) {
-    for (const sq of squadList) squadToTrainId.set(sq.id, trainId);
+  // Seats a squad holds = its home members plus a ghost seat for every
+  // cross-squad person allocated to it. Drives both circle and ring size.
+  const ghostSeatCount = new Map<string, number>();
+  if (crossCuttingMode === "connected") {
+    for (const p of people) {
+      if (homeOf.get(p.id) !== CROSS_CUTTING_ID) continue;
+      const asg = assignmentsByPerson.get(p.id) ?? [];
+      if (asg.length === 0) continue;
+      const trainSet = new Set(asg.map((a) => squadToTrainId.get(a.orgUnitId)).filter((t): t is string => !!t));
+      if (trainSet.size > 1) continue; // cross-train people get a node + lines, not seats
+      for (const a of asg) ghostSeatCount.set(a.orgUnitId, (ghostSeatCount.get(a.orgUnitId) ?? 0) + 1);
+    }
   }
+  const seatsOf = (squadId: string) =>
+    (peopleByHome.get(squadId)?.length ?? 0) + (ghostSeatCount.get(squadId) ?? 0);
 
   // In connected mode, cross-cutting people with team allocations are placed at
   // the weighted centroid of those team anchors rather than in the bucket.
@@ -309,7 +344,7 @@ export function buildCanvasMap(
     const anchor = squadAnchor.get(homeId);
     if (!anchor) continue;
     members.sort((a, b) => a.name.localeCompare(b.name));
-    const radius = Math.max(90, 60 + members.length * 6);
+    const radius = squadRingRadius(seatsOf(homeId));
     members.forEach((p, i) => {
       const seed = ring(i, members.length, radius, anchor.x, anchor.y);
       const pos = positions.get(`person:${p.id}`) ?? seed;
@@ -332,7 +367,7 @@ export function buildCanvasMap(
   if (bucketMembers.length > 0) {
     const anchor = squadAnchor.get(CROSS_CUTTING_ID);
     if (anchor) {
-      const radius = Math.max(90, 60 + bucketMembers.length * 6);
+      const radius = squadRingRadius(bucketMembers.length);
       bucketMembers.forEach((p, i) => {
         const seed = ring(i, bucketMembers.length, radius, anchor.x, anchor.y);
         const pos = positions.get(`person:${p.id}`) ?? seed;
