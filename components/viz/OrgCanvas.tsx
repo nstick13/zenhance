@@ -768,10 +768,10 @@ export function OrgCanvas({
                 );
               })}
 
-            {/* Cross-cutting connection lines — drawn under squads/people */}
+            {/* Cross-cutting connection lines — cross-train people only; cross-squad shown as ghost seats */}
             {showSquads && showPeople && CROSS_CUTTING_MODE === "connected" &&
               people
-                .filter((p) => p.homeId === CROSS_CUTTING_ID && p.allocations.length > 0)
+                .filter((p) => p.homeId === CROSS_CUTTING_ID && p.crossCuttingTier === "train" && p.allocations.length > 0)
                 .map((p) =>
                   p.allocations.map((a) => {
                     const sq = byId.get(a.unitId);
@@ -871,8 +871,47 @@ export function OrgCanvas({
                 );
               })}
 
+            {/* Ghost seats — cross-squad people rendered at each squad ring they support */}
             {showPeople &&
-              people.map((p) => {
+              people
+                .filter((p) => p.crossCuttingTier === "squad")
+                .flatMap((p) =>
+                  p.allocations.flatMap((a) => {
+                    const sq = byId.get(a.unitId) as CanvasSquad | undefined;
+                    if (!sq || sq.isCrossCutting) return [];
+                    const dx = p.x - sq.x;
+                    const dy = p.y - sq.y;
+                    const dist = Math.hypot(dx, dy);
+                    const nx = dist > 1 ? dx / dist : 0;
+                    const ny = dist > 1 ? dy / dist : -1;
+                    const gx = sq.x + nx * (SQUAD_R + 32);
+                    const gy = sq.y + ny * (SQUAD_R + 32);
+                    const u = utilOf(p);
+                    const ov = personOverlay(p);
+                    return [
+                      <Group
+                        key={`ghost-${p.id}-${a.unitId}`}
+                        x={gx}
+                        y={gy}
+                        opacity={ov.dimmed ? 0.3 : 0.9}
+                        onClick={() => selectNode(p.id)}
+                        onTap={() => selectNode(p.id)}
+                        onMouseEnter={() => showHover(p.id)}
+                        onMouseLeave={() => setHover(null)}
+                      >
+                        <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : utilColor(u)} strokeWidth={3.5} dash={[5, 3]} />
+                        {u > 110 && <Circle radius={7} y={-1} fill={C.utilOver} listening={false} />}
+                        <Text text={p.name} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
+                        {lod === "roles" && (
+                          <Text text={`${a.pct}%`} x={-70} y={44} width={140} align="center" fontSize={11.5} fontStyle="bold" fontFamily={FONT} fill={utilColor(u)} listening={false} />
+                        )}
+                      </Group>,
+                    ];
+                  })
+                )}
+
+            {showPeople &&
+              people.filter((p) => p.crossCuttingTier !== "squad").map((p) => {
                 const u = utilOf(p);
                 const shared = p.allocations.length > 1;
                 const ov = personOverlay(p);

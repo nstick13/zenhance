@@ -58,6 +58,7 @@ export type CanvasPerson = {
   skills: string[];
   growthFocus: string | null;
   allocations: CanvasAllocation[];
+  crossCuttingTier: "squad" | "train" | null;
 };
 
 export type CanvasNode = CanvasSquad | CanvasPerson;
@@ -249,6 +250,12 @@ export function buildCanvasMap(
     peopleByHome.get(home)!.push(p);
   }
 
+  // Squad → train lookup used to classify cross-cutting people by tier.
+  const squadToTrainId = new Map<string, string>();
+  for (const [trainId, squadList] of teamsByTrain) {
+    for (const sq of squadList) squadToTrainId.set(sq.id, trainId);
+  }
+
   // In connected mode, cross-cutting people with team allocations are placed at
   // the weighted centroid of those team anchors rather than in the bucket.
   // People truly without any team allocation still cluster in the bucket.
@@ -284,12 +291,16 @@ export function buildCanvasMap(
           bucketMembers.push(p);
           continue;
         }
-        const pos = positions.get(`person:${p.id}`) ?? seed;
+        // Classify: cross-squad if all allocations share one train; cross-train otherwise.
+        const trainSet = new Set(asg.map((a) => squadToTrainId.get(a.orgUnitId)).filter((t): t is string => !!t));
+        const tier: "squad" | "train" = trainSet.size <= 1 ? "squad" : "train";
+        // Always seed from squad positions for cross-cutting people — persisted positions
+        // from the old bucket layout are stale and cause off-screen connection lines.
         nodes.push({
-          id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,
+          id: p.id, kind: "person", name: p.name, x: seed.x, y: seed.y,
           title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
           managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
-          skills: p.skills, growthFocus: p.growthFocus, allocations,
+          skills: p.skills, growthFocus: p.growthFocus, allocations, crossCuttingTier: tier,
         });
       }
       continue;
@@ -312,7 +323,7 @@ export function buildCanvasMap(
         id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,
         title: p.title, homeId, costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
         managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
-        skills: p.skills, growthFocus: p.growthFocus, allocations,
+        skills: p.skills, growthFocus: p.growthFocus, allocations, crossCuttingTier: null,
       });
     });
   }
@@ -330,7 +341,7 @@ export function buildCanvasMap(
           title: p.title, homeId: CROSS_CUTTING_ID,
           costPerMonth: p.costPerMonth != null ? Number(p.costPerMonth) : 0,
           managerId: p.managerId, lastVacationAt: p.lastVacationAt, startDate: p.startDate,
-          skills: p.skills, growthFocus: p.growthFocus, allocations: [],
+          skills: p.skills, growthFocus: p.growthFocus, allocations: [], crossCuttingTier: null,
         });
       });
     }
