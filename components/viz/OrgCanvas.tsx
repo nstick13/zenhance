@@ -48,6 +48,12 @@ import {
   isDefaultLens,
   type Lens,
 } from "@/lib/canvas/lens";
+import {
+  clearMyView,
+  resolveOpeningLens,
+  sameLens,
+  writeMyView,
+} from "@/lib/canvas/myView";
 import { lower, type Vocabulary } from "@/lib/vocabulary";
 import { VocabularyProvider, useVocabulary } from "@/components/VocabularyProvider";
 
@@ -261,12 +267,31 @@ export function OrgCanvas({
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "team" | "stream" | null>(null);
 
-  // --- lens (S3) ------------------------------------------------------------
-  // Held locally and applied on click, then persisted in the background: a
-  // display preference should never make the map wait on a round-trip. The
-  // server is the source of truth on next load, so a failed write just means
-  // the change didn't stick — nothing is lost.
-  const [lens, setLens] = useState<Lens>(initialLens);
+  // --- lens (S3 / S5) --------------------------------------------------------
+  // Two tiers, deliberately. `initialLens` is the WORKSPACE DEFAULT — what a
+  // colleague sees on their first open. What the topbar edits is MY VIEW: mine
+  // alone, instant, and it never touches anyone else's map. Promoting my view
+  // to the default is a separate, explicit act ("Make default").
+  //
+  // Before this split, every topbar click wrote workspace-wide immediately, so
+  // flipping the lens mid-demo changed it permanently for everyone.
+  //
+  // Safe in a lazy initialiser because this component is `ssr: false` (see
+  // OrgCanvasLoader) — reading storage during the first render can't cause a
+  // hydration mismatch, and hydrating in an effect instead would flash the
+  // workspace default before snapping to mine.
+  const workspaceId = units[0]?.workspaceId ?? peopleRows[0]?.workspaceId ?? "";
+  const opening = useMemo(
+    () => resolveOpeningLens(workspaceId, initialLens),
+    // Read once, on mount: this seeds state and must not re-run when the
+    // workspace default changes underneath a view the user is already in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const [lens, setLens] = useState<Lens>(opening.lens);
+  /** The workspace default, which "Make default" advances. */
+  const [defaultLens, setDefaultLens] = useState<Lens>(initialLens);
+  const isMyView = !sameLens(lens, defaultLens);
 
   /** The colour-by list, with the "stream" row wearing this workspace's own
    *  word for the top rung rather than the shipped default. */
@@ -289,12 +314,28 @@ export function OrgCanvas({
       setLens((prev) => {
         if (prev[key] === value) return prev;
         const next = { ...prev, [key]: value };
-        void saveLens(next);
+        // My view only. Nothing here reaches the server.
+        writeMyView(workspaceId, next);
         return next;
       });
     },
-    [],
+    [workspaceId],
   );
+
+  /** Drop my override and fall back to what the workspace is set to. */
+  const resetToDefault = useCallback(() => {
+    clearMyView(workspaceId);
+    setLens(defaultLens);
+  }, [workspaceId, defaultLens]);
+
+  /** Promote what I'm looking at to the workspace default — the one gesture
+   *  here that changes what other people see, so it is never implicit. */
+  const makeDefault = useCallback(() => {
+    const next = lens;
+    setDefaultLens(next);
+    clearMyView(workspaceId); // my view and the default now agree
+    void saveLens(next);
+  }, [lens, workspaceId]);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -1101,7 +1142,10 @@ export function OrgCanvas({
         <div style={{ ...S.overlayGroup, position: "relative" }}>
           <button style={S.lensBtn(lensOpen || !isDefaultLens(lens))} onClick={() => setLensOpen((v) => !v)}>
             ◎ Lens
-            {!isDefaultLens(lens) && <span style={S.lensDot} />}
+            {/* Amber dot = "you are in a mode", the same grammar the scenario
+                chip uses. Grey = merely a non-default lens the whole workspace
+                shares, which is nobody's business to reset. */}
+            {isMyView ? <span style={S.myViewDot} /> : !isDefaultLens(lens) && <span style={S.lensDot} />}
           </button>
           {lensOpen && (
             <>
@@ -1120,7 +1164,22 @@ export function OrgCanvas({
                   value={lens.labelBy}
                   onPick={(v) => setLensField("labelBy", v)}
                 />
-                <p style={S.lensFoot}>Saved for this workspace.</p>
+                {isMyView ? (
+                  <div style={S.lensFootRow}>
+                    <span style={S.myViewTag}>
+                      <span style={S.myViewDot} />
+                      Just for me
+                    </span>
+                    <button style={S.lensLink} onClick={resetToDefault}>
+                      Reset
+                    </button>
+                    <button style={S.lensLink} onClick={makeDefault}>
+                      Make default
+                    </button>
+                  </div>
+                ) : (
+                  <p style={S.lensFoot}>This workspace&apos;s default view.</p>
+                )}
               </div>
             </>
           )}
@@ -2845,7 +2904,18 @@ const S = {
     alignItems: "center",
     gap: 6,
   }),
+  // Muted: the workspace as a whole sits on a non-default lens. Shared state,
+  // nothing for one person to undo.
   lensDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: C.inkSoft,
+    display: "inline-block",
+  },
+  // Amber: "you are in a mode", the same grammar as the scenario chip. Reserved
+  // for state that is *yours* and that you can step back out of.
+  myViewDot: {
     width: 6,
     height: 6,
     borderRadius: "50%",
@@ -2898,6 +2968,29 @@ const S = {
   lensTick: (on: boolean) => ({ fontSize: 11, lineHeight: "18px", color: on ? C.ink : "#c3bfb4" }),
   lensDivider: { height: 1, background: C.line },
   lensFoot: { margin: 0, fontSize: 11, color: C.inkSoft },
+  lensFootRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap" as const,
+  },
+  myViewTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    fontSize: 11,
+    color: C.ink,
+    marginRight: "auto",
+  },
+  lensLink: {
+    border: "none",
+    background: "none",
+    padding: 0,
+    fontSize: 11,
+    color: "#4338ca",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
   legendCount: {
     marginLeft: 5,
     fontVariantNumeric: "tabular-nums" as const,
