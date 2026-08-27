@@ -12,7 +12,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
 | v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
 | **Team memberships (add / edit % / remove)** | `OrgCanvas.tsx` — `Assignments` panel component; `createAssignment`/`updateAssignment`/`deleteAssignment` in `lib/data/actions.ts`; Option-drag branch in `onNodeDragEnd` |
-| **Person attributes (discipline / employment / location / timezone)** | `lib/db/schema.ts` `disciplines` + `people`; `ensureDiscipline` in `lib/data/actions.ts`; edit UI in `OrgCanvas.tsx` `PersonForm`/`PersonBody` and `components/people/PeopleManager.tsx` |
+| **Person attributes (discipline / employment / location / timezone)** | `lib/db/schema.ts` `disciplines` + `people`; edit UI in `OrgCanvas.tsx` `PersonForm`/`PersonBody` and `components/people/PeopleManager.tsx`. Discipline find-or-create now lives *inside the import transaction* (`lib/data/importCommit.ts`), not as a standalone action |
 | **The lens — what colour/label mean on the map** | `lib/canvas/lens.ts` (pure: `personColor`, `personLabel`, `buildLegend`, `normalizeLens`) + `LensChoice`/`S.lensPanel` in `OrgCanvas.tsx`; persisted via `saveLens` in `lib/data/actions.ts` → `workspaces.lens` jsonb |
 | **Paper palette tokens for non-canvas pages** | `app/globals.css` `@theme static` — `--color-paper|surface|ink|ink-soft|line|grow|alert` |
 | **v2 canvas look & feel** (stream identity hues, stream header block, intro choreography, open-on-a-view) | `OrgCanvas.tsx` — `STREAM_HUES`/`hueOf`, hull render block, `introT` + `phase()`, `frameBox` |
@@ -26,11 +26,18 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | DB connection / Drizzle client | `lib/db/client.ts`, `lib/db/orm.ts` |
 | Reading data (server) | `lib/data/queries.ts` (`getOrgSnapshot`, `getPeople`, `getOrgUnits`, `getPerson`, `getOrgUnit`) |
 | Mutations (server actions) | `lib/data/actions.ts` (create/update/delete person·unit·assignment, `moveOrgUnit`, `moveAssignment`, `loadDemoOrg`) |
-| CSV/Excel import | `lib/data/import.ts` (commit) + `components/import/ImportWizard.tsx` (UI) + test `lib/data/__tests__/import.integration.mts` |
+| CSV/Excel import | **`lib/data/importCommit.ts` is the engine** (validate + commit; deliberately *not* `"use server"`, so tests can drive the real code); `lib/data/import.ts` is the thin workspace-scoped action over it; `components/import/ImportWizard.tsx` is the UI |
+| **Import value normalisation** (employment / timezone / title→discipline) | `lib/data/importMapping.ts` — pure, shared by the wizard's preview and the server commit so both agree by construction. Unit tests `lib/data/__tests__/importMapping.test.ts` |
+| Import tests | `lib/data/__tests__/importS2.integration.mts` drives the **real** engine (prefer it as the model). `import.integration.mts` predates the split and re-implements the resolution logic, so it proves nothing about shipped code |
+| **Scale fixture + benchmark** | `lib/db/scaleFixture.ts` (`npm run db:scale`, its own workspace — never clobbers the demo org) + `lib/canvas/__tests__/scale.bench.mts` |
+| **Analytics/config design proposals** (not built) | `design/*.dc.html` → published canvas, linked from ROADMAP's analytics section |
 | Seed / demo data | `lib/db/seed.ts` (CLI `npm run db:seed`), `lib/data/demoSeed.ts` (in-app "Load demo org") |
 | Auth / multi-tenant scoping | `lib/auth/workspace.ts` (`requireWorkspace`, `assertSameWorkspace`), `lib/auth/currentUser.ts` (Clerk vs dev-auth) |
 | Form/action validation | `lib/validation.ts` (Zod schemas) |
 | People / Teams CRUD pages | `components/people/PeopleManager.tsx`, `components/teams/TeamsManager.tsx` (pages are thin: `app/(app)/{people,teams}/page.tsx`) |
+| **Workspace settings (S5)** — vocabulary + discipline CRUD | `components/settings/SettingsManager.tsx` (page is thin: `app/(app)/settings/page.tsx`) |
+| **Discipline CRUD data work** (create/update/delete-with-reassign/merge/reorder) | `lib/data/disciplineOps.ts` — pure workspace-scoped data ops; `lib/data/actions.ts` wraps them with auth + Zod + revalidate. Integration script: `lib/data/__tests__/disciplines.integration.mts` |
+| **What the org calls its two rungs** ("value stream" / "team") | `lib/vocabulary.ts` (pure: `Vocabulary`, `DEFAULT_VOCABULARY`, `PRESETS`, `normalizeVocabulary`, `lower`) → `workspaces.vocabulary` jsonb; handed to the client tree by `components/VocabularyProvider.tsx` (`useVocabulary()`) |
 | Routing / auth middleware | `proxy.ts` (Next 16 — **not** `middleware.ts`) |
 | App shell / layout / empty-org screen | `app/(app)/layout.tsx`, `app/(app)/org/page.tsx`, `app/(app)/{error,not-found}.tsx` |
 | Onboarding banner, palette switcher | `components/OnboardingBanner.tsx`, `components/PaletteSwitcher.tsx` |

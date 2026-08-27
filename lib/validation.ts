@@ -93,11 +93,29 @@ export const assignmentPatch = z.object({
 });
 export type AssignmentPatch = z.infer<typeof assignmentPatch>;
 
-export const disciplineInput = z.object({
-  name: z.string().trim().min(1, "Name is required"),
-  color: optionalString,
+/** A hex colour as the settings colour picker writes it. Null clears it back
+ *  to the ramp, which is a legitimate choice, not an empty form. */
+const hexColor = z.preprocess(
+  emptyToNull,
+  z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #0369a1")
+    .nullable(),
+);
+
+/** One discipline row (S5 settings). Validates the colour and carries sort
+ *  order, because here both are typed by a human rather than inherited from
+ *  an import — the import path find-or-creates by name only. */
+export const disciplineUpdate = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60, "Keep it under 60 characters"),
+  color: hexColor,
+  sortOrder: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? 0 : v),
+    z.coerce.number().int().min(0),
+  ),
 });
-export type DisciplineInput = z.infer<typeof disciplineInput>;
+export type DisciplineUpdate = z.infer<typeof disciplineUpdate>;
 
 /** The map lens (S3). Both fields required — the client always sends a whole
  *  lens, and a partial write would silently reset the other dimension. */
@@ -106,3 +124,17 @@ export const lensInput = z.object({
   labelBy: z.enum(["name", "nameTitle", "initials"]),
 });
 export type LensInput = z.infer<typeof lensInput>;
+
+/** The workspace vocabulary (S5 tab 1). Every field required — the settings
+ *  form always sends a whole vocabulary, and a partial write would silently
+ *  reset the terms it omitted. Shape mirrors lib/vocabulary.ts. */
+const term = z.object({
+  singular: z.string().trim().min(1, "A name is required").max(40, "Keep it under 40 characters"),
+  plural: z.string().trim().min(1, "A plural is required").max(40, "Keep it under 40 characters"),
+});
+
+export const vocabularyInput = z.object({
+  stream: term,
+  team: term,
+});
+export type VocabularyInput = z.infer<typeof vocabularyInput>;

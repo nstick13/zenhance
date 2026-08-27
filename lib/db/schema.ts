@@ -62,6 +62,15 @@ export const workspaces = pgTable("workspaces", {
    * and re-normalised on read, so an older/newer blob can never crash a map.
    */
   lens: jsonb("lens"),
+  /**
+   * What this workspace *calls* the two rungs (S5 tab 1): stream/team singular
+   * and plural. A separate blob from `lens` on purpose — the lens is a view
+   * preference that may become per-user, while vocabulary is workspace-wide
+   * taxonomy everyone shares. Display strings only: `org_units.kind` stays
+   * `group | team` and nothing here implies a data migration.
+   * Null = the defaults in lib/vocabulary.ts; re-normalised on read.
+   */
+  vocabulary: jsonb("vocabulary"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

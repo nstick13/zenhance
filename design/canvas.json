@@ -1,0 +1,26 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1180, "h": 1000 },
+    { "file": "CanvasTop.dc.html", "x": 1300, "y": 0, "w": 1240, "h": 940 },
+    { "file": "FindingsConfig.dc.html", "x": 0, "y": 1140, "w": 1140, "h": 1120 },
+    { "file": "LensScope.dc.html", "x": 1300, "y": 1140, "w": 1080, "h": 900 },
+    { "file": "PodTemplate.dc.html", "x": 0, "y": 2420, "w": 1160, "h": 1000 }
+  ],
+  "annotations": [
+    {
+      "id": "read-order",
+      "x": -420,
+      "y": 0,
+      "w": 340,
+      "text": "Four open questions, one recommendation each.\n\nQ1 is the one that changes code: 3 of the 6 over-allocation findings on the demo org are false positives, and the number goes to 233 findings at 1,000 people.\n\nQ4 is a live bug — the lens already writes workspace-wide from the topbar."
+    },
+    {
+      "id": "not-decided",
+      "x": -420,
+      "y": 1140,
+      "w": 340,
+      "text": "Nothing here is built. These are proposals to react to, not decisions taken.\n\nThe two things I'd want your call on before any of it becomes code: the Spread threshold (3 teams?) and whether 'declared %' earns its place on a finding at all."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

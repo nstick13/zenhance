@@ -36,6 +36,13 @@
       "when": 1787769510102,
       "tag": "0004_mean_spirit",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787865372394,
+      "tag": "0005_stormy_red_ghost",
+      "breakpoints": true
     }
   ]
 }

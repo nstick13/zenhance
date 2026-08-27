@@ -9,6 +9,7 @@ import {
   eq,
   and,
   asc,
+  sql,
   type Person,
   type OrgUnit,
   type Assignment,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import { normalizeLens, type Lens } from "@/lib/canvas/lens";
+import { normalizeVocabulary, type Vocabulary } from "@/lib/vocabulary";
 
 /** Everything needed to render the org, fetched in one workspace-scoped pass. */
 export type OrgSnapshot = {
@@ -27,6 +29,8 @@ export type OrgSnapshot = {
   disciplines: Discipline[];
   /** The workspace's display lens (S3), already normalised to a valid shape. */
   lens: Lens;
+  /** What this workspace calls its two rungs (S5), normalised on the way out. */
+  vocabulary: Vocabulary;
 };
 
 export async function getOrgSnapshot(): Promise<OrgSnapshot> {
@@ -45,7 +49,15 @@ export async function getOrgSnapshot(): Promise<OrgSnapshot> {
     assignments: a,
     disciplines: d,
     lens: normalizeLens(workspace.lens),
+    vocabulary: normalizeVocabulary(workspace.vocabulary),
   };
+}
+
+/** The workspace's vocabulary alone — for pages that need the labels but not
+ *  the whole org. Always normalised, so callers never see a raw blob. */
+export async function getVocabulary(): Promise<Vocabulary> {
+  const { workspace } = await requireWorkspace();
+  return normalizeVocabulary(workspace.vocabulary);
 }
 
 export async function getDisciplines(): Promise<Discipline[]> {
@@ -55,6 +67,23 @@ export async function getDisciplines(): Promise<Discipline[]> {
     .from(disciplines)
     .where(eq(disciplines.workspaceId, workspace.id))
     .orderBy(asc(disciplines.sortOrder));
+}
+
+/**
+ * How many people hold each discipline, workspace-scoped. The settings tab
+ * shows this next to every row so "delete" is never a blind action, and one
+ * grouped count beats N round trips from the client.
+ */
+export async function getDisciplinePeopleCounts(): Promise<Record<string, number>> {
+  const { workspace } = await requireWorkspace();
+  const rows = await db
+    .select({ id: people.disciplineId, n: sql<number>`count(*)::int` })
+    .from(people)
+    .where(eq(people.workspaceId, workspace.id))
+    .groupBy(people.disciplineId);
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.id) out[r.id] = r.n;
+  return out;
 }
 
 export async function getPeople(): Promise<Person[]> {

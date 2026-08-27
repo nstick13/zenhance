@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import { isClerkEnabled } from "@/lib/auth/currentUser";
 import { PaletteSwitcher } from "@/components/PaletteSwitcher";
+import { normalizeVocabulary } from "@/lib/vocabulary";
 
 /**
  * Protected app shell. `requireWorkspace()` enforces auth (redirecting to
@@ -13,6 +14,8 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { workspace } = await requireWorkspace();
+  // The nav wears the workspace's own word for the bottom rung (S5 tab 1).
+  const vocab = normalizeVocabulary(workspace.vocabulary);
 
   return (
     <div className="flex min-h-screen flex-col bg-paper text-ink">
@@ -29,10 +32,13 @@ export default async function AppLayout({
               People
             </Link>
             <Link href="/teams" className="hover:text-ink">
-              Teams
+              {vocab.team.plural}
             </Link>
             <Link href="/import" className="hover:text-ink">
               Import
+            </Link>
+            <Link href="/settings" className="hover:text-ink">
+              Settings
             </Link>
           </nav>
         </div>

@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; }
+    a { color: #4338ca; } a:hover { color: #312e81; }
+    .num { font-family: 'Saira Condensed', 'Helvetica Neue', Arial, sans-serif; font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 1140px; box-sizing: border-box; background: #f6f4ee; color: #22272e; padding: 44px 48px 48px 48px; display: flex; flex-direction: column; gap: 26px">
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div style="width: 26px; height: 3px; background: #10b981"></div>
+      <div style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #5c6570">Open question 3 · settings tab 5</div>
+    </div>
+    <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.015em">What is the <em>config</em> for findings?</div>
+    <div style="font-size: 19px; max-width: 900px; text-wrap: pretty">
+      <span style="color: #5c6570">Recommendation —</span> the three layers become three visible things:
+      a detector you switch on, a policy you tune, and exceptions you file. Findings you
+      <strong>triage</strong>, not findings we <strong>decree</strong>.
+    </div>
+  </div>
+
+  <!-- the settings screen -->
+  <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(34,39,46,0.06)">
+
+    <!-- tab strip -->
+    <div style="display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid #e4e0d6; background: #faf9f5">
+      <div style="font-size: 13px; color: #5c6570; padding: 13px 12px">Vocabulary</div>
+      <div style="font-size: 13px; color: #5c6570; padding: 13px 12px">Disciplines</div>
+      <div style="font-size: 13px; color: #5c6570; padding: 13px 12px">Map defaults</div>
+      <div style="font-size: 13px; color: #5c6570; padding: 13px 12px">Standards</div>
+      <div style="font-size: 13px; padding: 13px 12px; border-bottom: 2px solid #22272e; font-weight: 500">Findings</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 300px minmax(0, 1fr)">
+
+      <!-- detectors -->
+      <div style="border-right: 1px solid #e4e0d6; padding: 16px; display: flex; flex-direction: column; gap: 6px">
+        <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #5c6570; margin-bottom: 4px">Detectors</div>
+        <div style="font-size: 12px; color: #5c6570; line-height: 1.5; margin-bottom: 8px">Deterministic graph queries. They never change — you choose which ones count here.</div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #22272e; border-radius: 8px; background: #faf9f5">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d94a5e" stroke-width="1.7"><circle cx="12" cy="12" r="2.5"/><path d="M12 9.5V4M12 14.5V20M9.5 12H4M14.5 12H20"/></svg>
+          <div style="flex-grow: 1; font-size: 13px; font-weight: 500">Spread</div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #10b981; position: relative"><div style="position: absolute; right: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e4e0d6; border-radius: 8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d94a5e" stroke-width="1.7"><circle cx="12" cy="12" r="2.5"/><path d="M12 9.5V4M12 14.5V20M9.5 12H4M14.5 12H20"/></svg>
+          <div style="flex-grow: 1; font-size: 13px">Over-commitment</div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #10b981; position: relative"><div style="position: absolute; right: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e4e0d6; border-radius: 8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#c98a2e" stroke-width="1.7"><path d="M5 17C9 6 15 6 19 17"/></svg>
+          <div style="flex-grow: 1; font-size: 13px">Team coupling</div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #10b981; position: relative"><div style="position: absolute; right: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e4e0d6; border-radius: 8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d94a5e" stroke-width="1.7"><circle cx="12" cy="12" r="2.5"/><path d="M12 9.5V4M12 14.5V20M9.5 12H4M14.5 12H20"/></svg>
+          <div style="flex-grow: 1; font-size: 13px">Bus factor <span style="font-size: 11px; color: #5c6570">· discipline</span></div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #10b981; position: relative"><div style="position: absolute; right: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e4e0d6; border-radius: 8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.7"><circle cx="12" cy="12" r="8" stroke-dasharray="4 3"/></svg>
+          <div style="flex-grow: 1; font-size: 13px; color: #5c6570">Outsourcing exposure</div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #e4e0d6; position: relative"><div style="position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e4e0d6; border-radius: 8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.7"><circle cx="12" cy="12" r="8" stroke-dasharray="4 3"/></svg>
+          <div style="flex-grow: 1; font-size: 13px; color: #5c6570">Role coverage gap</div>
+          <div style="width: 30px; height: 17px; border-radius: 20px; background: #e4e0d6; position: relative"><div style="position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #ffffff"></div></div>
+        </div>
+      </div>
+
+      <!-- policy + exceptions for the selected detector -->
+      <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 18px">
+
+        <div style="display: flex; align-items: baseline; gap: 10px">
+          <div style="font-size: 18px; font-weight: 600">Spread</div>
+          <div style="font-size: 13px; color: #5c6570">a person carrying seats on many teams</div>
+        </div>
+
+        <!-- policy -->
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #5c6570">Policy</div>
+
+          <div style="display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid #e4e0d6; border-radius: 8px">
+            <div style="font-size: 13px; flex-grow: 1">Flag someone on</div>
+            <div style="display: flex; align-items: center; gap: 8px">
+              <div style="border: 1px solid #e4e0d6; border-radius: 6px; padding: 5px 12px" class="num">3</div>
+              <div style="font-size: 13px; color: #5c6570">or more teams</div>
+            </div>
+          </div>
+
+          <div style="padding: 12px 14px; border: 1px solid #e4e0d6; border-radius: 8px; display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; align-items: baseline; justify-content: space-between">
+              <div style="font-size: 13px">Standing exclusions</div>
+              <div style="font-size: 12px; color: #4338ca">+ Add rule</div>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px">
+              <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; background: #faf9f5; border: 1px solid #e4e0d6; border-radius: 20px; padding: 5px 11px">
+                <span style="color: #5c6570">discipline is</span><strong>Platform</strong>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </div>
+              <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; background: #faf9f5; border: 1px solid #e4e0d6; border-radius: 20px; padding: 5px 11px">
+                <span style="color: #5c6570">employment is</span><strong>vendor</strong>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </div>
+            </div>
+            <div style="font-size: 12px; color: #5c6570; line-height: 1.5; border-top: 1px solid #f0ede5; padding-top: 9px">
+              The platform exemption was never a special case in the detector — it is a default
+              exception at attribute scope, seeded and editable. Every “should this person count?”
+              argument becomes a row here instead of a code change.
+            </div>
+          </div>
+        </div>
+
+        <!-- exceptions -->
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <div style="display: flex; align-items: baseline; justify-content: space-between">
+            <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #5c6570">Exceptions · filed by a human</div>
+            <div style="font-size: 12px; color: #5c6570"><span class="num" style="color: #22272e">9</span> of <span class="num" style="color: #22272e">12</span> reviewed</div>
+          </div>
+
+          <div style="height: 5px; border-radius: 4px; background: #e4e0d6; overflow: hidden">
+            <div style="width: 75%; height: 100%; background: #10b981"></div>
+          </div>
+
+          <div style="border: 1px solid #e4e0d6; border-radius: 8px; overflow: hidden">
+            <div style="display: grid; grid-template-columns: 150px 96px minmax(0,1fr) 92px; font-size: 11px; color: #5c6570; padding: 8px 13px; background: #faf9f5; border-bottom: 1px solid #e4e0d6">
+              <div>Excluded</div><div>Scope</div><div>Reason</div><div>Filed</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 150px 96px minmax(0,1fr) 92px; font-size: 12.5px; padding: 9px 13px; border-bottom: 1px solid #f0ede5; align-items: center">
+              <div>Angela Smith</div>
+              <div><span style="font-size: 11px; background: #eef2ff; color: #4338ca; border-radius: 4px; padding: 2px 7px">instance</span></div>
+              <div style="color: #5c6570">Acknowledged — deliberate, ends Q4</div>
+              <div style="color: #5c6570">Nate · Aug 12</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 150px 96px minmax(0,1fr) 92px; font-size: 12.5px; padding: 9px 13px; border-bottom: 1px solid #f0ede5; align-items: center">
+              <div>Marcus Webb</div>
+              <div><span style="font-size: 11px; background: #f0fdf4; color: #067a55; border-radius: 4px; padding: 2px 7px">person</span></div>
+              <div style="color: #5c6570">Fractional by design — never flag</div>
+              <div style="color: #5c6570">Nate · Aug 12</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 150px 96px minmax(0,1fr) 92px; font-size: 12.5px; padding: 9px 13px; align-items: center">
+              <div style="color: #5c6570">Platform discipline</div>
+              <div><span style="font-size: 11px; background: #faf5ff; color: #7c3aed; border-radius: 4px; padding: 2px 7px">attribute</span></div>
+              <div style="color: #5c6570">Serving many teams is the job</div>
+              <div style="color: #5c6570">seeded default</div>
+            </div>
+          </div>
+
+          <div style="font-size: 12px; color: #5c6570; line-height: 1.5">
+            Three scopes, one mechanism. The review counter is itself the signal —
+            “9 of 12 reviewed” tells a COO more than any single finding does.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px">
+    <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 9px; padding: 14px 16px">
+      <div style="font-size: 13px; font-weight: 600; margin-bottom: 5px">This is the tab that needs storage</div>
+      <div style="font-size: 12.5px; color: #5c6570; line-height: 1.55">Vocabulary and map defaults are blobs. Exceptions are rows — queried, joined, attributed, and dated. Tab 5 is the first one that is genuinely <em>policy</em>, which is the whole argument for a settings surface existing.</div>
+    </div>
+    <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 9px; padding: 14px 16px">
+      <div style="font-size: 13px; font-weight: 600; margin-bottom: 5px">Smallest thing worth shipping</div>
+      <div style="font-size: 12.5px; color: #5c6570; line-height: 1.55">Detector on/off, one threshold, and per-instance suppression with a reason. Attribute rules ship as seeded defaults you can delete but not yet author. Threshold-tuning UI can wait.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -48,6 +48,8 @@ import {
   isDefaultLens,
   type Lens,
 } from "@/lib/canvas/lens";
+import { lower, type Vocabulary } from "@/lib/vocabulary";
+import { VocabularyProvider, useVocabulary } from "@/components/VocabularyProvider";
 
 const CROSS_CUTTING_MODE = "connected" as const;
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
@@ -88,9 +90,9 @@ const FONT =
 
 type Lod = "streams" | "teams" | "people" | "roles";
 
-const LOD_LABELS: [Lod, string][] = [
-  ["streams", "Value streams"],
-  ["teams", "Teams"],
+const lodLabels = (v: Vocabulary): [Lod, string][] => [
+  ["streams", v.stream.plural],
+  ["teams", v.team.plural],
   ["people", "People"],
   ["roles", "Roles"],
 ];
@@ -179,6 +181,7 @@ export function OrgCanvas({
   mapNodeRows,
   disciplines,
   lens: initialLens,
+  vocabulary,
 }: {
   people: Person[];
   units: OrgUnit[];
@@ -186,6 +189,9 @@ export function OrgCanvas({
   mapNodeRows: MapNodeRow[];
   disciplines: Discipline[];
   lens: Lens;
+  /** What this workspace calls its two rungs (S5). Arrives as a prop the same
+   *  way the lens does, then goes into context for the leaf components. */
+  vocabulary: Vocabulary;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -261,6 +267,22 @@ export function OrgCanvas({
   // server is the source of truth on next load, so a failed write just means
   // the change didn't stick — nothing is lost.
   const [lens, setLens] = useState<Lens>(initialLens);
+
+  /** The colour-by list, with the "stream" row wearing this workspace's own
+   *  word for the top rung rather than the shipped default. */
+  const colorByOptions = useMemo(
+    () =>
+      COLOR_BY_OPTIONS.map((o) =>
+        o.value === "stream"
+          ? {
+              ...o,
+              label: vocabulary.stream.singular,
+              hint: `Their home ${lower(vocabulary.stream.singular)}'s identity hue`,
+            }
+          : o,
+      ),
+    [vocabulary],
+  );
   const [lensOpen, setLensOpen] = useState(false);
   const setLensField = useCallback(
     <K extends keyof Lens>(key: K, value: Lens[K]) => {
@@ -1021,6 +1043,7 @@ export function OrgCanvas({
   const showPeople = lod === "people" || lod === "roles";
 
   return (
+    <VocabularyProvider vocabulary={vocabulary}>
     <div style={S.root}>
       {/* A toolbar, not a header — the app shell in app/(app)/layout.tsx already
           owns the brand and the nav, so repeating them here read as two headers
@@ -1062,10 +1085,10 @@ export function OrgCanvas({
             + Person
           </button>
           <button style={S.btn} onClick={() => startCreate("team")}>
-            + Team
+            + {vocabulary.team.singular}
           </button>
           <button style={S.btn} onClick={() => startCreate("stream")}>
-            + Value stream
+            + {vocabulary.stream.singular}
           </button>
         </div>
         <div style={S.overlayGroup}>
@@ -1086,7 +1109,7 @@ export function OrgCanvas({
               <div style={S.lensPanel}>
                 <LensChoice
                   title="Colour by"
-                  options={COLOR_BY_OPTIONS}
+                  options={colorByOptions}
                   value={lens.colorBy}
                   onPick={(v) => setLensField("colorBy", v)}
                 />
@@ -1235,8 +1258,8 @@ export function OrgCanvas({
                       <Text
                         text={
                           t.teams === 0
-                            ? "Empty — add a team to fill it"
-                            : `${plural(t.teams, "team")} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`
+                            ? `Empty — add a ${lower(vocabulary.team.singular)} to fill it`
+                            : `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`
                         }
                         x={-t.hw + 66}
                         y={yStats}
@@ -1607,7 +1630,7 @@ export function OrgCanvas({
         </Stage>
 
         <div style={S.lodDock}>
-          {LOD_LABELS.map(([id, label]) => (
+          {lodLabels(vocabulary).map(([id, label]) => (
             <span key={id} style={S.lodItem(lod === id)}>
               {label}
             </span>
@@ -1628,10 +1651,10 @@ export function OrgCanvas({
             ))}
           <span style={S.legendSep} />
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple teams
+            <i style={{ ...S.sw, border: `2px dashed ${C.cross}`, background: "transparent" }} /> multiple {lower(vocabulary.team.plural)}
           </span>
           <span>
-            <i style={{ ...S.sw, border: `2px dashed ${C.crossStream}`, background: "transparent" }} /> multiple value streams
+            <i style={{ ...S.sw, border: `2px dashed ${C.crossStream}`, background: "transparent" }} /> multiple {lower(vocabulary.stream.plural)}
           </span>
         </div>
 
@@ -1653,15 +1676,19 @@ export function OrgCanvas({
             <div style={S.panelHead}>
               <div>
                 <div style={S.panelType}>
-                  {creating ? `New ${creating}` : selected?.kind === "person" ? "Person" : "Team"}
+                  {creating
+                    ? `New ${creating === "stream" ? lower(vocabulary.stream.singular) : creating === "team" ? lower(vocabulary.team.singular) : "person"}`
+                    : selected?.kind === "person"
+                      ? "Person"
+                      : vocabulary.team.singular}
                 </div>
                 <h2 style={{ margin: "2px 0 0", fontSize: 19 }}>
                   {creating
                     ? creating === "person"
                       ? "Add person"
                       : creating === "team"
-                        ? "Add team"
-                        : "Add value stream"
+                        ? `Add ${lower(vocabulary.team.singular)}`
+                        : `Add ${lower(vocabulary.stream.singular)}`
                     : selected?.name}
                 </h2>
               </div>
@@ -1725,6 +1752,7 @@ export function OrgCanvas({
         )}
       </aside>
     </div>
+    </VocabularyProvider>
   );
 }
 
@@ -2153,13 +2181,14 @@ function TeamForm({
   onDeleted?: () => void;
 }) {
   const router = useRouter();
+  const vocab = useVocabulary();
   const [form, setForm] = useState<TeamFormState>(team ? teamToForm(team) : emptyTeamForm(streams));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function submit() {
     if (!form.streamId) {
-      setError("Choose a value stream");
+      setError(`Choose a ${lower(vocab.stream.singular)}`);
       return;
     }
     setError(null);
@@ -2200,13 +2229,15 @@ function TeamForm({
     <>
       <label style={S.formLabel}>Name *</label>
       <input style={S.formInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      <label style={S.formLabel}>Value stream *</label>
+      <label style={S.formLabel}>{vocab.stream.singular} *</label>
       <select
         style={S.formInput}
         value={form.streamId}
         onChange={(e) => setForm({ ...form, streamId: e.target.value })}
       >
-        {streams.length === 0 && <option value="">No value streams yet</option>}
+        {streams.length === 0 && (
+          <option value="">No {lower(vocab.stream.plural)} yet</option>
+        )}
         {streams.map((t) => (
           <option key={t.id} value={t.id}>
             {t.name}
@@ -2254,7 +2285,7 @@ function TeamForm({
           checked={form.isExternal}
           onChange={(e) => setForm({ ...form, isExternal: e.target.checked })}
         />
-        <label htmlFor="team-external">External / vendor team</label>
+        <label htmlFor="team-external">External / vendor {lower(vocab.team.singular)}</label>
       </div>
       {form.isExternal && (
         <>
@@ -2271,7 +2302,7 @@ function TeamForm({
 
       <div style={S.formActions}>
         <button style={S.applyBtn} onClick={submit} disabled={pending}>
-          {pending ? "Saving…" : mode === "edit" ? "Save changes" : "Create team"}
+          {pending ? "Saving…" : mode === "edit" ? "Save changes" : `Create ${lower(vocab.team.singular)}`}
         </button>
         <button style={S.discardBtn} onClick={onCancel}>
           Cancel
@@ -2305,6 +2336,7 @@ function StreamForm({
   onCancel: () => void;
 }) {
   const router = useRouter();
+  const vocab = useVocabulary();
   const [name, setName] = useState("");
   const [leadPersonId, setLeadPersonId] = useState("");
   const [expectedRoi, setExpectedRoi] = useState("");
@@ -2366,12 +2398,12 @@ function StreamForm({
       {error && <p style={S.formError}>{error}</p>}
 
       <p style={{ margin: "10px 0 0", fontSize: 12, color: C.inkSoft }}>
-        It lands empty, to the right of the map. Add a team to fill it.
+        It lands empty, to the right of the map. Add a {lower(vocab.team.singular)} to fill it.
       </p>
 
       <div style={S.formActions}>
         <button style={S.applyBtn} onClick={submit} disabled={pending}>
-          {pending ? "Saving…" : "Create value stream"}
+          {pending ? "Saving…" : `Create ${lower(vocab.stream.singular)}`}
         </button>
         <button style={S.discardBtn} onClick={onCancel}>
           Cancel
@@ -2400,6 +2432,7 @@ function Assignments({
   onSelect: (id: string) => void;
 }) {
   const router = useRouter();
+  const vocab = useVocabulary();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -2420,7 +2453,7 @@ function Assignments({
   };
 
   return (
-    <Section title="Teams">
+    <Section title={vocab.team.plural}>
       {person.allocations.length === 0 ? (
         <p style={S.empty}>No delivery allocation — leadership or unassigned.</p>
       ) : (
@@ -2453,7 +2486,7 @@ function Assignments({
                 disabled={pending}
                 onClick={() => run(() => deleteAssignment(a.assignmentId))}
                 aria-label={`Remove from ${byId.get(a.unitId)?.name ?? "team"}`}
-                title="Remove from this team"
+                title={`Remove from this ${lower(vocab.team.singular)}`}
               >
                 ✕
               </button>

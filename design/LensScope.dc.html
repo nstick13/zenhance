@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; }
+    a { color: #4338ca; } a:hover { color: #312e81; }
+    .num { font-family: 'Saira Condensed', 'Helvetica Neue', Arial, sans-serif; font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 1080px; box-sizing: border-box; background: #f6f4ee; color: #22272e; padding: 44px 48px 48px 48px; display: flex; flex-direction: column; gap: 28px">
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div style="width: 26px; height: 3px; background: #f5b14a"></div>
+      <div style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #5c6570">Open question 4 · the 🔶 in the roadmap</div>
+    </div>
+    <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.015em">Workspace default vs. my current view</div>
+    <div style="font-size: 19px; max-width: 880px; text-wrap: pretty">
+      <span style="color: #5c6570">Recommendation —</span> the canvas edits <strong>my view</strong>;
+      only Settings edits <strong>the workspace default</strong>. Making it the default becomes a
+      deliberate act with a button, not a side effect of looking at something.
+    </div>
+  </div>
+
+  <!-- the problem, stated concretely -->
+  <div style="background: #fff5f6; border: 1px solid #ffd9de; border-radius: 10px; padding: 16px 18px; display: flex; gap: 14px; align-items: flex-start">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#d94a5e" stroke-width="1.8" style="flex-shrink: 0; margin-top: 1px"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+    <div style="font-size: 13.5px; line-height: 1.6">
+      <strong>Today this is a live bug, not a future concern.</strong> <code style="background: #ffffff; border: 1px solid #ffd9de; border-radius: 4px; padding: 1px 5px; font-size: 12px">saveLens</code>
+      fires from the canvas topbar and writes workspace-wide, immediately. Flipping to
+      colour-by-discipline to make a point in a demo silently changes what every other person in the
+      workspace sees, permanently, with no undo and no notice. Tolerable at two settings. Not at ten.
+    </div>
+  </div>
+
+  <!-- the two tiers -->
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px">
+
+    <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 9px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22272e" stroke-width="1.6"><path d="M3 20h18M6 20V9l6-5 6 5v11"/></svg>
+        <div style="font-size: 16px; font-weight: 600">Workspace default</div>
+      </div>
+      <div style="font-size: 13.5px; line-height: 1.55; color: #5c6570">What a colleague sees when they open the map for the first time. Everyone inherits it until they change their own view.</div>
+      <div style="border-top: 1px solid #f0ede5; padding-top: 11px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px">
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Edited in</span><span>Settings → Map defaults</span></div>
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Stored in</span><span><code style="font-size: 12px">workspaces.lens</code> — already exists</span></div>
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Changed by</span><span>an explicit Save</span></div>
+      </div>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 9px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22272e" stroke-width="1.6"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"/></svg>
+        <div style="font-size: 16px; font-weight: 600">My view</div>
+      </div>
+      <div style="font-size: 13.5px; line-height: 1.55; color: #5c6570">What I am looking at right now. Mine alone, instant, and it never touches anyone else's map.</div>
+      <div style="border-top: 1px solid #f0ede5; padding-top: 11px; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px">
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Edited in</span><span>the canvas topbar chip</span></div>
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Stored in</span><span>per-user, per-workspace — no migration</span></div>
+        <div style="display: flex; gap: 10px"><span style="color: #5c6570; width: 62px; flex-shrink: 0">Changed by</span><span>looking at something</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- the affordance -->
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <div style="font-size: 16px; font-weight: 600">The one piece of new chrome this needs</div>
+
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; align-items: start">
+
+      <div style="display: flex; flex-direction: column; gap: 9px">
+        <div style="font-size: 12px; color: #5c6570">Matching the default — silent, nothing to say</div>
+        <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; gap: 9px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22272e" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 010 16"/></svg>
+          <div style="font-size: 13px">Utilisation</div>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 9px">
+        <div style="font-size: 12px; color: #5c6570">Diverged — the state is visible, and reversible</div>
+        <div style="background: #ffffff; border: 1px solid #f5b14a; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap">
+          <div style="width: 6px; height: 6px; border-radius: 50%; background: #f5b14a"></div>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22272e" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 010 16"/></svg>
+          <div style="font-size: 13px">Discipline</div>
+          <div style="font-size: 12px; color: #5c6570; border-left: 1px solid #e4e0d6; padding-left: 9px">Just for me</div>
+          <div style="display: flex; gap: 8px; margin-left: auto">
+            <div style="font-size: 12px; color: #4338ca">Reset</div>
+            <div style="font-size: 12px; color: #4338ca; border-left: 1px solid #e4e0d6; padding-left: 8px">Make default</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size: 12.5px; color: #5c6570; line-height: 1.55; max-width: 900px">
+      “Just for me” is the whole fix: it tells you the change is yours, and it makes
+      <strong style="color: #22272e">Make default</strong> a decision you take on purpose. The dot is the
+      same grammar the scenario chip already uses for “you are in a mode”.
+    </div>
+  </div>
+
+  <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 9px; padding: 15px 17px; display: flex; gap: 14px; align-items: flex-start">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="1.7" style="flex-shrink: 0; margin-top: 1px"><path d="M12 16v-4M12 8.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+    <div style="font-size: 12.5px; line-height: 1.6; color: #5c6570">
+      <strong style="color: #22272e">Sequencing.</strong> The roadmap says this split should land
+      <em>with</em> the toggles rather than after them, and that is right — but it is also worth doing
+      on its own, before any new toggle exists. Two settings already write workspace-wide from a
+      topbar. The split is a bug fix that happens to unblock a feature.
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

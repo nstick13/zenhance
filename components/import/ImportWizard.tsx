@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
@@ -8,6 +8,10 @@ import {
   type ImportResult,
   type ImportPayload,
 } from "@/lib/data/import";
+import {
+  previewDisciplineSuggestions,
+  type DisciplineSuggestionPreview,
+} from "@/lib/data/importMapping";
 
 type Sheet = { name: string; headers: string[]; rows: Record<string, string>[] };
 
@@ -23,6 +27,10 @@ const TARGETS: Record<EntityKey, { field: string; label: string; required?: bool
     { field: "growthFocus", label: "Growth focus", aliases: ["growth", "growthfocus", "development"] },
     { field: "lastVacationAt", label: "Last vacation", aliases: ["lastvacation", "vacation", "pto"] },
     { field: "manager", label: "Manager (by name)", aliases: ["manager", "reportsto", "reportsTo", "boss", "supervisor"] },
+    { field: "discipline", label: "Discipline", aliases: ["discipline", "craft", "function", "jobfamily", "profession", "specialty", "capability"] },
+    { field: "employment", label: "Employment type", aliases: ["employment", "employmenttype", "workertype", "employeetype", "contracttype", "fte", "staffingtype"] },
+    { field: "location", label: "Location", aliases: ["location", "office", "site", "city", "country", "basedin"] },
+    { field: "timezone", label: "Timezone", aliases: ["timezone", "tz", "zone", "utcoffset", "workinghours"] },
   ],
   teams: [
     { field: "name", label: "Name", required: true, aliases: ["name", "team", "unit", "group"] },
@@ -68,7 +76,7 @@ function guessSheet(sheets: Sheet[], key: EntityKey): string {
 const field =
   "rounded-md border border-line bg-surface px-2 py-1.5 text-sm outline-none focus:border-ink";
 
-export function ImportWizard() {
+export function ImportWizard({ knownDisciplines = [] }: { knownDisciplines?: string[] }) {
   const router = useRouter();
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [fileName, setFileName] = useState("");
@@ -83,6 +91,7 @@ export function ImportWizard() {
     assignments: {},
   });
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [suggestFromTitle, setSuggestFromTitle] = useState(false);
   const [pending, startTransition] = useTransition();
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -90,6 +99,7 @@ export function ImportWizard() {
     if (!file) return;
     setFileName(file.name);
     setResult(null);
+    setSuggestFromTitle(false);
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array" });
     const parsed: Sheet[] = wb.SheetNames.map((name) => {
@@ -150,8 +160,25 @@ export function ImportWizard() {
       people: extract("people") as ImportPayload["people"],
       teams: extract("teams") as ImportPayload["teams"],
       assignments: extract("assignments") as ImportPayload["assignments"],
+      suggestDisciplineFromTitle: suggestFromTitle,
     };
   }
+
+  /**
+   * S2's reason for existing: most orgs' exports carry a title and no
+   * discipline, and an empty discipline quietly disables half the findings
+   * (bus factor, role coverage, the pod template). So when the discipline
+   * column is missing but a title column isn't, offer to read one from the
+   * other — and show exactly what that would create first.
+   */
+  const suggestion = useMemo<{ preview: DisciplineSuggestionPreview; total: number } | null>(() => {
+    const sheet = sheets.find((s) => s.name === sheetChoice.people);
+    const titleCol = mapping.people?.title;
+    if (!sheet || !titleCol || mapping.people?.discipline) return null;
+    const titles = sheet.rows.map((r) => String(r[titleCol] ?? "").trim()).filter(Boolean);
+    if (titles.length === 0) return null;
+    return { preview: previewDisciplineSuggestions(titles, knownDisciplines), total: titles.length };
+  }, [sheets, sheetChoice.people, mapping.people, knownDisciplines]);
 
   function runImport() {
     setResult(null);
@@ -239,6 +266,56 @@ export function ImportWizard() {
                 ) : (
                   <p className="text-sm text-ink-soft">Not importing {key}.</p>
                 )}
+
+                {key === "people" && sheet && suggestion && (
+                  <div className="mt-4 rounded-md border border-line bg-paper p-3">
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={suggestFromTitle}
+                        onChange={(e) => setSuggestFromTitle(e.target.checked)}
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Read discipline from title</span>
+                        <span className="text-ink-soft">
+                          {" "}
+                          — no discipline column is mapped. Without one, colour-by-discipline,
+                          bus factor and role coverage stay empty.
+                        </span>
+                      </span>
+                    </label>
+
+                    <p className="mt-2 text-sm text-ink-soft">
+                      Would fill{" "}
+                      <span className="font-medium text-ink">
+                        {suggestion.preview.matched} of {suggestion.total}
+                      </span>{" "}
+                      people
+                      {suggestion.preview.unmatched > 0 && (
+                        <> · {suggestion.preview.unmatched} left empty</>
+                      )}
+                      .
+                    </p>
+
+                    {suggestion.preview.byDiscipline.length > 0 && (
+                      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                        {suggestion.preview.byDiscipline.map((d) => (
+                          <li key={d.name} className="text-ink-soft">
+                            <span className="text-ink">{d.name}</span> {d.count}
+                            {d.isNew && <span className="text-grow"> · new</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {suggestion.preview.sampleMisses.length > 0 && (
+                      <p className="mt-2 text-sm text-ink-soft">
+                        Not matched, e.g.: {suggestion.preview.sampleMisses.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -254,10 +331,25 @@ export function ImportWizard() {
             {result?.ok && (
               <span className="text-sm text-grow">
                 Imported {result.created.people} people, {result.created.teams} teams,{" "}
-                {result.created.assignments} assignments.
+                {result.created.assignments} assignments
+                {result.created.disciplines > 0 && (
+                  <> · created {result.created.disciplines} discipline(s)</>
+                )}
+                .
               </span>
             )}
           </div>
+
+          {result?.ok && result.warnings.length > 0 && (
+            <div className="rounded-lg border border-line bg-paper p-4">
+              <p className="mb-2 text-sm font-medium">Imported, with gaps:</p>
+              <ul className="space-y-1 text-sm text-ink-soft">
+                {result.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {result && !result.ok && (
             <div className="rounded-lg border border-red-900 bg-red-950/40 p-4">
@@ -282,8 +374,8 @@ export function ImportWizard() {
 function downloadTemplate() {
   const wb = XLSX.utils.book_new();
   const people = [
-    { name: "Sarah Reeve", title: "Delivery Lead", costPerMonth: 14500, skills: "Leadership, SAFe", startDate: "2019-02-01", growthFocus: "Org design", lastVacationAt: "" },
-    { name: "Aimee Bradford", title: "Team Lead", costPerMonth: 11200, skills: "Java, Architecture", startDate: "2020-06-15", growthFocus: "", lastVacationAt: "2024-10-01" },
+    { name: "Sarah Reeve", title: "Delivery Lead", discipline: "Delivery", employment: "FTE", location: "London", timezone: "Europe/London", costPerMonth: 14500, skills: "Leadership, SAFe", startDate: "2019-02-01", growthFocus: "Org design", lastVacationAt: "" },
+    { name: "Aimee Bradford", title: "Team Lead", discipline: "Engineering", employment: "Contractor", location: "Austin", timezone: "America/Chicago", costPerMonth: 11200, skills: "Java, Architecture", startDate: "2020-06-15", growthFocus: "", lastVacationAt: "2024-10-01" },
   ];
   const teams = [
     { name: "Delivery Group", kind: "group", parent: "", lead: "Sarah Reeve", targetHeadcount: "", isExternal: "", vendor: "", costPerMonth: "", expectedRoi: 12500000 },

@@ -10,10 +10,18 @@ import {
   orgUnitInput,
   assignmentInput,
   assignmentPatch,
-  disciplineInput,
+  disciplineUpdate,
   lensInput,
+  vocabularyInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
+import {
+  createDisciplineOp,
+  updateDisciplineOp,
+  deleteDisciplineOp,
+  mergeDisciplinesOp,
+  reorderDisciplinesOp,
+} from "@/lib/data/disciplineOps";
 import { getOrgSnapshot } from "@/lib/data/queries";
 import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
 
@@ -187,37 +195,78 @@ export async function moveOrgUnit(
 // --- disciplines ----------------------------------------------------------
 
 /**
- * Find-or-create a discipline by name. Import and inline entry both lean on
- * this: an unrecognised value creates the discipline rather than blocking on
- * taxonomy setup, and the user renames or merges afterwards.
+ * The settings-tab CRUD (S5 tab 2). Each of these is auth + validation +
+ * revalidation around lib/data/disciplineOps.ts, which owns the workspace-
+ * scoped data work — see that file for why the split exists.
  */
-export async function ensureDiscipline(raw: unknown): Promise<ActionResult<{ id: string }>> {
+export async function createDiscipline(raw: unknown): Promise<ActionResult<{ id: string }>> {
   const { workspace } = await requireWorkspace();
-  const parsed = disciplineInput.safeParse(raw);
+  const parsed = disciplineUpdate.safeParse(raw);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
-  const v = parsed.data;
-  const [existing] = await db
-    .select({ id: disciplines.id })
-    .from(disciplines)
-    .where(and(eq(disciplines.workspaceId, workspace.id), eq(disciplines.name, v.name)));
-  if (existing) return { ok: true, data: { id: existing.id } };
-  const [row] = await db
-    .insert(disciplines)
-    .values({ workspaceId: workspace.id, name: v.name, color: v.color })
-    .returning({ id: disciplines.id });
-  revalidateAll();
-  return { ok: true, data: { id: row.id } };
+  const res = await createDisciplineOp(workspace.id, {
+    name: parsed.data.name,
+    color: parsed.data.color,
+  });
+  if (res.ok) revalidateAll();
+  return res;
 }
 
-export async function renameDiscipline(id: string, raw: unknown): Promise<ActionResult> {
+/** Rename, recolour and reposition one discipline in a single write. */
+export async function updateDiscipline(id: string, raw: unknown): Promise<ActionResult> {
   const { workspace } = await requireWorkspace();
-  const parsed = disciplineInput.safeParse(raw);
+  const parsed = disciplineUpdate.safeParse(raw);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  const res = await updateDisciplineOp(workspace.id, id, parsed.data);
+  if (res.ok) revalidateAll();
+  return res;
+}
+
+/** Delete a discipline, moving everyone who holds it first. */
+export async function deleteDiscipline(
+  id: string,
+  reassignToId: string | null,
+): Promise<ActionResult<{ reassigned: number }>> {
+  const { workspace } = await requireWorkspace();
+  const res = await deleteDisciplineOp(workspace.id, id, reassignToId);
+  if (res.ok) revalidateAll();
+  return res;
+}
+
+/** Fold one discipline into another. */
+export async function mergeDisciplines(
+  fromId: string,
+  intoId: string,
+): Promise<ActionResult<{ moved: number }>> {
+  const { workspace } = await requireWorkspace();
+  const res = await mergeDisciplinesOp(workspace.id, fromId, intoId);
+  if (res.ok) revalidateAll();
+  return res;
+}
+
+/** Persist a new sort order. */
+export async function reorderDisciplines(orderedIds: string[]): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const res = await reorderDisciplinesOp(workspace.id, orderedIds);
+  if (res.ok) revalidateAll();
+  return res;
+}
+
+// --- vocabulary (S5 tab 1) --------------------------------------------------
+
+/**
+ * Persist what this workspace calls its two rungs. Display strings only —
+ * `org_units.kind` is untouched, so this is never a migration.
+ */
+export async function saveVocabulary(raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = vocabularyInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid vocabulary");
   await db
-    .update(disciplines)
-    .set({ name: parsed.data.name, color: parsed.data.color })
-    .where(and(eq(disciplines.id, id), eq(disciplines.workspaceId, workspace.id)));
+    .update(workspaces)
+    .set({ vocabulary: parsed.data, updatedAt: new Date() })
+    .where(eq(workspaces.id, workspace.id));
   revalidateAll();
+  revalidatePath("/settings");
   return { ok: true, data: undefined };
 }
 

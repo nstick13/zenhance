@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; }
+    a { color: #4338ca; } a:hover { color: #312e81; }
+    .num { font-family: 'Saira Condensed', 'Helvetica Neue', Arial, sans-serif; font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 1240px; box-sizing: border-box; background: #f6f4ee; color: #22272e; padding: 44px 48px 48px 48px; display: flex; flex-direction: column; gap: 30px">
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div style="width: 26px; height: 3px; background: #4338ca"></div>
+      <div style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #5c6570">Open question 2 · analytics</div>
+    </div>
+    <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.015em">What belongs at the top of the canvas?</div>
+    <div style="font-size: 19px; max-width: 900px; text-wrap: pretty">
+      <span style="color: #5c6570">Recommendation —</span> <strong>orientation and control, never content.</strong>
+      Findings are spatial, so they belong <em>on</em> the map and in a rail you open. The top bar answers
+      “where am I, what am I looking at, and am I in a mode?”
+    </div>
+  </div>
+
+  <!-- proposed top bar -->
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="font-size: 13px; color: #5c6570">Proposed — one row, four jobs, nothing that scrolls</div>
+
+    <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; box-shadow: 0 1px 3px rgba(34,39,46,0.06)">
+
+      <!-- search: the missing primitive -->
+      <div style="flex-grow: 1; max-width: 340px; display: flex; align-items: center; gap: 8px; border: 1px solid #e4e0d6; border-radius: 7px; padding: 7px 10px; background: #faf9f5">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+        <div style="font-size: 13px; color: #5c6570">Find a person, team or stream</div>
+      </div>
+
+      <!-- lens chip -->
+      <div style="display: flex; align-items: center; gap: 7px; border: 1px solid #e4e0d6; border-radius: 7px; padding: 7px 11px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22272e" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 010 16"/></svg>
+        <div style="font-size: 13px">Discipline</div>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+
+      <!-- findings: a count, not a rail -->
+      <div style="display: flex; align-items: center; gap: 7px; border: 1px solid #e4e0d6; border-radius: 7px; padding: 7px 11px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d94a5e" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 9V4M12 15v5M9 12H4M15 12h5"/></svg>
+        <div style="font-size: 13px">Findings</div>
+        <div class="num" style="font-size: 12px; background: #ff7a8a; color: #ffffff; border-radius: 20px; padding: 1px 7px; font-weight: 700">6</div>
+      </div>
+
+      <!-- scenario: a mode, so it must be visible -->
+      <div style="display: flex; align-items: center; gap: 7px; border: 1px solid #f5b14a; background: #fdf6e7; border-radius: 7px; padding: 7px 11px">
+        <div style="width: 7px; height: 7px; border-radius: 50%; background: #f5b14a"></div>
+        <div style="font-size: 13px">Scenario · <span class="num">3</span> moves</div>
+        <div style="font-size: 12px; color: #5c6570; border-left: 1px solid #ecdcb8; padding-left: 8px">Discard</div>
+      </div>
+    </div>
+
+    <div style="font-size: 12px; color: #5c6570; line-height: 1.55; padding-left: 2px">
+      Search is the one genuinely missing primitive — at 90 teams you cannot find a person by looking.
+      Scenario is a <em>mode</em>, and an invisible mode is a bug. The findings chip is a count and a
+      door, not the rail itself.
+    </div>
+  </div>
+
+  <!-- where findings actually live -->
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start">
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 15px; font-weight: 600">Findings live on the map, in the shape vocabulary you already picked</div>
+      <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 10px; padding: 18px; display: flex; gap: 18px; align-items: stretch">
+
+        <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center">
+          <svg width="88" height="66" viewBox="0 0 88 66" fill="none">
+            <circle cx="44" cy="33" r="6" fill="#ff7a8a"/>
+            <path d="M44 33L16 14M44 33L74 16M44 33L18 54M44 33L72 52" stroke="#ff7a8a" stroke-width="1.5" opacity="0.85"/>
+            <circle cx="16" cy="14" r="4" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+            <circle cx="74" cy="16" r="4" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+            <circle cx="18" cy="54" r="4" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+            <circle cx="72" cy="52" r="4" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+          </svg>
+          <div style="font-size: 13px; font-weight: 600">node → hub-star</div>
+          <div style="font-size: 12px; color: #5c6570; line-height: 1.45">spread · over-commitment · bus factor</div>
+        </div>
+
+        <div style="width: 1px; background: #f0ede5"></div>
+
+        <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center">
+          <svg width="88" height="66" viewBox="0 0 88 66" fill="none">
+            <path d="M18 46C30 12 58 12 70 46" stroke="#f5b14a" stroke-width="2"/>
+            <circle cx="18" cy="46" r="6" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+            <circle cx="70" cy="46" r="6" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+          </svg>
+          <div style="font-size: 13px; font-weight: 600">edge → arc</div>
+          <div style="font-size: 12px; color: #5c6570; line-height: 1.45">coupling between two teams</div>
+        </div>
+
+        <div style="width: 1px; background: #f0ede5"></div>
+
+        <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center">
+          <svg width="88" height="66" viewBox="0 0 88 66" fill="none">
+            <circle cx="44" cy="33" r="24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-dasharray="5 4"/>
+            <circle cx="44" cy="33" r="13" fill="none" stroke="#5c6570" stroke-width="1.3"/>
+          </svg>
+          <div style="font-size: 13px; font-weight: 600">region → halo</div>
+          <div style="font-size: 12px; color: #5c6570; line-height: 1.45">outsourcing exposure · role gaps</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #5c6570; line-height: 1.55">
+        Different shapes cannot read as duplicates — which is what dissolved the
+        over-allocation-vs-coupling redundancy worry. Ambient at rest, one bundle lit on focus,
+        everything else recedes but stays legible.
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 15px; font-weight: 600">Ruled out, with reasons</div>
+
+      <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 9px; padding: 13px 14px; display: flex; flex-direction: column; gap: 5px">
+        <div style="font-size: 13px; font-weight: 600; color: #5c6570; text-decoration: line-through">A findings rail across the top</div>
+        <div style="font-size: 12px; color: #5c6570; line-height: 1.5">Content competing with the map for the same horizontal band. The shared-people rail was built there and removed — that was evidence, not an accident.</div>
+      </div>
+
+      <div style="background: #ffffff; border: 1px solid #e4e0d6; border-radius: 9px; padding: 13px 14px; display: flex; flex-direction: column; gap: 5px">
+        <div style="font-size: 13px; font-weight: 600; color: #5c6570; text-decoration: line-through">The value stream cabinet</div>
+        <div style="font-size: 12px; color: #5c6570; line-height: 1.5">Belongs on the stream itself — it is already a header block on the hull. Lifting it up top duplicates a thing that has a home.</div>
+      </div>
+
+      <div style="background: #faf9f5; border: 1px dashed #e4e0d6; border-radius: 9px; padding: 13px 14px; display: flex; flex-direction: column; gap: 5px">
+        <div style="font-size: 13px; font-weight: 600">Kept, but demoted</div>
+        <div style="font-size: 12px; color: #5c6570; line-height: 1.5">The lens keeps one chip for what you would flip mid-conversation. Every other toggle moves to Settings → Map defaults, so the bar stops growing a row per feature.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

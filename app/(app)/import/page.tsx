@@ -1,6 +1,11 @@
 import { ImportWizard } from "@/components/import/ImportWizard";
+import { getDisciplines } from "@/lib/data/queries";
 
-export default function ImportPage() {
+export default async function ImportPage() {
+  // The workspace's curated taxonomy, so a title→discipline suggestion reuses
+  // the names it already has instead of inventing near-duplicates beside them.
+  const disciplines = await getDisciplines();
+
   return (
     <div className="mx-auto max-w-4xl p-6">
       <div className="mb-6">
@@ -10,7 +15,7 @@ export default function ImportPage() {
           mapping if needed, then import. References between sheets resolve by name.
         </p>
       </div>
-      <ImportWizard />
+      <ImportWizard knownDisciplines={disciplines.map((d) => d.name)} />
     </div>
   );
 }

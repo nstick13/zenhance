@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { OrgUnit, Person, Assignment } from "@/lib/db/schema";
+import { lower, type Vocabulary } from "@/lib/vocabulary";
 import {
   createOrgUnit,
   updateOrgUnit,
@@ -77,10 +78,12 @@ export function TeamsManager({
   units,
   people,
   assignments,
+  vocabulary,
 }: {
   units: OrgUnit[];
   people: Person[];
   assignments: Assignment[];
+  vocabulary: Vocabulary;
 }) {
   const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -156,7 +159,7 @@ export function TeamsManager({
         <ul className="py-1">
           {ordered.length === 0 && (
             <li className="px-3 py-6 text-center text-sm">
-              <p className="text-ink-soft">No teams yet.</p>
+              <p className="text-ink-soft">No {lower(vocabulary.team.plural)} yet.</p>
               <p className="mt-1 text-xs text-ink-soft">
                 Create one above, or{" "}
                 <a href="/import" className="text-grow hover:underline">
@@ -217,8 +220,10 @@ export function TeamsManager({
                     setUnitForm({ ...unitForm, kind: e.target.value as "group" | "team" })
                   }
                 >
-                  <option value="team">Team</option>
-                  <option value="group">Group (team of teams)</option>
+                  <option value="team">{vocabulary.team.singular}</option>
+                  <option value="group">
+                    {vocabulary.stream.singular} (holds {lower(vocabulary.team.plural)})
+                  </option>
                 </select>
               </label>
               <label className="text-sm">
@@ -287,7 +292,9 @@ export function TeamsManager({
                     setUnitForm({ ...unitForm, isExternal: e.target.checked })
                   }
                 />
-                <span className="text-ink-soft">External / contractor team</span>
+                <span className="text-ink-soft">
+                  External / contractor {lower(vocabulary.team.singular)}
+                </span>
               </label>
               {unitForm.isExternal && (
                 <label className="text-sm">

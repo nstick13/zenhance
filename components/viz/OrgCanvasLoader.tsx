@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type { OrgUnit, Person, Assignment, MapNodeRow, Discipline } from "@/lib/db/schema";
 import type { Lens } from "@/lib/canvas/lens";
+import type { Vocabulary } from "@/lib/vocabulary";
 
 /**
  * Konva touches `window` at module scope, so OrgCanvas must load with
@@ -36,6 +37,7 @@ export function OrgCanvasLoader(props: {
   mapNodeRows: MapNodeRow[];
   disciplines: Discipline[];
   lens: Lens;
+  vocabulary: Vocabulary;
 }) {
   return <OrgCanvas {...props} />;
 }
