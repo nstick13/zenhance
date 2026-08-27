@@ -165,12 +165,34 @@ The **Policy** class does not exist yet. It is what the console really unlocks (
 
 **Acceptance for the first slice (tabs 1–2 only) — met:** a workspace created from scratch (no demo seed) can create, rename, recolour, reorder and delete a discipline; colour-by-discipline then uses `disciplines.color` rather than always falling to the ramp; and the two rung labels can be renamed and are reflected everywhere the UI says "value stream" / "team".
 
-### The analytics design conversation  🧭 *design-first, still owed*
-Nate raised this and it is not settled. **Do not port the findings rail cold.** Three questions:
+### The analytics design conversation  ✅ *settled 2026-08-27 — build against these*
+**All four questions are answered.** Detail and the reasoning live on the design canvas linked below; the decisions themselves are here so nobody re-derives them.
+
+**① "On 2+ teams" is a FACT. Whether it becomes a finding is a per-discipline rule the *organisation* sets.**
+There is no universally correct number of teams, and — Nate's sharpening on review — **no discipline whose answer we get to decide for them.** A Security Engineer across six teams is the job working in one org and a bus-factor/burnout risk in the next; a QA tester on two teams is a problem in most. So:
+- Policy is a table keyed by `disciplineId`: *flag at N teams*, or *no limit*, or **unset**.
+- **Ship seeded values, not advice.** Where the trade-off is genuinely organisational (Security is the worked example), ship the row **unset** with the trade-off written beside it rather than a confident default. Shipping a confident default is the same mistake as hard-coding the platform exemption was.
+- **This absorbs the exclusion layer.** "Platform is exempt" is just a discipline with no limit — one mechanism instead of two, and it reuses the same taxonomy the pod template needs.
+- The detector splits in two, both count-based: **Spread** (per-discipline team count) and **Over-commitment** (declared > 100%).
+- Free win regardless of policy: **3 of the 6 current over-allocation findings are noise under any threshold** (Angela 2t/100%, Helena 2t/100%, Grace 2t/80%).
+
+**② The top of the canvas is orientation and control, never content.** Search (the missing primitive at 90 teams), the lens chip, a findings *count* that opens a rail, scenario state (an invisible mode is a bug). Findings stay on the map in the node/edge/region shape vocabulary. A top findings rail is rejected on the evidence of the shared-people rail.
+
+**③ Findings config = detector on/off → per-discipline policy → exceptions.** Exceptions are filed per instance with a reason, attributed and dated; the "9 of 12 reviewed" counter is itself the signal. **This is the first tab needing real tables rather than a jsonb blob** — the actual justification for the settings surface.
+
+**④ 🔶 resolved — the canvas edits *my view*; only Settings edits the workspace default.** Affordance: a "Just for me" chip with *Reset* / *Make default*, reusing the scenario chip's dot grammar. Workspace default stays in `workspaces.lens`; my view is per-user and needs no migration. **This is a live bug today** — `saveLens` already writes workspace-wide from the topbar at two settings — so it is worth fixing on its own, ahead of any new toggle.
+
+**Still open, deliberately:** whether a "declared %" belongs on a finding at all. Keeping it contradicts the settled *no % in findings* rule; the case is argued on the canvas rather than assumed.
+
+<details><summary>The original three questions, kept for context</summary>
+
+**Do not port the findings rail cold.** Three questions:
 1. **Is "on 2+ teams" a finding, a fact, or a filter?** `computeOverAllocFindings` currently skips only when `teamCount <= 1 && totalPct <= 100`, so anyone on 2+ teams fires as "over-allocation" regardless of load — Grace Okafor at **80%** is labelled over-allocated. That is a definition question, not a bug fix; see the detector/policy/exceptions model in the agent memory.
 2. **What belongs at the top of the canvas?** Findings are one candidate; so are the value stream cabinet, scenario state, and search. The shared-people rail was built and rejected there once already.
 3. **What is the *config*** for findings — decide that before building the thing it configures.
-Verified 2026-08-26: `computeAllFindings` fires **9** findings on the demo org (6 over-allocation, 3 coupling) with real narratives. The engine is sound; only the presentation and the definitions are open.
+Verified 2026-08-26: `computeAllFindings` fires **9** findings on the demo org (6 over-allocation, 3 coupling) with real narratives. The engine is sound; only the presentation and the definitions were open.
+
+</details>
 
 #### 🎨 Design canvas — proposals to react to (2026-08-27)
 **[Zenhance Analytics Decisions](https://claude.ai/code/artifact/6fe1d5d9-59f6-41f4-82e9-05407891f78f)** — five artboards, one recommendation per open question, sources in `design/*.dc.html`. **Nothing here is built or decided; it exists to be argued with.**

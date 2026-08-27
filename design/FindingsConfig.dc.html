@@ -20,13 +20,13 @@
   <div style="display: flex; flex-direction: column; gap: 10px">
     <div style="display: flex; align-items: center; gap: 10px">
       <div style="width: 26px; height: 3px; background: #10b981"></div>
-      <div style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #5c6570">Open question 3 · settings tab 5</div>
+      <div style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #5c6570">Question 3 · decided · settings tab 5</div>
     </div>
     <div style="font-size: 30px; font-weight: 600; letter-spacing: -0.015em">What is the <em>config</em> for findings?</div>
     <div style="font-size: 19px; max-width: 900px; text-wrap: pretty">
-      <span style="color: #5c6570">Recommendation —</span> the three layers become three visible things:
-      a detector you switch on, a policy you tune, and exceptions you file. Findings you
-      <strong>triage</strong>, not findings we <strong>decree</strong>.
+      <span style="color: #5c6570">Decided —</span> the three layers become three visible things:
+      a detector you switch on, a policy you set <em>per discipline</em>, and exceptions you file.
+      Findings you <strong>triage</strong>, not findings we <strong>decree</strong>.
     </div>
   </div>
 
@@ -98,34 +98,47 @@
         <div style="display: flex; flex-direction: column; gap: 10px">
           <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #5c6570">Policy</div>
 
-          <div style="display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid #e4e0d6; border-radius: 8px">
-            <div style="font-size: 13px; flex-grow: 1">Flag someone on</div>
-            <div style="display: flex; align-items: center; gap: 8px">
-              <div style="border: 1px solid #e4e0d6; border-radius: 6px; padding: 5px 12px" class="num">3</div>
-              <div style="font-size: 13px; color: #5c6570">or more teams</div>
+          <div style="border: 1px solid #e4e0d6; border-radius: 8px; overflow: hidden">
+            <div style="display: grid; grid-template-columns: minmax(0,1fr) 132px 158px; font-size: 11px; color: #5c6570; padding: 8px 14px; background: #faf9f5; border-bottom: 1px solid #e4e0d6">
+              <div>Discipline</div><div>Flag at</div><div>Because</div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: minmax(0,1fr) 132px 158px; font-size: 12.5px; padding: 9px 14px; border-bottom: 1px solid #f0ede5; align-items: center">
+              <div>QA</div>
+              <div style="display: flex; align-items: center; gap: 6px"><span class="num" style="border: 1px solid #e4e0d6; border-radius: 5px; padding: 3px 9px">2</span><span style="font-size: 11.5px; color: #5c6570">teams</span></div>
+              <div style="font-size: 11.5px; color: #5c6570">should hold one team</div>
+            </div>
+            <div style="display: grid; grid-template-columns: minmax(0,1fr) 132px 158px; font-size: 12.5px; padding: 9px 14px; border-bottom: 1px solid #f0ede5; align-items: center">
+              <div>Engineering</div>
+              <div style="display: flex; align-items: center; gap: 6px"><span class="num" style="border: 1px solid #e4e0d6; border-radius: 5px; padding: 3px 9px">3</span><span style="font-size: 11.5px; color: #5c6570">teams</span></div>
+              <div style="font-size: 11.5px; color: #5c6570">context-switching</div>
+            </div>
+            <div style="display: grid; grid-template-columns: minmax(0,1fr) 132px 158px; font-size: 12.5px; padding: 9px 14px; border-bottom: 1px solid #f0ede5; align-items: center; background: #fffbf4">
+              <div>Security</div>
+              <div><span style="font-size: 11.5px; border: 1px solid #f5b14a; background: #fdf6e7; border-radius: 5px; padding: 3px 9px">not set</span></div>
+              <div style="font-size: 11.5px; color: #c98a2e">your call — see below</div>
+            </div>
+            <div style="display: grid; grid-template-columns: minmax(0,1fr) 132px 158px; font-size: 12.5px; padding: 9px 14px; align-items: center">
+              <div>Platform</div>
+              <div><span style="font-size: 11.5px; color: #5c6570; border: 1px solid #e4e0d6; border-radius: 5px; padding: 3px 9px">no limit</span></div>
+              <div style="font-size: 11.5px; color: #5c6570">serving many is the job</div>
             </div>
           </div>
 
-          <div style="padding: 12px 14px; border: 1px solid #e4e0d6; border-radius: 8px; display: flex; flex-direction: column; gap: 10px">
-            <div style="display: flex; align-items: baseline; justify-content: space-between">
-              <div style="font-size: 13px">Standing exclusions</div>
-              <div style="font-size: 12px; color: #4338ca">+ Add rule</div>
+          <div style="padding: 12px 14px; border: 1px solid #f5b14a; background: #fdf6e7; border-radius: 8px">
+            <div style="font-size: 12.5px; line-height: 1.6">
+              <strong>Seeded values, not advice.</strong> A Security Engineer across six teams is the
+              job working in one org and a bus-factor risk in the next — that is an organisational
+              judgment, and shipping a confident default would be the same mistake as hard-coding the
+              platform exemption was. Ship the row <em>unset</em> with the trade-off written beside it.
             </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px">
-              <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; background: #faf9f5; border: 1px solid #e4e0d6; border-radius: 20px; padding: 5px 11px">
-                <span style="color: #5c6570">discipline is</span><strong>Platform</strong>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>
-              </div>
-              <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; background: #faf9f5; border: 1px solid #e4e0d6; border-radius: 20px; padding: 5px 11px">
-                <span style="color: #5c6570">employment is</span><strong>vendor</strong>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5c6570" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>
-              </div>
-            </div>
-            <div style="font-size: 12px; color: #5c6570; line-height: 1.5; border-top: 1px solid #f0ede5; padding-top: 9px">
-              The platform exemption was never a special case in the detector — it is a default
-              exception at attribute scope, seeded and editable. Every “should this person count?”
-              argument becomes a row here instead of a code change.
-            </div>
+          </div>
+
+          <div style="font-size: 12px; color: #5c6570; line-height: 1.5">
+            Per-discipline thresholds <strong style="color: #22272e">absorb the old exclusion list</strong>:
+            “platform is exempt” is just a discipline with no limit. One mechanism instead of two — and
+            the policy table is keyed by <code style="font-size: 11.5px">disciplineId</code>, the same
+            taxonomy the pod template uses.
           </div>
         </div>
 
