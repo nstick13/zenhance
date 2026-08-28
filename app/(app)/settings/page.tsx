@@ -4,6 +4,8 @@ import {
   getDisciplinePeopleCounts,
   getWorkspaceLens,
   getFindingsPolicy,
+  getPodTemplate,
+  getPodGaps,
 } from "@/lib/data/queries";
 import { SettingsManager } from "@/components/settings/SettingsManager";
 import type { FindingsConfigView } from "@/components/settings/SettingsManager";
@@ -14,13 +16,16 @@ import type { FindingsConfigView } from "@/components/settings/SettingsManager";
  * The guardrail holds: a tab may only exist once something already reads it.
  */
 export default async function SettingsPage() {
-  const [vocabulary, disciplines, counts, lens, policy] = await Promise.all([
-    getVocabulary(),
-    getDisciplines(),
-    getDisciplinePeopleCounts(),
-    getWorkspaceLens(),
-    getFindingsPolicy(),
-  ]);
+  const [vocabulary, disciplines, counts, lens, policy, podTemplate, podGaps] =
+    await Promise.all([
+      getVocabulary(),
+      getDisciplines(),
+      getDisciplinePeopleCounts(),
+      getWorkspaceLens(),
+      getFindingsPolicy(),
+      getPodTemplate(),
+      getPodGaps(),
+    ]);
 
   // The Map in FindingsPolicy doesn't cross the server→client boundary cleanly;
   // hand the tab a plain record (key present with null = "no limit", key absent
@@ -48,6 +53,8 @@ export default async function SettingsPage() {
           peopleCounts={counts}
           lens={lens}
           findings={findings}
+          podTemplate={podTemplate}
+          podGaps={podGaps}
         />
       </div>
     </div>

@@ -76,6 +76,18 @@ export const demoDisciplines: { name: string; color: string }[] = [
   { name: "Leadership", color: "#5c6570" },
 ];
 
+/**
+ * A starter pod template (S5 tab 4) for the demo org: what a "complete" team
+ * looks like here. Ranges, not fixed counts. Keyed by discipline *name* and
+ * resolved to ids at seed time. Deliberately just the two disciplines every
+ * delivery team should carry — enough to reproduce the planted "Tideway has no
+ * QA" gap without pretending the demo has Product/Design roles it doesn't.
+ */
+export const demoPodTemplate: { discipline: string; minCount: number; maxCount: number | null }[] = [
+  { discipline: "Engineering", minCount: 2, maxCount: 6 },
+  { discipline: "QA", minCount: 1, maxCount: null },
+];
+
 // --- people ----------------------------------------------------------------
 export const demoPeople: DemoPerson[] = [
   // Leadership
@@ -267,7 +279,7 @@ export async function applyDemoOrg(
   db: PostgresJsDatabase<typeof schema>,
   workspaceId: string,
 ): Promise<{ people: number; units: number; assignments: number }> {
-  const { people, orgUnits, assignments, disciplines } = schema;
+  const { people, orgUnits, assignments, disciplines, podTemplateRoles } = schema;
   const wid = workspaceId;
 
   // Clear existing org data (assignments cascade from people/units anyway).
@@ -347,6 +359,27 @@ export async function applyDemoOrg(
       isOpenRole: a.isOpenRole ?? false,
     })),
   );
+
+  // Pod template (S5 tab 4). Guarded: `pod_template_roles` is a new table
+  // (migration 0007), and demo-load must still work against a database where it
+  // hasn't been applied yet — the demo just comes up without a template then.
+  try {
+    await db.delete(podTemplateRoles).where(eq(podTemplateRoles.workspaceId, wid));
+    await db.insert(podTemplateRoles).values(
+      demoPodTemplate
+        .filter((r) => disciplineId[r.discipline])
+        .map((r) => ({
+          workspaceId: wid,
+          disciplineId: disciplineId[r.discipline],
+          minCount: r.minCount,
+          maxCount: r.maxCount,
+        })),
+    );
+  } catch (err) {
+    if (!(err instanceof Error && /pod_template_roles|does not exist/i.test(err.message))) {
+      throw err;
+    }
+  }
 
   return {
     people: demoPeople.length,

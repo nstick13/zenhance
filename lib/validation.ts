@@ -163,3 +163,17 @@ export const disciplineSpreadInput = z.object({
   threshold: spreadThreshold.nullable(),
 });
 export type DisciplineSpreadInput = z.infer<typeof disciplineSpreadInput>;
+
+/** One role of the pod template (S5 tab 4): a discipline and its range.
+ *  `maxCount` null = no upper bound; when set it can't be below the min. */
+export const podTemplateRoleInput = z
+  .object({
+    disciplineId: z.string().uuid(),
+    minCount: z.number().int("Use a whole number").min(0, "Can't be negative").max(99),
+    maxCount: z.number().int("Use a whole number").min(1).max(99).nullable(),
+  })
+  .refine((v) => v.maxCount === null || v.maxCount >= v.minCount, {
+    message: "Max can't be below min",
+    path: ["maxCount"],
+  });
+export type PodTemplateRoleInput = z.infer<typeof podTemplateRoleInput>;

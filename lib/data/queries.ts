@@ -25,6 +25,20 @@ import {
   type FindingsPolicy,
 } from "@/lib/analytics/findingsPolicy";
 import { listFindingsPolicyOp } from "@/lib/data/findingsPolicyOps";
+import {
+  computePodGaps,
+  type PodTemplateRole,
+  type PodGapReport,
+} from "@/lib/analytics/podTemplate";
+import { listPodTemplateOp } from "@/lib/data/podTemplateOps";
+
+/** True when the error is a missing new table in the pre-migration window. */
+function isMissingTable(err: unknown, table: string): boolean {
+  return (
+    err instanceof Error &&
+    new RegExp(`${table}|relation.*does not exist`, "i").test(err.message)
+  );
+}
 
 /** Everything needed to render the org, fetched in one workspace-scoped pass. */
 export type OrgSnapshot = {
@@ -90,11 +104,34 @@ export async function getFindingsPolicy(): Promise<FindingsPolicy> {
     const rows = await listFindingsPolicyOp(workspace.id);
     return resolveFindingsPolicy(rows);
   } catch (err) {
-    if (err instanceof Error && /findings_policy|relation.*does not exist/i.test(err.message)) {
-      return DEFAULT_FINDINGS_POLICY;
-    }
+    if (isMissingTable(err, "findings_policy")) return DEFAULT_FINDINGS_POLICY;
     throw err;
   }
+}
+
+/**
+ * The workspace's pod template (S5 tab 4) — the ideal-pod role ranges. Guarded
+ * the same way as the findings policy: `pod_template_roles` is a new table
+ * (migration 0007), so before it's applied this returns an empty template
+ * rather than 500ing /settings.
+ */
+export async function getPodTemplate(): Promise<PodTemplateRole[]> {
+  const { workspace } = await requireWorkspace();
+  try {
+    return await listPodTemplateOp(workspace.id);
+  } catch (err) {
+    if (isMissingTable(err, "pod_template_roles")) return [];
+    throw err;
+  }
+}
+
+/** Every team measured against the pod template — the compare-to-ideal report. */
+export async function getPodGaps(): Promise<PodGapReport> {
+  const [{ people: p, units: u, assignments: a }, template] = await Promise.all([
+    getOrgSnapshot(),
+    getPodTemplate(),
+  ]);
+  return computePodGaps({ people: p, units: u, assignments: a }, template);
 }
 
 export async function getDisciplines(): Promise<Discipline[]> {

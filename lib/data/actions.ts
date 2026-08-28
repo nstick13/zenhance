@@ -15,6 +15,7 @@ import {
   vocabularyInput,
   findingsConfigInput,
   disciplineSpreadInput,
+  podTemplateRoleInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
 import {
@@ -29,6 +30,10 @@ import {
   setDisciplineSpreadOp,
   clearDisciplineSpreadOp,
 } from "@/lib/data/findingsPolicyOps";
+import {
+  savePodTemplateRoleOp,
+  removePodTemplateRoleOp,
+} from "@/lib/data/podTemplateOps";
 import { getOrgSnapshot } from "@/lib/data/queries";
 import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
 
@@ -323,6 +328,26 @@ export async function setDisciplineSpread(
     revalidatePath("/org");
     revalidatePath("/settings");
   }
+  return res;
+}
+
+// --- pod template (S5 tab 4) ------------------------------------------------
+/** Add or update one role's range in the ideal pod. */
+export async function savePodTemplateRole(raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = podTemplateRoleInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid role");
+  const res = await savePodTemplateRoleOp(workspace.id, parsed.data);
+  if (res.ok) revalidatePath("/settings");
+  return res;
+}
+
+/** Remove a discipline from the ideal pod. */
+export async function removePodTemplateRole(disciplineId: string): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  if (typeof disciplineId !== "string" || !disciplineId) return fail("Invalid discipline");
+  const res = await removePodTemplateRoleOp(workspace.id, disciplineId);
+  if (res.ok) revalidatePath("/settings");
   return res;
 }
 

@@ -292,6 +292,39 @@ export const findingsPolicy = pgTable(
   ],
 );
 
+// --- pod template (S5 tab 4: the ideal pod, "Standards") ------------------
+/**
+ * A workspace's definition of a complete team: one row per required discipline,
+ * with an acceptable *range*. `computePodGaps` measures every team against it.
+ *
+ * Ranges, not fixed counts, on purpose (see the design canvas) — `maxCount`
+ * NULL means "no upper bound" (the "1+" case). Like `findings_policy`, a new
+ * table read only by the standards path, so nothing in `requireWorkspace`
+ * depends on it and the migration's blast radius stays narrow.
+ */
+export const podTemplateRoles = pgTable(
+  "pod_template_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    disciplineId: uuid("discipline_id")
+      .notNull()
+      .references(() => disciplines.id, { onDelete: "cascade" }),
+    minCount: integer("min_count").notNull().default(1),
+    maxCount: integer("max_count"), // null = no upper bound
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("pod_template_roles_workspace_idx").on(t.workspaceId),
+    // One template row per discipline — a discipline is either in the ideal pod
+    // or it isn't. Deleting the discipline cascades the row away.
+    unique("pod_template_roles_workspace_discipline_uq").on(t.workspaceId, t.disciplineId),
+  ],
+);
+
 // --- relations ------------------------------------------------------------
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   memberships: many(memberships),
@@ -363,3 +396,4 @@ export type OrgUnit = typeof orgUnits.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
 export type MapNodeRow = typeof mapNodes.$inferSelect;
 export type FindingsPolicyRow = typeof findingsPolicy.$inferSelect;
+export type PodTemplateRoleRow = typeof podTemplateRoles.$inferSelect;

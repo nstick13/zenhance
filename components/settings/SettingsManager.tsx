@@ -13,7 +13,15 @@ import {
   saveLens,
   saveFindingsConfig,
   setDisciplineSpread,
+  savePodTemplateRole,
+  removePodTemplateRole,
 } from "@/lib/data/actions";
+import {
+  gapLabel,
+  type PodTemplateRole,
+  type PodGapReport,
+  type PodCategory,
+} from "@/lib/analytics/podTemplate";
 import {
   DISCIPLINE_RAMP,
   NO_VALUE_COLOR,
@@ -37,7 +45,7 @@ import {
 const field =
   "w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink-soft";
 
-type TabId = "vocabulary" | "disciplines" | "mapDefaults" | "findings";
+type TabId = "vocabulary" | "disciplines" | "mapDefaults" | "findings" | "standards";
 
 /** What the Findings tab needs, shaped for the client (no Map across RSC). A
  *  discipline in `overrides` with a number flags at N, with null means "no
@@ -71,6 +79,11 @@ const TABS: { id: TabId; label: string; blurb: string }[] = [
     label: "Findings",
     blurb: "Which signals the map is allowed to raise — and where a spread is normal.",
   },
+  {
+    id: "standards",
+    label: "Standards",
+    blurb: "What a complete team looks like — and how each one measures up.",
+  },
 ];
 
 export function SettingsManager({
@@ -79,12 +92,16 @@ export function SettingsManager({
   peopleCounts,
   lens,
   findings,
+  podTemplate,
+  podGaps,
 }: {
   vocabulary: Vocabulary;
   disciplines: Discipline[];
   peopleCounts: Record<string, number>;
   lens: Lens;
   findings: FindingsConfigView;
+  podTemplate: PodTemplateRole[];
+  podGaps: PodGapReport;
 }) {
   const [tab, setTab] = useState<TabId>("vocabulary");
   const active = TABS.find((t) => t.id === tab)!;
@@ -114,11 +131,17 @@ export function SettingsManager({
         <DisciplinesTab disciplines={disciplines} peopleCounts={peopleCounts} />
       ) : tab === "mapDefaults" ? (
         <MapDefaultsTab lens={lens} />
-      ) : (
+      ) : tab === "findings" ? (
         <FindingsTab
           findings={findings}
           disciplines={disciplines}
           peopleCounts={peopleCounts}
+        />
+      ) : (
+        <StandardsTab
+          template={podTemplate}
+          gaps={podGaps}
+          disciplines={disciplines}
         />
       )}
     </div>
@@ -1021,6 +1044,309 @@ function SpreadRow({
           teams
         </span>
       )}
+    </li>
+  );
+}
+
+/* ------------------------------------------------------------------ tab 4 */
+
+const CATEGORY_META: Record<PodCategory, { label: string; className: string }> = {
+  complete: { label: "Complete", className: "text-grow" },
+  missing: { label: "Missing a required role", className: "text-alert" },
+  under: { label: "Under strength", className: "text-[#b45309]" },
+  over: { label: "Over strength", className: "text-ink-soft" },
+};
+
+// Worst-first, so the pods that need attention sit at the top of the table.
+const CATEGORY_RANK: Record<PodCategory, number> = { missing: 3, under: 2, over: 1, complete: 0 };
+
+/**
+ * Standards — the ideal pod, and every team measured against it. Role ranges
+ * (min–max per discipline), never fixed counts; a sortable gap table, never the
+ * canvas ("they're not going to want blobs"). It rides on `disciplineId`, which
+ * only became real for imported orgs once S2 import mapping shipped.
+ */
+function StandardsTab({
+  template,
+  gaps,
+  disciplines,
+}: {
+  template: PodTemplateRole[];
+  gaps: PodGapReport;
+  disciplines: Discipline[];
+}) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [sortByName, setSortByName] = useState(false);
+
+  const nameOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of disciplines) m.set(d.id, d.name);
+    return m;
+  }, [disciplines]);
+
+  const inTemplate = useMemo(() => new Set(template.map((r) => r.disciplineId)), [template]);
+  const available = disciplines.filter((d) => !inTemplate.has(d.id));
+
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>) => {
+    setError(null);
+    startTransition(async () => {
+      const res = await fn();
+      if (!res.ok) return setError(res.error ?? "Something went wrong");
+      router.refresh();
+    });
+  };
+
+  const sortedTeams = useMemo(() => {
+    const rows = [...gaps.teams];
+    rows.sort((a, b) =>
+      sortByName
+        ? a.teamName.localeCompare(b.teamName)
+        : CATEGORY_RANK[b.category] - CATEGORY_RANK[a.category] ||
+          a.teamName.localeCompare(b.teamName),
+    );
+    return rows;
+  }, [gaps.teams, sortByName]);
+
+  // Add-a-role form
+  const [addId, setAddId] = useState("");
+  const [addMin, setAddMin] = useState(1);
+  const [addMax, setAddMax] = useState<string>("");
+
+  function addRole() {
+    if (!addId) return;
+    const maxCount = addMax.trim() === "" ? null : Math.max(1, Number(addMax) || 1);
+    run(async () => {
+      const res = await savePodTemplateRole({ disciplineId: addId, minCount: addMin, maxCount });
+      if (res.ok) {
+        setAddId("");
+        setAddMin(1);
+        setAddMax("");
+      }
+      return res;
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* The ideal pod */}
+      <div className="rounded-lg border border-line">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="font-medium">Ideal pod</h3>
+          <p className="text-xs text-ink-soft">
+            What “complete” means here. Ranges, not fixed counts — leave the max blank for
+            “or more”.
+          </p>
+        </div>
+
+        {template.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-ink-soft">
+            No template yet. Add the roles a complete team needs — you’ll see every team
+            measured against it below.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {template.map((r) => (
+              <TemplateRoleRow
+                key={r.disciplineId}
+                name={nameOf.get(r.disciplineId) ?? "Unknown"}
+                role={r}
+                disabled={pending}
+                onSave={(minCount, maxCount) =>
+                  run(() =>
+                    savePodTemplateRole({ disciplineId: r.disciplineId, minCount, maxCount }),
+                  )
+                }
+                onRemove={() => run(() => removePodTemplateRole(r.disciplineId))}
+              />
+            ))}
+          </ul>
+        )}
+
+        {available.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+            <select
+              className="rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft"
+              value={addId}
+              onChange={(e) => setAddId(e.target.value)}
+            >
+              <option value="">Add a role…</option>
+              {available.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-ink-soft">min</span>
+            <input
+              type="number"
+              min={0}
+              max={99}
+              value={addMin}
+              onChange={(e) => setAddMin(Math.max(0, Number(e.target.value) || 0))}
+              className="w-14 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft"
+            />
+            <span className="text-xs text-ink-soft">max</span>
+            <input
+              type="number"
+              min={1}
+              max={99}
+              value={addMax}
+              placeholder="—"
+              onChange={(e) => setAddMax(e.target.value)}
+              className="w-14 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft"
+            />
+            <button
+              onClick={addRole}
+              disabled={pending || !addId}
+              className="rounded bg-ink px-2 py-1 text-xs font-medium text-white hover:bg-ink-soft disabled:opacity-50"
+            >
+              + Add
+            </button>
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-alert">{error}</p>}
+
+      {/* Measured against the template */}
+      <div className="rounded-lg border border-line">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <div>
+            <h3 className="font-medium">Measured against the template</h3>
+            <p className="text-xs text-ink-soft">
+              {gaps.summary.complete} complete · {gaps.summary.missing} missing a required role
+              · {gaps.summary.under} under strength
+              {gaps.summary.over > 0 ? ` · ${gaps.summary.over} over strength` : ""}
+            </p>
+          </div>
+          {gaps.teams.length > 0 && (
+            <button
+              onClick={() => setSortByName((v) => !v)}
+              className="rounded border border-line px-2 py-1 text-xs hover:bg-paper"
+            >
+              Sort: {sortByName ? "A–Z" : "worst first"}
+            </button>
+          )}
+        </div>
+
+        {!gaps.hasTemplate ? (
+          <p className="px-4 py-8 text-center text-sm text-ink-soft">
+            Define an ideal pod above and every team’s gaps show up here.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-ink-soft">
+                  <th className="px-4 py-2 font-medium">Team</th>
+                  <th className="px-4 py-2 font-medium">Composition</th>
+                  <th className="px-4 py-2 font-medium">Gap</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {sortedTeams.map((t) => {
+                  const meta = CATEGORY_META[t.category];
+                  return (
+                    <tr key={t.teamId}>
+                      <td className="px-4 py-2 text-ink">{t.teamName}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {t.roles.map((role) => (
+                            <span
+                              key={role.disciplineId}
+                              className={`rounded px-1.5 py-0.5 text-xs ${
+                                role.status === "ok"
+                                  ? "bg-paper text-ink-soft"
+                                  : role.status === "missing"
+                                    ? "bg-paper text-alert"
+                                    : "bg-paper text-[#b45309]"
+                              }`}
+                              title={`${nameOf.get(role.disciplineId) ?? "Unknown"}: ${role.actual} (need ${role.min}${role.max !== null ? `–${role.max}` : "+"})`}
+                            >
+                              {(nameOf.get(role.disciplineId) ?? "?").slice(0, 3)} {role.actual}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className={`px-4 py-2 ${meta.className}`}>
+                        {gapLabel(t.worst, nameOf.get(t.worst?.disciplineId ?? "") ?? "role")}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <p className="text-xs text-ink-soft">
+        Every square counts a <strong>discipline</strong>, so this is only as good as how
+        completely people carry one — set them on the Disciplines tab or when you import.
+      </p>
+    </div>
+  );
+}
+
+function TemplateRoleRow({
+  name,
+  role,
+  disabled,
+  onSave,
+  onRemove,
+}: {
+  name: string;
+  role: PodTemplateRole;
+  disabled: boolean;
+  onSave: (minCount: number, maxCount: number | null) => void;
+  onRemove: () => void;
+}) {
+  const [min, setMin] = useState(role.minCount);
+  const [max, setMax] = useState<string>(role.maxCount === null ? "" : String(role.maxCount));
+
+  function commit() {
+    const nextMin = Math.max(0, min || 0);
+    const nextMax = max.trim() === "" ? null : Math.max(nextMin || 1, Number(max) || 1);
+    if (nextMin !== role.minCount || nextMax !== role.maxCount) onSave(nextMin, nextMax);
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <span className="flex-1 text-sm text-ink">{name}</span>
+      <span className="flex items-center gap-1 text-xs text-ink-soft">
+        min
+        <input
+          type="number"
+          min={0}
+          max={99}
+          value={min}
+          disabled={disabled}
+          onChange={(e) => setMin(Math.max(0, Number(e.target.value) || 0))}
+          onBlur={commit}
+          className="w-14 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft disabled:opacity-50"
+        />
+        max
+        <input
+          type="number"
+          min={1}
+          max={99}
+          value={max}
+          placeholder="—"
+          disabled={disabled}
+          onChange={(e) => setMax(e.target.value)}
+          onBlur={commit}
+          className="w-14 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft disabled:opacity-50"
+        />
+      </span>
+      <button
+        onClick={onRemove}
+        disabled={disabled}
+        className="rounded border border-line px-2 py-1 text-xs text-alert hover:bg-paper disabled:opacity-50"
+      >
+        Remove
+      </button>
     </li>
   );
 }
