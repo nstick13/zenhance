@@ -1,0 +1,1230 @@
+[
+  {
+    "id": "01-tiny-clean-none",
+    "org_name": "Meridian Health Labs",
+    "folder": "01-tiny-clean-none",
+    "files": [
+      "Meridian_Health_Labs.xlsx"
+    ],
+    "size_tier": "tiny",
+    "headcount_people_rows": 13,
+    "teams": 3,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "02-tiny-clean-one",
+    "org_name": "Bright Media Inc",
+    "folder": "02-tiny-clean-one",
+    "files": [
+      "Bright_Media_Inc.xlsx"
+    ],
+    "size_tier": "tiny",
+    "headcount_people_rows": 9,
+    "teams": 3,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "exactly one lone contractor buried in a team",
+    "edge_cases": [
+      "contractor pattern: exactly one lone contractor buried in a team"
+    ]
+  },
+  {
+    "id": "03-tiny-messy-one",
+    "org_name": "Cobalt Travel Inc",
+    "folder": "03-tiny-messy-one",
+    "files": [
+      "Cobalt_Travel_Inc.xlsx"
+    ],
+    "size_tier": "tiny",
+    "headcount_people_rows": 14,
+    "teams": 3,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "exactly one lone contractor buried in a team",
+    "edge_cases": [
+      "1 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Neha Volkov' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: exactly one lone contractor buried in a team",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "04-tiny-messy-embedded",
+    "org_name": "Granite Logistics",
+    "folder": "04-tiny-messy-embedded",
+    "files": [
+      "Granite_Logistics.xlsx"
+    ],
+    "size_tier": "tiny",
+    "headcount_people_rows": 13,
+    "teams": 3,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "1 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Nate Zhang' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "05-tiny-clean-none",
+    "org_name": "Lighthouse Payments Holdings",
+    "folder": "05-tiny-clean-none",
+    "files": [
+      "Lighthouse_Payments_Holdings.xlsx"
+    ],
+    "size_tier": "tiny",
+    "headcount_people_rows": 8,
+    "teams": 3,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "06-small-clean-none",
+    "org_name": "Northwind Travel Group",
+    "folder": "06-small-clean-none",
+    "files": [
+      "Northwind_Travel_Group.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 73,
+    "teams": 4,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": []
+  },
+  {
+    "id": "07-small-clean-embedded",
+    "org_name": "Anchor Freight Holdings",
+    "folder": "07-small-clean-embedded",
+    "files": [
+      "Anchor_Freight_Holdings.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 80,
+    "teams": 6,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "08-small-messy-embedded",
+    "org_name": "Bright Grocery LLC",
+    "folder": "08-small-messy-embedded",
+    "files": [
+      "Bright_Grocery_LLC.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 61,
+    "teams": 6,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Team Forge' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "09-small-messy-segregated",
+    "org_name": "Tangent Health Corp",
+    "folder": "09-small-messy-segregated",
+    "files": [
+      "Tangent_Health_Corp.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 53,
+    "teams": 5,
+    "tidiness": "messy",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "1 manager reference(s) point to people not in the file",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Rachel Steele' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors fenced into a single vendor pod under one stream"
+    ]
+  },
+  {
+    "id": "10-small-clean-one",
+    "org_name": "Granite Insurance Labs",
+    "folder": "10-small-clean-one",
+    "files": [
+      "employees.xlsx",
+      "contractors_and_vendors.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 79,
+    "teams": 8,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: employees in one, contractors/vendors in a totally separate one with different columns",
+    "contractors": "exactly one lone contractor buried in a team",
+    "edge_cases": [
+      "contractor pattern: exactly one lone contractor buried in a team",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: employees in one, contractors/vendors in a totally separate one with different columns) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "11-small-messy-mixed",
+    "org_name": "Lighthouse Insurance Inc",
+    "folder": "11-small-messy-mixed",
+    "files": [
+      "01_people_roster.xlsx",
+      "02_org_structure.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 44,
+    "teams": 5,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: people roster + separate org-structure workbook",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "1 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: people roster + separate org-structure workbook) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "12-small-clean-segregated",
+    "org_name": "Copper Retail Systems",
+    "folder": "12-small-clean-segregated",
+    "files": [
+      "Copper_Retail_Systems.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 40,
+    "teams": 4,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "contractor pattern: contractors fenced into a single vendor pod under one stream"
+    ]
+  },
+  {
+    "id": "13-small-messy-none",
+    "org_name": "Keystone Energy",
+    "folder": "13-small-messy-none",
+    "files": [
+      "Keystone_Energy.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 57,
+    "teams": 4,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "1 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Search Otter 9' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "14-small-clean-offshore",
+    "org_name": "Orbit Retail Technologies",
+    "folder": "14-small-clean-offshore",
+    "files": [
+      "Orbit_Retail_Technologies.xlsx"
+    ],
+    "size_tier": "small",
+    "headcount_people_rows": 64,
+    "teams": 9,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "15-medium-clean-none",
+    "org_name": "Orbit Telecom LLC",
+    "folder": "15-medium-clean-none",
+    "files": [
+      "Orbit_Telecom_LLC.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 200,
+    "teams": 20,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": []
+  },
+  {
+    "id": "16-medium-clean-embedded",
+    "org_name": "Redwood Software LLC",
+    "folder": "16-medium-clean-embedded",
+    "files": [
+      "Redwood_Software_LLC.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 406,
+    "teams": 37,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "17-medium-messy-embedded",
+    "org_name": "Beacon Financial",
+    "folder": "17-medium-messy-embedded",
+    "files": [
+      "Beacon_Financial.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 229,
+    "teams": 15,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "5 manager reference(s) point to people not in the file",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "18-medium-messy-segregated",
+    "org_name": "Bright Telecom Inc",
+    "folder": "18-medium-messy-segregated",
+    "files": [
+      "Bright_Telecom_Inc.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 349,
+    "teams": 24,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "8 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Onboarding Delta' references a parent ('Innovation Office') that isn't defined",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors fenced into a single vendor pod under one stream",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "19-medium-clean-offshore",
+    "org_name": "Bright Retail Technologies",
+    "folder": "19-medium-clean-offshore",
+    "files": [
+      "Bright_Retail_Technologies.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 398,
+    "teams": 37,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "20-medium-messy-offshore",
+    "org_name": "Willow Biotech Systems",
+    "folder": "20-medium-messy-offshore",
+    "files": [
+      "Willow_Biotech_Systems.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 252,
+    "teams": 22,
+    "tidiness": "messy",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "6 manager reference(s) point to people not in the file",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Diego Garcia' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST"
+    ]
+  },
+  {
+    "id": "21-medium-clean-mixed",
+    "org_name": "Sterling Software Group",
+    "folder": "21-medium-clean-mixed",
+    "files": [
+      "01_people_roster.xlsx",
+      "02_org_structure.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 221,
+    "teams": 31,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: people roster + separate org-structure workbook",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: people roster + separate org-structure workbook) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "22-medium-messy-mixed",
+    "org_name": "Harbor Freight Inc",
+    "folder": "22-medium-messy-mixed",
+    "files": [
+      "employees.xlsx",
+      "contractors_and_vendors.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 351,
+    "teams": 21,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: employees in one, contractors/vendors in a totally separate one with different columns",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "8 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: employees in one, contractors/vendors in a totally separate one with different columns) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "23-medium-clean-segregated",
+    "org_name": "Anchor Robotics Holdings",
+    "folder": "23-medium-clean-segregated",
+    "files": [
+      "Anchor_Robotics_Holdings.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 335,
+    "teams": 20,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "contractor pattern: contractors fenced into a single vendor pod under one stream"
+    ]
+  },
+  {
+    "id": "24-medium-messy-none",
+    "org_name": "Bright Robotics Co",
+    "folder": "24-medium-messy-none",
+    "files": [
+      "Search.xlsx",
+      "Trust.xlsx",
+      "Checkout.xlsx",
+      "Notifications.xlsx",
+      "Partner.xlsx",
+      "_unassigned.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 366,
+    "teams": 30,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "one file per value stream, no teams file, plus an _unassigned leftovers file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "9 manager reference(s) point to people not in the file",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Partner Onyx' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (one file per value stream, no teams file, plus an _unassigned leftovers file) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "25-medium-clean-embedded",
+    "org_name": "Harbor Biotech Holdings",
+    "folder": "25-medium-clean-embedded",
+    "files": [
+      "Platform.xlsx",
+      "Marketplace.xlsx",
+      "Trust.xlsx",
+      "Payments.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 277,
+    "teams": 19,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "one file per value stream, no teams file, plus an _unassigned leftovers file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (one file per value stream, no teams file, plus an _unassigned leftovers file) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "26-medium-messy-one",
+    "org_name": "Vertex Insurance",
+    "folder": "26-medium-messy-one",
+    "files": [
+      "Vertex_Insurance.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 236,
+    "teams": 20,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "exactly one lone contractor buried in a team",
+    "edge_cases": [
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: exactly one lone contractor buried in a team",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns"
+    ]
+  },
+  {
+    "id": "27-medium-clean-embedded",
+    "org_name": "Foundry Logistics Systems",
+    "folder": "27-medium-clean-embedded",
+    "files": [
+      "Foundry_Logistics_Systems.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 238,
+    "teams": 24,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs"
+    ]
+  },
+  {
+    "id": "28-medium-messy-offshore",
+    "org_name": "Harbor Financial Group",
+    "folder": "28-medium-messy-offshore",
+    "files": [
+      "employees.xlsx",
+      "contractors_and_vendors.xlsx"
+    ],
+    "size_tier": "medium",
+    "headcount_people_rows": 282,
+    "teams": 22,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: employees in one, contractors/vendors in a totally separate one with different columns",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: employees in one, contractors/vendors in a totally separate one with different columns) \u2014 cross-file name resolution not built yet"
+    ]
+  },
+  {
+    "id": "29-large-clean-none",
+    "org_name": "Pioneer Freight Systems",
+    "folder": "29-large-clean-none",
+    "files": [
+      "Pioneer_Freight_Systems.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 2135,
+    "teams": 28,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 2135 people / 28 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "30-large-clean-embedded",
+    "org_name": "Anchor Learning Technologies",
+    "folder": "30-large-clean-embedded",
+    "files": [
+      "Anchor_Learning_Technologies.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1417,
+    "teams": 69,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 1417 people / 69 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "31-large-messy-embedded",
+    "org_name": "Anchor Grocery Corp",
+    "folder": "31-large-messy-embedded",
+    "files": [
+      "Anchor_Grocery_Corp.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 2105,
+    "teams": 56,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "52 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Team Ranger' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 2105 people / 56 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "32-large-messy-segregated",
+    "org_name": "Apex Payments Holdings",
+    "folder": "32-large-messy-segregated",
+    "files": [
+      "Apex_Payments_Holdings.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1471,
+    "teams": 63,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "36 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Team Aurora' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors fenced into a single vendor pod under one stream",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 1471 people / 63 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "33-large-clean-offshore",
+    "org_name": "Harbor Housing Technologies",
+    "folder": "33-large-clean-offshore",
+    "files": [
+      "Harbor_Housing_Technologies.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1751,
+    "teams": 112,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 1751 people / 112 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "34-large-messy-offshore",
+    "org_name": "Pioneer Devices Systems",
+    "folder": "34-large-messy-offshore",
+    "files": [
+      "Pioneer_Devices_Systems.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 2119,
+    "teams": 125,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "52 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 2119 people / 125 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "35-large-clean-mixed",
+    "org_name": "Apex Security Co",
+    "folder": "35-large-clean-mixed",
+    "files": [
+      "Apex_Security_Co.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1424,
+    "teams": 64,
+    "tidiness": "clean",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "scale: 1424 people / 64 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "36-large-messy-mixed",
+    "org_name": "Aurora Logistics Inc",
+    "folder": "36-large-messy-mixed",
+    "files": [
+      "01_people_roster.xlsx",
+      "02_org_structure.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1294,
+    "teams": 43,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: people roster + separate org-structure workbook",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "32 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Mateo Ahmed' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Data Forge' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: people roster + separate org-structure workbook) \u2014 cross-file name resolution not built yet",
+      "scale: 1294 people / 43 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "37-large-clean-embedded",
+    "org_name": "Anchor Robotics Technologies",
+    "folder": "37-large-clean-embedded",
+    "files": [
+      "Onboarding.xlsx",
+      "Insights.xlsx",
+      "Notifications.xlsx",
+      "Platform.xlsx",
+      "Marketplace.xlsx",
+      "Pricing.xlsx",
+      "Checkout.xlsx",
+      "Partner.xlsx",
+      "Mobile.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1356,
+    "teams": 49,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "one file per value stream, no teams file, plus an _unassigned leftovers file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (one file per value stream, no teams file, plus an _unassigned leftovers file) \u2014 cross-file name resolution not built yet",
+      "scale: 1356 people / 49 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "38-large-messy-mixed",
+    "org_name": "Ridge Devices Technologies",
+    "folder": "38-large-messy-mixed",
+    "files": [
+      "employees.xlsx",
+      "contractors_and_vendors.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1811,
+    "teams": 43,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: employees in one, contractors/vendors in a totally separate one with different columns",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "45 manager reference(s) point to people not in the file",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Wang Kang' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: employees in one, contractors/vendors in a totally separate one with different columns) \u2014 cross-file name resolution not built yet",
+      "scale: 1811 people / 43 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "39-large-clean-segregated",
+    "org_name": "Willow Security Labs",
+    "folder": "39-large-clean-segregated",
+    "files": [
+      "Willow_Security_Labs.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 1810,
+    "teams": 33,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "contractor pattern: contractors fenced into a single vendor pod under one stream",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 1810 people / 33 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "40-large-messy-none",
+    "org_name": "Orbit Health Inc",
+    "folder": "40-large-messy-none",
+    "files": [
+      "Orbit_Health_Inc.xlsx"
+    ],
+    "size_tier": "large",
+    "headcount_people_rows": 2195,
+    "teams": 53,
+    "tidiness": "messy",
+    "shape": "wizard-native workbook with People / Teams / Assignments sheets",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "54 manager reference(s) point to people not in the file",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "duplicate person row: 'Jack Williams' appears twice",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Trust Sage' references a parent ('Innovation Office') that isn't defined",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "scale: 2195 people / 53 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "41-huge-clean-none",
+    "org_name": "Orbit Energy Systems",
+    "folder": "41-huge-clean-none",
+    "files": [
+      "Orbit_Energy_Systems.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9698,
+    "teams": 93,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "no contractors \u2014 all FTE",
+    "edge_cases": [
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9698 people / 93 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "42-huge-clean-embedded",
+    "org_name": "Cascade Mobility Corp",
+    "folder": "42-huge-clean-embedded",
+    "files": [
+      "Cascade_Mobility_Corp.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9114,
+    "teams": 153,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9114 people / 153 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "43-huge-messy-embedded",
+    "org_name": "Northwind Energy Holdings",
+    "folder": "43-huge-messy-embedded",
+    "files": [
+      "Northwind_Energy_Holdings.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9464,
+    "teams": 156,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "236 manager reference(s) point to people not in the file",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Onboarding Pulse 6' references a parent ('Innovation Office') that isn't defined",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9464 people / 156 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "44-huge-clean-offshore",
+    "org_name": "Vantage Security Inc",
+    "folder": "44-huge-clean-offshore",
+    "files": [
+      "Vantage_Security_Inc.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9780,
+    "teams": 470,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9780 people / 470 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "45-huge-messy-offshore",
+    "org_name": "Anchor Telecom Holdings",
+    "folder": "45-huge-messy-offshore",
+    "files": [
+      "Anchor_Telecom_Holdings.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9891,
+    "teams": 347,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "a whole offshore delivery org (own group + squads), mostly vendor, IST",
+    "edge_cases": [
+      "247 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: a whole offshore delivery org (own group + squads), mostly vendor, IST",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9891 people / 347 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "46-huge-messy-mixed",
+    "org_name": "Lighthouse Media Systems",
+    "folder": "46-huge-messy-mixed",
+    "files": [
+      "01_people_roster.xlsx",
+      "02_org_structure.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9623,
+    "teams": 87,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: people roster + separate org-structure workbook",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "some rows missing discipline and/or title",
+      "junk / blank timezone values (GMT+5:30, 'flexible', blank)",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Fulfillment Vertex' references a parent ('Innovation Office') that isn't defined",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: people roster + separate org-structure workbook) \u2014 cross-file name resolution not built yet",
+      "scale: 9623 people / 87 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "47-huge-clean-segregated",
+    "org_name": "Vantage Travel Holdings",
+    "folder": "47-huge-clean-segregated",
+    "files": [
+      "Vantage_Travel_Holdings.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9780,
+    "teams": 82,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "contractor pattern: contractors fenced into a single vendor pod under one stream",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9780 people / 82 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "48-huge-messy-mixed",
+    "org_name": "Northwind Agriculture Systems",
+    "folder": "48-huge-messy-mixed",
+    "files": [
+      "Northwind_Agriculture_Systems.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9940,
+    "teams": 138,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "single file",
+    "contractors": "both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+    "edge_cases": [
+      "248 manager reference(s) point to people not in the file",
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Insights Drift 5' references a parent ('Innovation Office') that isn't defined",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "a few people allocated >100% across teams",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: both \u2014 staff-aug contractors embedded + a separate SOW/vendor pod",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "scale: 9940 people / 138 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "49-huge-clean-embedded",
+    "org_name": "Northwind Retail Systems",
+    "folder": "49-huge-clean-embedded",
+    "files": [
+      "Platform.xlsx",
+      "Catalog.xlsx",
+      "Onboarding.xlsx",
+      "Payments.xlsx",
+      "Fulfillment.xlsx",
+      "Billing.xlsx",
+      "Growth.xlsx",
+      "Mobile.xlsx",
+      "Insights.xlsx",
+      "Identity.xlsx",
+      "Core.xlsx",
+      "Search.xlsx",
+      "Trust.xlsx",
+      "Notifications.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9500,
+    "teams": 90,
+    "tidiness": "clean",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "one file per value stream, no teams file, plus an _unassigned leftovers file",
+    "contractors": "contractors/vendor staff embedded across many teams alongside FTEs",
+    "edge_cases": [
+      "contractor pattern: contractors/vendor staff embedded across many teams alongside FTEs",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (one file per value stream, no teams file, plus an _unassigned leftovers file) \u2014 cross-file name resolution not built yet",
+      "scale: 9500 people / 90 teams \u2014 import + layout perf"
+    ]
+  },
+  {
+    "id": "50-huge-messy-segregated",
+    "org_name": "Foundry Telecom Group",
+    "folder": "50-huge-messy-segregated",
+    "files": [
+      "employees.xlsx",
+      "contractors_and_vendors.xlsx"
+    ],
+    "size_tier": "huge",
+    "headcount_people_rows": 9899,
+    "teams": 99,
+    "tidiness": "messy",
+    "shape": "single flat HRIS-style dump (one row per person, hierarchy in columns, no Assignments)",
+    "layout": "2 files: employees in one, contractors/vendors in a totally separate one with different columns",
+    "contractors": "contractors fenced into a single vendor pod under one stream",
+    "edge_cases": [
+      "some rows missing discipline and/or title",
+      "employment column uses free-text vocab (Perm, T&M, Contingent Worker, 'Contractor (Infosys)')",
+      "blank spacer rows, a 'Total' row, and a free-text note row in the sheet",
+      "team 'Special Projects' has no members",
+      "team kind column mixes Squad / Tribe / Chapter / Dept / Group",
+      "names in mixed formats ('SMITH, Jane', ALL CAPS, padded whitespace)",
+      "contractor pattern: contractors fenced into a single vendor pod under one stream",
+      "no Assignments sheet \u2014 importer must infer 100% single-team membership",
+      "no explicit Teams sheet \u2014 teams (and parent groups) exist only as columns",
+      "multi-file handover (2 files: employees in one, contractors/vendors in a totally separate one with different columns) \u2014 cross-file name resolution not built yet",
+      "scale: 9899 people / 99 teams \u2014 import + layout perf"
+    ]
+  }
+]

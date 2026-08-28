@@ -2,10 +2,10 @@
 
 A synthetic corpus of 50 fake orgs (88 `.xlsx` files, ~10 to ~9,700 people) was run through
 the **real** import engine (`commitImport` from `lib/data/importCommit.ts`) to map how ~50
-different customers' data would actually land. This is the durable summary; the full writeup,
-raw results, the corpus generator and the test harness live outside the repo in the scratchpad
-(`IMPORT-FINDINGS.md`, `import-results.json`, `gen_orgs.py`, `import_harness.mts`) — ask Nate
-if you need them re-generated.
+different customers' data would actually land. This is the durable summary; the corpus, its
+generator, the harness, and the full per-run writeup live in the repo at
+[`test-fixtures/import-corpus/`](../../test-fixtures/import-corpus/) — re-run with
+`npx tsx test-fixtures/import-corpus/harness.mts` (needs local Postgres).
 
 ## What the corpus varies
 size (tiny ~10 · small ~60 · medium ~300 · large ~1.8k · huge ~10k) · tidiness (clean vs
