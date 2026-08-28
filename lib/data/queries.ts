@@ -60,6 +60,13 @@ export async function getVocabulary(): Promise<Vocabulary> {
   return normalizeVocabulary(workspace.vocabulary);
 }
 
+/** The workspace's default lens alone — for the Map defaults settings tab,
+ *  which edits the workspace-wide default (the canvas edits only *my view*). */
+export async function getWorkspaceLens(): Promise<Lens> {
+  const { workspace } = await requireWorkspace();
+  return normalizeLens(workspace.lens);
+}
+
 export async function getDisciplines(): Promise<Discipline[]> {
   const { workspace } = await requireWorkspace();
   return db

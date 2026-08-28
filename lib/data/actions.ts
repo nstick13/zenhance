@@ -384,9 +384,11 @@ export async function saveMapNodePositions(
 
 // --- lens (S3: per-workspace display config) --------------------------------
 /**
- * Persist the map lens. Validated here rather than trusted, because the value
- * lands in a schemaless jsonb column — the Zod parse *is* the column type.
- * Only /org re-renders: the lens changes nothing on the CRUD pages.
+ * Persist the map lens *default*. Validated here rather than trusted, because
+ * the value lands in a schemaless jsonb column — the Zod parse *is* the column
+ * type. Fired from two places: the canvas topbar's "Make default", and the
+ * Map defaults settings tab. Both edit the workspace-wide default; the topbar's
+ * ordinary lens flips stay in browser storage (my view) and never come here.
  */
 export async function saveLens(raw: unknown): Promise<ActionResult> {
   const { workspace } = await requireWorkspace();
@@ -397,6 +399,7 @@ export async function saveLens(raw: unknown): Promise<ActionResult> {
     .set({ lens: parsed.data, updatedAt: new Date() })
     .where(eq(workspaces.id, workspace.id));
   revalidatePath("/org");
+  revalidatePath("/settings");
   return { ok: true, data: undefined };
 }
 

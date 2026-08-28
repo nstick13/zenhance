@@ -10,10 +10,18 @@ import {
   mergeDisciplines,
   reorderDisciplines,
   saveVocabulary,
+  saveLens,
 } from "@/lib/data/actions";
 import {
   DISCIPLINE_RAMP,
   NO_VALUE_COLOR,
+  COLOR_BY_OPTIONS,
+  LABEL_BY_OPTIONS,
+  DEFAULT_LENS,
+  isDefaultLens,
+  type ColorBy,
+  type LabelBy,
+  type Lens,
 } from "@/lib/canvas/lens";
 import {
   DEFAULT_VOCABULARY,
@@ -27,7 +35,7 @@ import {
 const field =
   "w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink-soft";
 
-type TabId = "vocabulary" | "disciplines";
+type TabId = "vocabulary" | "disciplines" | "mapDefaults";
 
 const TABS: { id: TabId; label: string; blurb: string }[] = [
   {
@@ -40,16 +48,23 @@ const TABS: { id: TabId; label: string; blurb: string }[] = [
     label: "Disciplines",
     blurb: "What a person is — the taxonomy colour-by-discipline reads.",
   },
+  {
+    id: "mapDefaults",
+    label: "Map defaults",
+    blurb: "How the map opens for everyone here, before anyone tunes their own view.",
+  },
 ];
 
 export function SettingsManager({
   vocabulary,
   disciplines,
   peopleCounts,
+  lens,
 }: {
   vocabulary: Vocabulary;
   disciplines: Discipline[];
   peopleCounts: Record<string, number>;
+  lens: Lens;
 }) {
   const [tab, setTab] = useState<TabId>("vocabulary");
   const active = TABS.find((t) => t.id === tab)!;
@@ -75,8 +90,10 @@ export function SettingsManager({
 
       {tab === "vocabulary" ? (
         <VocabularyTab vocabulary={vocabulary} />
-      ) : (
+      ) : tab === "disciplines" ? (
         <DisciplinesTab disciplines={disciplines} peopleCounts={peopleCounts} />
+      ) : (
+        <MapDefaultsTab lens={lens} />
       )}
     </div>
   );
@@ -570,6 +587,137 @@ function DisciplinesTab({
         />{" "}
         grey, so a gap reads as a gap.
       </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ tab 3 */
+
+/**
+ * Map defaults. The lens (colour-by / label-by) has two homes: the canvas
+ * topbar edits *my view* — mine alone, in browser storage — while this tab
+ * edits the *workspace default*, which is what a colleague inherits on their
+ * first open. Same two fields, opposite blast radius, so the copy leads with
+ * that distinction. Saving writes `workspaces.lens` via the same `saveLens`
+ * the topbar's "Make default" calls.
+ */
+function MapDefaultsTab({ lens }: { lens: Lens }) {
+  const router = useRouter();
+  const [draft, setDraft] = useState<Lens>(lens);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  const dirty = draft.colorBy !== lens.colorBy || draft.labelBy !== lens.labelBy;
+
+  function set<K extends keyof Lens>(key: K, value: Lens[K]) {
+    setSaved(false);
+    setDraft((d) => ({ ...d, [key]: value }));
+  }
+
+  function save() {
+    setError(null);
+    startTransition(async () => {
+      const res = await saveLens(draft);
+      if (!res.ok) return setError(res.error ?? "Something went wrong");
+      setSaved(true);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-md border border-line bg-surface p-3 text-xs text-ink-soft">
+        This is the map’s <strong>starting point for everyone</strong>. Anyone can then
+        tune their own view from the map without changing what others see — those
+        personal views always win over this default on their own screen.
+      </div>
+
+      <LensChoice
+        heading="Colour seats by"
+        hint="What a seat’s colour answers at a glance."
+        options={COLOR_BY_OPTIONS}
+        value={draft.colorBy}
+        onPick={(v) => set("colorBy", v as ColorBy)}
+      />
+
+      <LensChoice
+        heading="Label seats with"
+        hint="What’s written under each person."
+        options={LABEL_BY_OPTIONS}
+        value={draft.labelBy}
+        onPick={(v) => set("labelBy", v as LabelBy)}
+      />
+
+      {error && <p className="text-sm text-alert">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={save}
+          disabled={pending || !dirty}
+          className="rounded-md bg-ink px-3 py-2 text-sm font-medium text-white hover:bg-ink-soft disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Save map defaults"}
+        </button>
+        {!isDefaultLens(draft) && (
+          <button
+            onClick={() => {
+              setSaved(false);
+              setDraft(DEFAULT_LENS);
+            }}
+            className="rounded-md border border-line px-3 py-2 text-sm hover:bg-paper"
+          >
+            Reset to default
+          </button>
+        )}
+        {saved && !pending && <span className="text-sm text-grow">Saved.</span>}
+      </div>
+    </div>
+  );
+}
+
+function LensChoice({
+  heading,
+  hint,
+  options,
+  value,
+  onPick,
+}: {
+  heading: string;
+  hint: string;
+  options: { value: string; label: string; hint: string }[];
+  value: string;
+  onPick: (value: string) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-line">
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="font-medium">{heading}</h3>
+        <p className="text-xs text-ink-soft">{hint}</p>
+      </div>
+      <div className="grid gap-2 p-3 sm:grid-cols-2">
+        {options.map((o) => {
+          const on = o.value === value;
+          return (
+            <button
+              key={o.value}
+              onClick={() => onPick(o.value)}
+              className={`rounded-md border p-3 text-left transition-colors ${
+                on ? "border-ink bg-paper" : "border-line hover:bg-paper"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`h-3 w-3 shrink-0 rounded-full border ${
+                    on ? "border-ink bg-ink" : "border-line"
+                  }`}
+                />
+                <span className="text-sm font-medium text-ink">{o.label}</span>
+              </div>
+              <p className="mt-1 pl-5 text-xs leading-snug text-ink-soft">{o.hint}</p>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

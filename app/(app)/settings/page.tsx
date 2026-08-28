@@ -2,19 +2,21 @@ import {
   getDisciplines,
   getVocabulary,
   getDisciplinePeopleCounts,
+  getWorkspaceLens,
 } from "@/lib/data/queries";
 import { SettingsManager } from "@/components/settings/SettingsManager";
 
 /**
- * Workspace settings (S5). Two tabs for now — Vocabulary and Disciplines —
- * deliberately, per the roadmap's guardrail: a tab may only exist once
- * something already reads it.
+ * Workspace settings (S5). Every tab here edits the *workspace default* — what
+ * a colleague inherits on their first open — never one person's current view.
+ * The guardrail holds: a tab may only exist once something already reads it.
  */
 export default async function SettingsPage() {
-  const [vocabulary, disciplines, counts] = await Promise.all([
+  const [vocabulary, disciplines, counts, lens] = await Promise.all([
     getVocabulary(),
     getDisciplines(),
     getDisciplinePeopleCounts(),
+    getWorkspaceLens(),
   ]);
 
   return (
@@ -30,6 +32,7 @@ export default async function SettingsPage() {
           vocabulary={vocabulary}
           disciplines={disciplines}
           peopleCounts={counts}
+          lens={lens}
         />
       </div>
     </div>
