@@ -1661,7 +1661,8 @@ function SummaryBar({
 }
 
 const FINDING_KIND_LABELS: Record<string, string> = {
-  "over-allocation": "Over-allocation",
+  spread: "Spread",
+  "over-commitment": "Over-commitment",
   coupling: "Hidden coupling",
 };
 

@@ -1,7 +1,17 @@
 import type { Snapshot } from "@/lib/org/model";
 import { allocationByPerson, assignmentsByUnit, indexById } from "@/lib/org/model";
 
-export type FindingKind = "over-allocation" | "coupling";
+export type FindingKind = "spread" | "over-commitment" | "coupling";
+
+/**
+ * Default team count at which Spread fires, workspace-wide. Settled at 2 —
+ * i.e. the plain fact of being on 2+ teams is itself the finding. This is a
+ * seeded default: the settled analytics design makes Spread a *per-discipline*
+ * policy (flag at N, no limit, or unset), so `computeSpreadFindings` takes the
+ * threshold as an argument. When that policy table lands, pass the per-person
+ * discipline threshold here instead of the constant.
+ */
+export const SPREAD_TEAM_THRESHOLD = 2;
 
 export type Finding = {
   id: string;
@@ -21,41 +31,88 @@ export type Finding = {
 };
 
 export const FINDING_COLORS: Record<FindingKind, string> = {
-  "over-allocation": "#ff7a8a",
+  // Spread is a structural coverage/bus-factor signal, not a load-danger one —
+  // it gets its own indigo so it never reads as the utilisation red.
+  spread: "#8b9df0",
+  "over-commitment": "#ff7a8a",
   coupling: "#f5b14a",
 };
 
-export function computeOverAllocFindings(snapshot: Snapshot): Finding[] {
+/** Assignment unit IDs a person actually holds (open roles excluded). */
+function heldUnitIds(snapshot: Snapshot, personId: string): string[] {
+  return snapshot.assignments
+    .filter((a) => a.personId === personId && !a.isOpenRole)
+    .map((a) => a.orgUnitId);
+}
+
+/**
+ * Spread — a person present on `threshold`+ teams. Count-based and %-free per
+ * the settled "no % in findings" rule: how many teams is the whole point, the
+ * declared load belongs to Over-commitment. `threshold` defaults to the
+ * workspace-wide seed; per-discipline policy will pass its own value later.
+ */
+export function computeSpreadFindings(
+  snapshot: Snapshot,
+  threshold: number = SPREAD_TEAM_THRESHOLD,
+): Finding[] {
   const allocMap = allocationByPerson(snapshot.assignments);
   const peopleById = indexById(snapshot.people);
   const findings: Finding[] = [];
 
   for (const [personId, alloc] of allocMap) {
-    if (alloc.teamCount <= 1 && alloc.totalPct <= 100) continue;
+    if (alloc.teamCount < threshold) continue;
     const person = peopleById.get(personId);
-    const unitIds = snapshot.assignments
-      .filter((a) => a.personId === personId && !a.isOpenRole)
-      .map((a) => a.orgUnitId);
-
-    const pct = Math.round(alloc.totalPct);
     findings.push({
-      id: `overalloc-${personId}`,
-      kind: "over-allocation",
-      color: FINDING_COLORS["over-allocation"],
-      stat: `${pct}%`,
+      id: `spread-${personId}`,
+      kind: "spread",
+      color: FINDING_COLORS.spread,
+      stat: String(alloc.teamCount),
       statSub: `${person?.name ?? "Unknown"} · ${alloc.teamCount} teams`,
-      narrativeText: `${person?.name ?? "Unknown"} is spread across ${alloc.teamCount} teams at ${pct}% total allocation.`,
-      involvedUnitIds: unitIds,
+      narrativeText: `${person?.name ?? "Unknown"} is spread across ${alloc.teamCount} teams.`,
+      involvedUnitIds: heldUnitIds(snapshot, personId),
       involvedPersonIds: [personId],
       spotlightType: "hub",
     });
   }
 
-  return findings.sort((a, b) => {
-    const pa = allocMap.get(a.involvedPersonIds[0])!;
-    const pb = allocMap.get(b.involvedPersonIds[0])!;
-    return pb.totalPct - pa.totalPct;
-  });
+  return findings.sort(
+    (a, b) =>
+      allocMap.get(b.involvedPersonIds[0])!.teamCount -
+      allocMap.get(a.involvedPersonIds[0])!.teamCount,
+  );
+}
+
+/**
+ * Over-commitment — a person whose declared allocation exceeds 100%. This is
+ * the finding that legitimately carries a %, because the number *is* the load.
+ */
+export function computeOverCommitmentFindings(snapshot: Snapshot): Finding[] {
+  const allocMap = allocationByPerson(snapshot.assignments);
+  const peopleById = indexById(snapshot.people);
+  const findings: Finding[] = [];
+
+  for (const [personId, alloc] of allocMap) {
+    if (alloc.totalPct <= 100) continue;
+    const person = peopleById.get(personId);
+    const pct = Math.round(alloc.totalPct);
+    findings.push({
+      id: `overcommit-${personId}`,
+      kind: "over-commitment",
+      color: FINDING_COLORS["over-commitment"],
+      stat: `${pct}%`,
+      statSub: `${person?.name ?? "Unknown"} · ${alloc.teamCount} teams`,
+      narrativeText: `${person?.name ?? "Unknown"} is committed to ${pct}% across ${alloc.teamCount} teams — more than one person's time.`,
+      involvedUnitIds: heldUnitIds(snapshot, personId),
+      involvedPersonIds: [personId],
+      spotlightType: "hub",
+    });
+  }
+
+  return findings.sort(
+    (a, b) =>
+      allocMap.get(b.involvedPersonIds[0])!.totalPct -
+      allocMap.get(a.involvedPersonIds[0])!.totalPct,
+  );
 }
 
 export function computeCouplingFindings(snapshot: Snapshot): Finding[] {
@@ -100,7 +157,8 @@ export function computeCouplingFindings(snapshot: Snapshot): Finding[] {
 
 export function computeAllFindings(snapshot: Snapshot): Finding[] {
   return [
-    ...computeOverAllocFindings(snapshot),
+    ...computeSpreadFindings(snapshot),
+    ...computeOverCommitmentFindings(snapshot),
     ...computeCouplingFindings(snapshot),
   ];
 }

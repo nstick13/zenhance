@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  computeOverAllocFindings,
+  computeSpreadFindings,
+  computeOverCommitmentFindings,
   computeCouplingFindings,
   computeAllFindings,
 } from "@/lib/analytics/findings";
@@ -58,20 +59,48 @@ function assignment(
 }
 
 // ---------------------------------------------------------------------------
-// Over-allocation findings
+// Spread findings — count-based, %-free, fires at 2+ teams by default
 // ---------------------------------------------------------------------------
 
-describe("computeOverAllocFindings", () => {
-  it("returns empty when nobody is over-allocated", () => {
+describe("computeSpreadFindings", () => {
+  it("returns empty when everyone is on a single team", () => {
     const snapshot: Snapshot = {
       people: [person("p1", "Alice")],
       units: [unit("u1", "Alpha")],
       assignments: [assignment("a1", "p1", "u1", 100)],
     };
-    expect(computeOverAllocFindings(snapshot)).toHaveLength(0);
+    expect(computeSpreadFindings(snapshot)).toHaveLength(0);
   });
 
-  it("flags a person on two teams", () => {
+  it("flags a person on two teams at nominal load (the fact is the finding)", () => {
+    const snapshot: Snapshot = {
+      people: [person("p1", "Alice")],
+      units: [unit("u1", "Alpha"), unit("u2", "Beta")],
+      assignments: [
+        assignment("a1", "p1", "u1", 40),
+        assignment("a2", "p1", "u2", 40), // 80% total — under 100
+      ],
+    };
+    const findings = computeSpreadFindings(snapshot);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].id).toBe("spread-p1");
+    expect(findings[0].kind).toBe("spread");
+    expect(findings[0].stat).toBe("2"); // team count, not a %
+    expect(findings[0].stat).not.toContain("%");
+    expect(findings[0].involvedUnitIds).toEqual(expect.arrayContaining(["u1", "u2"]));
+    expect(findings[0].spotlightType).toBe("hub");
+  });
+
+  it("does NOT flag someone over 100% on a single team", () => {
+    const snapshot: Snapshot = {
+      people: [person("p1", "Alice")],
+      units: [unit("u1", "Alpha")],
+      assignments: [assignment("a1", "p1", "u1", 120)],
+    };
+    expect(computeSpreadFindings(snapshot)).toHaveLength(0);
+  });
+
+  it("honours a custom threshold", () => {
     const snapshot: Snapshot = {
       people: [person("p1", "Alice")],
       units: [unit("u1", "Alpha"), unit("u2", "Beta")],
@@ -80,22 +109,67 @@ describe("computeOverAllocFindings", () => {
         assignment("a2", "p1", "u2", 50),
       ],
     };
-    const findings = computeOverAllocFindings(snapshot);
-    expect(findings).toHaveLength(1);
-    expect(findings[0].id).toBe("overalloc-p1");
-    expect(findings[0].involvedUnitIds).toEqual(expect.arrayContaining(["u1", "u2"]));
-    expect(findings[0].stat).toBe("100%");
-    expect(findings[0].spotlightType).toBe("hub");
+    expect(computeSpreadFindings(snapshot, 3)).toHaveLength(0); // 2 teams < 3
+    expect(computeSpreadFindings(snapshot, 2)).toHaveLength(1);
   });
 
-  it("flags a person over 100% on a single team", () => {
+  it("sorts by team count descending", () => {
+    const snapshot: Snapshot = {
+      people: [person("p1", "Alice"), person("p2", "Bob")],
+      units: [unit("u1", "Alpha"), unit("u2", "Beta"), unit("u3", "Gamma")],
+      assignments: [
+        assignment("a1", "p1", "u1", 50),
+        assignment("a2", "p1", "u2", 50), // p1 on 2 teams
+        assignment("a3", "p2", "u1", 30),
+        assignment("a4", "p2", "u2", 30),
+        assignment("a5", "p2", "u3", 30), // p2 on 3 teams
+      ],
+    };
+    const findings = computeSpreadFindings(snapshot);
+    expect(findings[0].involvedPersonIds[0]).toBe("p2"); // 3 teams first
+    expect(findings[1].involvedPersonIds[0]).toBe("p1"); // 2 teams second
+  });
+
+  it("ignores open roles", () => {
+    const snapshot: Snapshot = {
+      people: [],
+      units: [unit("u1", "Alpha"), unit("u2", "Beta")],
+      assignments: [
+        assignment("a1", null, "u1", 100, true),
+        assignment("a2", null, "u2", 100, true),
+      ],
+    };
+    expect(computeSpreadFindings(snapshot)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Over-commitment findings — declared > 100%, keeps the %
+// ---------------------------------------------------------------------------
+
+describe("computeOverCommitmentFindings", () => {
+  it("returns empty when nobody exceeds 100%", () => {
+    const snapshot: Snapshot = {
+      people: [person("p1", "Alice")],
+      units: [unit("u1", "Alpha"), unit("u2", "Beta")],
+      assignments: [
+        assignment("a1", "p1", "u1", 50),
+        assignment("a2", "p1", "u2", 50), // exactly 100
+      ],
+    };
+    expect(computeOverCommitmentFindings(snapshot)).toHaveLength(0);
+  });
+
+  it("flags someone over 100% on a single team, carrying the %", () => {
     const snapshot: Snapshot = {
       people: [person("p1", "Alice")],
       units: [unit("u1", "Alpha")],
       assignments: [assignment("a1", "p1", "u1", 120)],
     };
-    const findings = computeOverAllocFindings(snapshot);
+    const findings = computeOverCommitmentFindings(snapshot);
     expect(findings).toHaveLength(1);
+    expect(findings[0].id).toBe("overcommit-p1");
+    expect(findings[0].kind).toBe("over-commitment");
     expect(findings[0].stat).toBe("120%");
   });
 
@@ -110,21 +184,24 @@ describe("computeOverAllocFindings", () => {
         assignment("a4", "p2", "u3", 80), // 130%
       ],
     };
-    const findings = computeOverAllocFindings(snapshot);
+    const findings = computeOverCommitmentFindings(snapshot);
     expect(findings[0].involvedPersonIds[0]).toBe("p2"); // 130% first
     expect(findings[1].involvedPersonIds[0]).toBe("p1"); // 120% second
   });
 
-  it("ignores open roles", () => {
+  it("a person on 4 teams at 120% fires under BOTH detectors", () => {
     const snapshot: Snapshot = {
-      people: [],
-      units: [unit("u1", "Alpha"), unit("u2", "Beta")],
+      people: [person("p1", "Devraj")],
+      units: [unit("u1", "U1"), unit("u2", "U2"), unit("u3", "U3"), unit("u4", "U4")],
       assignments: [
-        assignment("a1", null, "u1", 100, true),
-        assignment("a2", null, "u2", 100, true),
+        assignment("a1", "p1", "u1", 30),
+        assignment("a2", "p1", "u2", 30),
+        assignment("a3", "p1", "u3", 30),
+        assignment("a4", "p1", "u4", 30), // 120% across 4 teams
       ],
     };
-    expect(computeOverAllocFindings(snapshot)).toHaveLength(0);
+    expect(computeSpreadFindings(snapshot)).toHaveLength(1);
+    expect(computeOverCommitmentFindings(snapshot)).toHaveLength(1);
   });
 });
 
@@ -210,21 +287,20 @@ describe("computeCouplingFindings", () => {
 // ---------------------------------------------------------------------------
 
 describe("computeAllFindings", () => {
-  it("combines both finding types", () => {
+  it("combines all three finding types", () => {
     const snapshot: Snapshot = {
       people: [person("p1", "Alice"), person("p2", "Bob")],
       units: [unit("u1", "Alpha"), unit("u2", "Beta")],
       assignments: [
         assignment("a1", "p1", "u1", 50),
-        assignment("a2", "p1", "u2", 80), // over-alloc (130%)
+        assignment("a2", "p1", "u2", 80), // p1: 2 teams (spread) + 130% (over-commit)
         assignment("a3", "p2", "u1"),
-        assignment("a4", "p2", "u2"), // coupling (p2 on both, but only 1 shared with p1... wait)
+        assignment("a4", "p2", "u2"), // p1+p2 both on u1+u2 → coupling (2 shared)
       ],
     };
-    // p1 is on both → over-alloc; p1+p2 both on u1+u2 → coupling (2 shared)
-    const findings = computeAllFindings(snapshot);
-    const kinds = findings.map((f) => f.kind);
-    expect(kinds).toContain("over-allocation");
+    const kinds = computeAllFindings(snapshot).map((f) => f.kind);
+    expect(kinds).toContain("spread");
+    expect(kinds).toContain("over-commitment");
     expect(kinds).toContain("coupling");
   });
 });
