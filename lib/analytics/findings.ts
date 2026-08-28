@@ -1,17 +1,17 @@
 import type { Snapshot } from "@/lib/org/model";
 import { allocationByPerson, assignmentsByUnit, indexById } from "@/lib/org/model";
+import {
+  DEFAULT_FINDINGS_POLICY,
+  SPREAD_TEAM_THRESHOLD,
+  spreadThresholdFor,
+  type FindingsPolicy,
+} from "./findingsPolicy";
+
+// Re-exported so existing importers (and tests) keep getting it from here; the
+// definition moved to findingsPolicy.ts to break a findings↔policy cycle.
+export { SPREAD_TEAM_THRESHOLD };
 
 export type FindingKind = "spread" | "over-commitment" | "coupling";
-
-/**
- * Default team count at which Spread fires, workspace-wide. Settled at 2 —
- * i.e. the plain fact of being on 2+ teams is itself the finding. This is a
- * seeded default: the settled analytics design makes Spread a *per-discipline*
- * policy (flag at N, no limit, or unset), so `computeSpreadFindings` takes the
- * threshold as an argument. When that policy table lands, pass the per-person
- * discipline threshold here instead of the constant.
- */
-export const SPREAD_TEAM_THRESHOLD = 2;
 
 export type Finding = {
   id: string;
@@ -46,22 +46,33 @@ function heldUnitIds(snapshot: Snapshot, personId: string): string[] {
 }
 
 /**
+ * Per-person Spread threshold. A plain number applies to everyone; a function
+ * lets the caller vary it by the person (that's how the per-discipline policy
+ * feeds in) — returning `null` means "no limit", i.e. never flag this person.
+ */
+export type SpreadThreshold =
+  | number
+  | ((person: Snapshot["people"][number] | undefined) => number | null);
+
+/**
  * Spread — a person present on `threshold`+ teams. Count-based and %-free per
  * the settled "no % in findings" rule: how many teams is the whole point, the
  * declared load belongs to Over-commitment. `threshold` defaults to the
- * workspace-wide seed; per-discipline policy will pass its own value later.
+ * workspace-wide seed; the per-discipline policy passes a resolver instead.
  */
 export function computeSpreadFindings(
   snapshot: Snapshot,
-  threshold: number = SPREAD_TEAM_THRESHOLD,
+  threshold: SpreadThreshold = SPREAD_TEAM_THRESHOLD,
 ): Finding[] {
   const allocMap = allocationByPerson(snapshot.assignments);
   const peopleById = indexById(snapshot.people);
   const findings: Finding[] = [];
 
   for (const [personId, alloc] of allocMap) {
-    if (alloc.teamCount < threshold) continue;
     const person = peopleById.get(personId);
+    const limit = typeof threshold === "function" ? threshold(person) : threshold;
+    // null = no limit for this person (a discipline the org exempts).
+    if (limit == null || alloc.teamCount < limit) continue;
     findings.push({
       id: `spread-${personId}`,
       kind: "spread",
@@ -155,10 +166,23 @@ export function computeCouplingFindings(snapshot: Snapshot): Finding[] {
   return findings.sort((a, b) => b.involvedPersonIds.length - a.involvedPersonIds.length);
 }
 
-export function computeAllFindings(snapshot: Snapshot): Finding[] {
+/**
+ * All findings under a workspace's policy (S5 tab 5). A detector switched off
+ * contributes nothing; Spread reads its per-person threshold from the policy,
+ * so a discipline the org marks "no limit" simply never fires. The default
+ * policy — every detector on, Spread at the seeded threshold for everyone —
+ * reproduces the pre-config behaviour exactly, so callers that don't yet load
+ * a policy (and any workspace before the table is populated) are unaffected.
+ */
+export function computeAllFindings(
+  snapshot: Snapshot,
+  policy: FindingsPolicy = DEFAULT_FINDINGS_POLICY,
+): Finding[] {
   return [
-    ...computeSpreadFindings(snapshot),
-    ...computeOverCommitmentFindings(snapshot),
-    ...computeCouplingFindings(snapshot),
+    ...(policy.spreadEnabled
+      ? computeSpreadFindings(snapshot, (p) => spreadThresholdFor(policy, p?.disciplineId ?? null))
+      : []),
+    ...(policy.overCommitmentEnabled ? computeOverCommitmentFindings(snapshot) : []),
+    ...(policy.couplingEnabled ? computeCouplingFindings(snapshot) : []),
   ];
 }

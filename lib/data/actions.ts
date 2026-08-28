@@ -13,6 +13,8 @@ import {
   disciplineUpdate,
   lensInput,
   vocabularyInput,
+  findingsConfigInput,
+  disciplineSpreadInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
 import {
@@ -22,6 +24,11 @@ import {
   mergeDisciplinesOp,
   reorderDisciplinesOp,
 } from "@/lib/data/disciplineOps";
+import {
+  saveWorkspaceFindingsConfigOp,
+  setDisciplineSpreadOp,
+  clearDisciplineSpreadOp,
+} from "@/lib/data/findingsPolicyOps";
 import { getOrgSnapshot } from "@/lib/data/queries";
 import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
 
@@ -268,6 +275,55 @@ export async function saveVocabulary(raw: unknown): Promise<ActionResult> {
   revalidateAll();
   revalidatePath("/settings");
   return { ok: true, data: undefined };
+}
+
+// --- findings policy (S5 tab 5) ---------------------------------------------
+/**
+ * The workspace-wide findings config: detector switches + the default Spread
+ * threshold. Changing it changes what the findings engine raises, so /org (the
+ * findings surface) revalidates alongside /settings.
+ */
+export async function saveFindingsConfig(raw: unknown): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  const parsed = findingsConfigInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid config");
+  const res = await saveWorkspaceFindingsConfigOp(workspace.id, parsed.data);
+  if (res.ok) {
+    revalidatePath("/org");
+    revalidatePath("/settings");
+  }
+  return res;
+}
+
+/** Set (or clear) one discipline's Spread override. `threshold: null` means
+ *  "no limit"; passing `clear: true` removes the override entirely (inherit). */
+export async function setDisciplineSpread(
+  raw: unknown,
+  clear = false,
+): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  if (clear) {
+    const id = typeof raw === "string" ? raw : "";
+    if (!id) return fail("Invalid discipline");
+    const res = await clearDisciplineSpreadOp(workspace.id, id);
+    if (res.ok) {
+      revalidatePath("/org");
+      revalidatePath("/settings");
+    }
+    return res;
+  }
+  const parsed = disciplineSpreadInput.safeParse(raw);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid override");
+  const res = await setDisciplineSpreadOp(
+    workspace.id,
+    parsed.data.disciplineId,
+    parsed.data.threshold,
+  );
+  if (res.ok) {
+    revalidatePath("/org");
+    revalidatePath("/settings");
+  }
+  return res;
 }
 
 // --- assignments ----------------------------------------------------------

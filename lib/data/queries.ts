@@ -19,6 +19,12 @@ import {
 import { requireWorkspace } from "@/lib/auth/workspace";
 import { normalizeLens, type Lens } from "@/lib/canvas/lens";
 import { normalizeVocabulary, type Vocabulary } from "@/lib/vocabulary";
+import {
+  resolveFindingsPolicy,
+  DEFAULT_FINDINGS_POLICY,
+  type FindingsPolicy,
+} from "@/lib/analytics/findingsPolicy";
+import { listFindingsPolicyOp } from "@/lib/data/findingsPolicyOps";
 
 /** Everything needed to render the org, fetched in one workspace-scoped pass. */
 export type OrgSnapshot = {
@@ -65,6 +71,30 @@ export async function getVocabulary(): Promise<Vocabulary> {
 export async function getWorkspaceLens(): Promise<Lens> {
   const { workspace } = await requireWorkspace();
   return normalizeLens(workspace.lens);
+}
+
+/**
+ * The workspace's findings policy (S5 tab 5), resolved for the detector engine.
+ *
+ * Wrapped in a guard on purpose: `findings_policy` is a new table, and the
+ * documented rollout applies the migration in Neon *after* the code ships. In
+ * that window the select throws "relation does not exist" — so we swallow that
+ * one case and fall back to the default policy, which reproduces pre-config
+ * behaviour exactly. The result: shipping this code never 500s /org, and the
+ * policy simply activates once the table is there. Any *other* error still
+ * propagates.
+ */
+export async function getFindingsPolicy(): Promise<FindingsPolicy> {
+  const { workspace } = await requireWorkspace();
+  try {
+    const rows = await listFindingsPolicyOp(workspace.id);
+    return resolveFindingsPolicy(rows);
+  } catch (err) {
+    if (err instanceof Error && /findings_policy|relation.*does not exist/i.test(err.message)) {
+      return DEFAULT_FINDINGS_POLICY;
+    }
+    throw err;
+  }
 }
 
 export async function getDisciplines(): Promise<Discipline[]> {

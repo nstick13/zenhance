@@ -245,6 +245,53 @@ export const mapNodes = pgTable(
   ],
 );
 
+// --- findings policy (S5 tab 5: the detector/policy config) ---------------
+/**
+ * A workspace's rules for what the findings detectors may raise. Deliberately
+ * the first *policy*-class config to get a real table (lens and vocabulary are
+ * jsonb blobs): this is compared against live data and keyed by discipline, so
+ * it is joined and queried, not just displayed.
+ *
+ * Two row shapes share the table:
+ *  - the row with `disciplineId = NULL` holds the workspace-wide config — the
+ *    three detector switches and the default Spread threshold;
+ *  - every other row holds one discipline's Spread override in `spreadThreshold`
+ *    (a number = flag at N, NULL = no limit). No row for a discipline = inherit.
+ *
+ * A brand-new table read only by the findings path on purpose — nothing in the
+ * always-on `requireWorkspace` selects it, so the migration's blast radius is
+ * the findings surface alone, not the whole app.
+ */
+export const findingsPolicy = pgTable(
+  "findings_policy",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** NULL = the workspace-wide config row; otherwise a discipline override. */
+    disciplineId: uuid("discipline_id").references(() => disciplines.id, {
+      onDelete: "cascade",
+    }),
+    /** Team count at which Spread fires. On the workspace row: the default.
+     *  On a discipline row: N = flag at N, NULL = no limit (never flag). */
+    spreadThreshold: integer("spread_threshold"),
+    /** Detector switches — read only from the workspace-wide (NULL) row. */
+    spreadEnabled: boolean("spread_enabled").notNull().default(true),
+    overCommitmentEnabled: boolean("over_commitment_enabled").notNull().default(true),
+    couplingEnabled: boolean("coupling_enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("findings_policy_workspace_idx").on(t.workspaceId),
+    // One row per (workspace, discipline); the workspace-wide row is the NULL
+    // slot. Postgres treats NULLs as distinct in a UNIQUE, so this is backed by
+    // a partial unique index in the migration to keep that row single.
+    unique("findings_policy_workspace_discipline_uq").on(t.workspaceId, t.disciplineId),
+  ],
+);
+
 // --- relations ------------------------------------------------------------
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   memberships: many(memberships),
@@ -315,3 +362,4 @@ export type Discipline = typeof disciplines.$inferSelect;
 export type OrgUnit = typeof orgUnits.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
 export type MapNodeRow = typeof mapNodes.$inferSelect;
+export type FindingsPolicyRow = typeof findingsPolicy.$inferSelect;

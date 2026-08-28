@@ -11,6 +11,8 @@ import {
   reorderDisciplines,
   saveVocabulary,
   saveLens,
+  saveFindingsConfig,
+  setDisciplineSpread,
 } from "@/lib/data/actions";
 import {
   DISCIPLINE_RAMP,
@@ -35,7 +37,18 @@ import {
 const field =
   "w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-ink-soft";
 
-type TabId = "vocabulary" | "disciplines" | "mapDefaults";
+type TabId = "vocabulary" | "disciplines" | "mapDefaults" | "findings";
+
+/** What the Findings tab needs, shaped for the client (no Map across RSC). A
+ *  discipline in `overrides` with a number flags at N, with null means "no
+ *  limit"; a discipline absent from it inherits the default. */
+export type FindingsConfigView = {
+  spreadEnabled: boolean;
+  overCommitmentEnabled: boolean;
+  couplingEnabled: boolean;
+  defaultSpreadThreshold: number;
+  overrides: Record<string, number | null>;
+};
 
 const TABS: { id: TabId; label: string; blurb: string }[] = [
   {
@@ -53,6 +66,11 @@ const TABS: { id: TabId; label: string; blurb: string }[] = [
     label: "Map defaults",
     blurb: "How the map opens for everyone here, before anyone tunes their own view.",
   },
+  {
+    id: "findings",
+    label: "Findings",
+    blurb: "Which signals the map is allowed to raise — and where a spread is normal.",
+  },
 ];
 
 export function SettingsManager({
@@ -60,11 +78,13 @@ export function SettingsManager({
   disciplines,
   peopleCounts,
   lens,
+  findings,
 }: {
   vocabulary: Vocabulary;
   disciplines: Discipline[];
   peopleCounts: Record<string, number>;
   lens: Lens;
+  findings: FindingsConfigView;
 }) {
   const [tab, setTab] = useState<TabId>("vocabulary");
   const active = TABS.find((t) => t.id === tab)!;
@@ -92,8 +112,14 @@ export function SettingsManager({
         <VocabularyTab vocabulary={vocabulary} />
       ) : tab === "disciplines" ? (
         <DisciplinesTab disciplines={disciplines} peopleCounts={peopleCounts} />
-      ) : (
+      ) : tab === "mapDefaults" ? (
         <MapDefaultsTab lens={lens} />
+      ) : (
+        <FindingsTab
+          findings={findings}
+          disciplines={disciplines}
+          peopleCounts={peopleCounts}
+        />
       )}
     </div>
   );
@@ -719,5 +745,282 @@ function LensChoice({
         })}
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ tab 5 */
+
+const DETECTORS: {
+  key: "spreadEnabled" | "overCommitmentEnabled" | "couplingEnabled";
+  label: string;
+  hint: string;
+}[] = [
+  {
+    key: "spreadEnabled",
+    label: "Spread",
+    hint: "Someone sitting on many teams — a coverage and bus-factor signal. How many teams counts is set per discipline below.",
+  },
+  {
+    key: "overCommitmentEnabled",
+    label: "Over-commitment",
+    hint: "Someone whose declared allocation adds up past 100% — more than one person's time.",
+  },
+  {
+    key: "couplingEnabled",
+    label: "Hidden coupling",
+    hint: "Two teams that share several people — structurally separate, operationally entangled.",
+  },
+];
+
+/**
+ * Findings. The first *policy* surface: it changes what the detectors are
+ * allowed to raise, not how anything looks. Two layers — the detector switches,
+ * and the per-discipline Spread threshold, because "on N teams" is a fact whose
+ * meaning the org sets and which differs by discipline (a Security Engineer
+ * across six teams is the job in one org and a bus-factor risk in the next).
+ */
+function FindingsTab({
+  findings,
+  disciplines,
+  peopleCounts,
+}: {
+  findings: FindingsConfigView;
+  disciplines: Discipline[];
+  peopleCounts: Record<string, number>;
+}) {
+  const router = useRouter();
+  const [draft, setDraft] = useState({
+    spreadEnabled: findings.spreadEnabled,
+    overCommitmentEnabled: findings.overCommitmentEnabled,
+    couplingEnabled: findings.couplingEnabled,
+    defaultSpreadThreshold: findings.defaultSpreadThreshold,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [rowPending, startRow] = useTransition();
+
+  const dirty =
+    draft.spreadEnabled !== findings.spreadEnabled ||
+    draft.overCommitmentEnabled !== findings.overCommitmentEnabled ||
+    draft.couplingEnabled !== findings.couplingEnabled ||
+    draft.defaultSpreadThreshold !== findings.defaultSpreadThreshold;
+
+  function saveConfig() {
+    setError(null);
+    startTransition(async () => {
+      const res = await saveFindingsConfig(draft);
+      if (!res.ok) return setError(res.error ?? "Something went wrong");
+      setSaved(true);
+      router.refresh();
+    });
+  }
+
+  function applyOverride(disciplineId: string, threshold: number | null, clear: boolean) {
+    setError(null);
+    startRow(async () => {
+      const res = clear
+        ? await setDisciplineSpread(disciplineId, true)
+        : await setDisciplineSpread({ disciplineId, threshold });
+      if (!res.ok) return setError(res.error ?? "Something went wrong");
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Detectors on/off */}
+      <div className="rounded-lg border border-line">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="font-medium">Detectors</h3>
+          <p className="text-xs text-ink-soft">
+            A detector switched off raises nothing, for everyone here.
+          </p>
+        </div>
+        <ul className="divide-y divide-line">
+          {DETECTORS.map((d) => {
+            const on = draft[d.key];
+            return (
+              <li key={d.key} className="flex items-start gap-3 px-4 py-3">
+                <button
+                  role="switch"
+                  aria-checked={on}
+                  onClick={() => {
+                    setSaved(false);
+                    setDraft((s) => ({ ...s, [d.key]: !on }));
+                  }}
+                  className={`mt-0.5 h-5 w-9 shrink-0 rounded-full border transition-colors ${
+                    on ? "border-ink bg-ink" : "border-line bg-paper"
+                  }`}
+                >
+                  <span
+                    className={`block h-4 w-4 rounded-full bg-white transition-transform ${
+                      on ? "translate-x-4" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+                <div>
+                  <div className="text-sm font-medium text-ink">{d.label}</div>
+                  <p className="text-xs leading-snug text-ink-soft">{d.hint}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex items-center gap-3 border-t border-line px-4 py-3">
+          <label className="text-sm text-ink-soft">
+            Default spread fires at
+            <input
+              type="number"
+              min={2}
+              max={50}
+              value={draft.defaultSpreadThreshold}
+              disabled={!draft.spreadEnabled}
+              onChange={(e) => {
+                setSaved(false);
+                setDraft((s) => ({
+                  ...s,
+                  defaultSpreadThreshold: Math.max(2, Number(e.target.value) || 2),
+                }));
+              }}
+              className="mx-2 w-16 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft disabled:opacity-50"
+            />
+            teams
+          </label>
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-alert">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={saveConfig}
+          disabled={pending || !dirty}
+          className="rounded-md bg-ink px-3 py-2 text-sm font-medium text-white hover:bg-ink-soft disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Save detectors"}
+        </button>
+        {saved && !pending && !dirty && <span className="text-sm text-grow">Saved.</span>}
+      </div>
+
+      {/* Per-discipline Spread overrides */}
+      <div className="rounded-lg border border-line">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="font-medium">Spread by discipline</h3>
+          <p className="text-xs text-ink-soft">
+            Where a spread is normal, raise the bar or turn it off. Left alone, a
+            discipline uses the default of {findings.defaultSpreadThreshold} teams.
+          </p>
+        </div>
+
+        {!findings.spreadEnabled && (
+          <p className="border-b border-line bg-paper px-4 py-2 text-xs text-ink-soft">
+            Spread is off, so none of these fire right now — they’ll take effect if you
+            turn it back on.
+          </p>
+        )}
+
+        {disciplines.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-ink-soft">
+            No disciplines yet. Add some under the Disciplines tab and their spread rules
+            will appear here.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {disciplines.map((d) => (
+              <SpreadRow
+                key={d.id}
+                discipline={d}
+                count={peopleCounts[d.id] ?? 0}
+                override={
+                  Object.prototype.hasOwnProperty.call(findings.overrides, d.id)
+                    ? findings.overrides[d.id]
+                    : undefined
+                }
+                defaultThreshold={findings.defaultSpreadThreshold}
+                disabled={rowPending}
+                onApply={(threshold, clear) => applyOverride(d.id, threshold, clear)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <p className="text-xs text-ink-soft">
+        Filing individual findings as reviewed exceptions — the “9 of 12 reviewed”
+        layer — comes next, once findings render on the map itself.
+      </p>
+    </div>
+  );
+}
+
+type SpreadMode = "inherit" | "flag" | "noLimit";
+
+/** `override === undefined` → inherit; `null` → no limit; a number → flag at N. */
+function SpreadRow({
+  discipline,
+  count,
+  override,
+  defaultThreshold,
+  disabled,
+  onApply,
+}: {
+  discipline: Discipline;
+  count: number;
+  override: number | null | undefined;
+  defaultThreshold: number;
+  disabled: boolean;
+  onApply: (threshold: number | null, clear: boolean) => void;
+}) {
+  const mode: SpreadMode =
+    override === undefined ? "inherit" : override === null ? "noLimit" : "flag";
+  // Local number for the "flag at N" input — seeded from the current override,
+  // else the default, so switching into "flag" has a sensible starting value.
+  const [n, setN] = useState<number>(typeof override === "number" ? override : defaultThreshold);
+
+  function pick(next: SpreadMode) {
+    if (next === "inherit") onApply(null, true);
+    else if (next === "noLimit") onApply(null, false);
+    else onApply(Math.max(2, n || defaultThreshold), false);
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <span className="flex-1 text-sm text-ink">
+        {discipline.name}
+        <span className="ml-2 text-xs text-ink-soft">
+          {count} {count === 1 ? "person" : "people"}
+        </span>
+      </span>
+
+      <select
+        className="rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft disabled:opacity-50"
+        value={mode}
+        disabled={disabled}
+        onChange={(e) => pick(e.target.value as SpreadMode)}
+      >
+        <option value="inherit">Default ({defaultThreshold} teams)</option>
+        <option value="flag">Flag at…</option>
+        <option value="noLimit">No limit</option>
+      </select>
+
+      {mode === "flag" && (
+        <span className="flex items-center gap-1 text-sm text-ink-soft">
+          <input
+            type="number"
+            min={2}
+            max={50}
+            value={n}
+            disabled={disabled}
+            onChange={(e) => setN(Math.max(2, Number(e.target.value) || 2))}
+            onBlur={() => {
+              const v = Math.max(2, n || defaultThreshold);
+              if (v !== override) onApply(v, false);
+            }}
+            className="w-16 rounded-md border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-ink-soft disabled:opacity-50"
+          />
+          teams
+        </span>
+      )}
+    </li>
   );
 }

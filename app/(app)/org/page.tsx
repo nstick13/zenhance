@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getOrgSnapshot, getMapNodes } from "@/lib/data/queries";
+import { getOrgSnapshot, getMapNodes, getFindingsPolicy } from "@/lib/data/queries";
 import { RadialOrg } from "@/components/viz/RadialOrg";
 import { OrgCanvasLoader } from "@/components/viz/OrgCanvasLoader";
 import { loadDemoOrg } from "@/lib/data/actions";
@@ -55,9 +55,15 @@ export default async function OrgPage({
 
   // The canvas is the product; the radial is the alternate lens at ?view=radial.
   if (view === "radial") {
+    const findingsPolicy = await getFindingsPolicy();
     return (
       <div className="h-[calc(100vh-57px)]">
-        <RadialOrg people={people} units={units} assignments={assignments} />
+        <RadialOrg
+          people={people}
+          units={units}
+          assignments={assignments}
+          findingsPolicy={findingsPolicy}
+        />
       </div>
     );
   }

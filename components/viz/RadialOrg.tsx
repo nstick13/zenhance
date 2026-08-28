@@ -24,6 +24,7 @@ import { computeRollup, type UnitRollup } from "@/lib/analytics/rollup";
 import { computeGaps, type UnitGap } from "@/lib/analytics/gaps";
 import { computeOrgSummary, type OrgSummary } from "@/lib/analytics/allocation";
 import { computeAllFindings, type Finding } from "@/lib/analytics/findings";
+import { DEFAULT_FINDINGS_POLICY, type FindingsPolicy } from "@/lib/analytics/findingsPolicy";
 
 type OverlayType = "none" | "allocation" | "gaps" | "cost";
 
@@ -69,10 +70,12 @@ export function RadialOrg({
   people,
   units,
   assignments,
+  findingsPolicy = DEFAULT_FINDINGS_POLICY,
 }: {
   people: Person[];
   units: OrgUnit[];
   assignments: Assignment[];
+  findingsPolicy?: FindingsPolicy;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -119,7 +122,10 @@ export function RadialOrg({
   const rollupMap = useMemo(() => computeRollup(effSnapshot), [effSnapshot]);
   const gapsMap = useMemo(() => computeGaps(effSnapshot), [effSnapshot]);
   const orgSummary = useMemo(() => computeOrgSummary(effSnapshot), [effSnapshot]);
-  const findings = useMemo(() => computeAllFindings(effSnapshot), [effSnapshot]);
+  const findings = useMemo(
+    () => computeAllFindings(effSnapshot, findingsPolicy),
+    [effSnapshot, findingsPolicy],
+  );
   const maxUnitCost = useMemo(() => {
     let max = 1;
     for (const r of rollupMap.values()) if (r.totalCost > max) max = r.totalCost;

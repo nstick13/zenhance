@@ -138,3 +138,28 @@ export const vocabularyInput = z.object({
   team: term,
 });
 export type VocabularyInput = z.infer<typeof vocabularyInput>;
+
+/** A Spread team-count threshold anywhere it's set by a user: a whole number,
+ *  at least 2 (below that "spread" is meaningless — one team isn't a spread). */
+const spreadThreshold = z
+  .number()
+  .int("Use a whole number")
+  .min(2, "A spread starts at 2 teams")
+  .max(50, "Keep it under 50");
+
+/** The workspace-wide findings config (S5 tab 5) — detector switches + the
+ *  default Spread threshold. The per-discipline overrides are their own action. */
+export const findingsConfigInput = z.object({
+  spreadEnabled: z.boolean(),
+  overCommitmentEnabled: z.boolean(),
+  couplingEnabled: z.boolean(),
+  defaultSpreadThreshold: spreadThreshold,
+});
+export type FindingsConfigInput = z.infer<typeof findingsConfigInput>;
+
+/** One discipline's Spread override: a threshold, or null for "no limit". */
+export const disciplineSpreadInput = z.object({
+  disciplineId: z.string().uuid(),
+  threshold: spreadThreshold.nullable(),
+});
+export type DisciplineSpreadInput = z.infer<typeof disciplineSpreadInput>;
