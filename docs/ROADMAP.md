@@ -228,7 +228,7 @@ Still wanted, still the documented moat, and it now has a home as the *Reporting
 
 ### Also wanted, unscheduled
 - **Retire the radial** — `/org` is the canvas as of v0.1.27; the radial lives at `/org?view=radial`, is **no longer linked from anywhere** (v0.1.32), and is kept **only** because it still owns the FindingsRail and the formal (`managerId`) layer. Archive `RadialOrg.tsx` once both port.
-- **Full product cabinet** — S1 ships a single owner per stream from the existing `orgUnits.leadPersonId`. A real cabinet (product owner + eng lead + delivery lead) needs role-tagged people attached to a *group* unit; `assignments` are currently restricted to `kind === "team"`, so this is new modeling. Do it after S2's role field exists.
+- **Full product cabinet** — S1 ships a single owner per stream from the existing `orgUnits.leadPersonId`. A real cabinet (product owner + eng lead + delivery lead) needs role-tagged people attached to a *group* unit; `assignments` are currently restricted to `kind === "team"`, so this is new modeling. Do it after S2's role field exists. **This is the first instance of the general "Value-stream-level roles (train roles)" story** under Data Model — solve the group-attachment modeling once and both land.
 - **Ownership analytics** — streams with no owner (partly shipped: the red "No owner"), one person owning several streams, an owner barely allocated to the stream they own.
 
 ---
@@ -259,8 +259,68 @@ Still wanted, still the documented moat, and it now has a home as the *Reporting
   - **How flexible:** free text vs a structured taxonomy (enum / workspace-defined role list) vs tags. Structure enables analytics (count developers, find teams with no QA, role-based gaps); free text is easier but un-analyzable. Likely a workspace-defined list (ties into custom fields above).
   - **Manual editing UX:** how does a user create/rename/assign roles and edit a person's data inline — in the person panel, the People CRUD page, or both? This is the "let me just fix this person" flow that has to feel effortless.
   - Payoff for Analytics: filter/group/colour the map by role, role-coverage gaps, and richer search than name-only (relates to the scrapped search/filter + cross-cutting roles notes under Analytics).
+- **Value-stream-level roles (train roles)** *(discuss — Data Model + Analytics)* — roles that belong to the **value stream / train itself**, not to a team inside it: RTE / release-train engineer, value-stream architect, product management, delivery lead, business owner. Distinct from two neighbouring ideas and needs to be kept distinct from both: from **discipline/role on a team** (the story above, which attaches to a `team` unit), and from **cross-cutting / shared people** (Analytics, below — a person who *splits across* teams). A train role is a named seat on the *group* rung.
+  - **Modeling blocker (known):** `assignments` are restricted to `kind === "team"` today, so a person cannot be attached to a `group` unit at all. This is the same blocker the **Full product cabinet** note (below) already flags — the cabinet is the first instance of this feature; "train roles" is the general form. Solve the group-attachment modeling once and both fall out.
+  - **Depends on** S2's structured role field existing (so the seat has a role to carry) — do it after that, same as the cabinet.
+  - Payoff: ownership analytics (streams with no RTE / no architect), the product cabinet per stream, and a natural place for the AI import to drop a "this person looks like your RTE" guess. Ties into **Ownership analytics** (backlog) and the **AI-assisted import** feature.
 - **Sub-groups (teams-of-teams nesting)** — deeper hierarchy than the current group→team→members. *"Need to see this in the demo"* — extend `lib/db/seed.ts` / `demoSeed.ts` so the demo org actually shows multi-level nesting, then confirm the viz + zoom handle it.
 - **Lifecycle status (active / on-hold)?** — the field the scrapped search filter assumed. Decide here whether units/people get a status concept (and whether it's a fixed enum or just a custom field via the story above).
+
+---
+
+## Feature: AI-assisted import & onboarding  🧭 *design-first*
+> **Discuss before coding — implementation conversations are explicitly deferred.** This is the on-ramp for Heather's *"triage before a conversation"* signal (2026-08-27): pull messy source data, reconcile, flag what's wrong, reach *"close enough for what we want to talk about."* It is **not** a new import engine — it sits on top of the deterministic `lib/data/importMapping.ts` + `importCommit.ts` that S2 already shipped.
+
+### The thesis (settled 2026-08-28)
+The AI's job is **not to be correct** — it is to beat the cold start. A plausible-but-wrong draft lands in a tool literally built for correcting it by hand (drag-to-reassign, inline CRUD, scenario mode), so *"it's allowed to be wrong"* is the whole point. This is the same governing assumption as S2 import (*"we're never going to get good data"* → nothing blocks, unrecognised degrades to empty + a counted warning, never a stored guess). A **lesser / cheaper model** is the right call: the bar is "plausible starting structure," not ground truth, and it fits the repo's least-context discipline.
+
+### Split of labour — model infers *structure*, engine applies *rows*
+Two jobs hide inside "AI import," and they need different amounts of data and intelligence:
+1. **Structure inference** (what the columns mean; the value streams / teams / disciplines / reporting edges implied by the file) — about *shape*, so a **sample of rows is enough**. This is where the (lesser) model earns its keep.
+2. **Row assignment** (which specific person → which team/manager) — must see *every* row (every person matters), but needs **no model**: once structure is known it is the cheap, tested deterministic pass we already have. Reuse the taxonomy-first resolution from S2 (*"Senior Software Engineer" → existing Software Engineering*).
+
+So: **lesser model infers the map hypothesis from a sample → the deterministic engine applies it across all rows → human confirms → commit.** Cheaper *and* more correct than feeding the whole file to an LLM or than sampling-and-hoping.
+
+### Two layers, and their asymmetry drives the interaction
+- **Formal (reporting tree, `people.managerId`)** — usually explicitly present in an HR export, structured, high-signal. The AI extracts it *confidently*. **This also completes the `manager` import-mapping build step the formal layer (S "Later — `reports_to`") was waiting on** — build AI import and that step falls out for free.
+- **Delivery (streams → teams → people)** — usually **not** in any single file; it lives in people's heads. Hypothesising it *is why the product exists.*
+
+The realistic common case is therefore **formal-rich, delivery-poor**, *not* the "everything's clean, BOOM" case (which is rare). In that common case the AI bootstraps a **strawman delivery map by mirroring the org chart** — but must present it honestly: *"I copied your reporting structure as a starting delivery guess; it's almost certainly wrong where real delivery crosses reporting lines — that's what I need you to fix."* The divergence the human then draws is the **formal-vs-delivery delta moat lighting up in the first five minutes** — the correction *is* the product's core value showing up as onboarding.
+
+**Input-state matrix (the edge cases):**
+
+| Formal | Delivery | AI does | Interaction |
+|---|---|---|---|
+| clean | clean | propose both, high confidence | near one-session; confirm & go |
+| **clean** | **absent/weak** | extract formal; strawman delivery from it | the common one → "here's a naive draft, show me where reality diverges" |
+| absent | clean | build delivery; formal stays empty | fine — delta analytics simply unavailable until managers added |
+| messy | messy | best-guess both, low confidence | heavy correction, still beats a blank canvas |
+| ambiguous | — | can't tell if "Platform" is a stream, a team, or a shared function | **ask** — targeted question, never a guess stored as truth |
+
+### What the AI outputs (a *proposal*, not "a map")
+A structured proposal in groups, **each element carrying a confidence + provenance stamp**:
+1. **Field interpretation** — what each column means.
+2. **Proposed taxonomy** — disciplines / stream names / team names, flagged *new* vs *matched-to-existing* (reuse S2's taxonomy-first logic).
+3. **Formal edges** (`managerId`) — with **cycle / orphan flags**.
+4. **Delivery structure** — explicitly marking which nodes were *guessed by mirroring formal* vs genuinely signalled.
+5. **Open questions** — what it couldn't resolve, as a list.
+6. **Warnings** — unresolved values, dropped cycle edges (same non-blocking spirit as S2).
+The human acts on each group; **items 4–5 do not have to be resolved to finish.**
+
+### Not a one-session thing — the load-bearing primitive
+Three reasons import is inherently multi-session, and the one mechanic each forces:
+1. **Delivery truth arrives from humans over time**, not from a file → the AI's guesses become a **persistent punch list** ("12 things I wasn't sure about"), not a modal you dismiss.
+2. **People re-import** (next quarter's HR export) → the AI's job becomes **reconciliation, not creation**: match on stable keys, show a diff, and **human edits must win over a fresh AI guess.**
+3. **Confidence is per-node, not global** → every node/edge needs **provenance stamped on it.**
+
+⭐ **The thing to design first, because everything above leans on it: provenance-per-element** — *who asserted this* (`imported-confident` · `ai-guessed` · `human-confirmed` · `human-authored`) *and how sure*. That single stamp powers the punch list, the reconcile-on-reimport "don't overwrite me" rule, and the confidence display all at once. Get it into the schema and the multi-session story is natural; skip it and we retrofit.
+
+### Guardrails (same philosophy as S2)
+- **Human confirm gates commit** — the AI's proposal is a suggestion layer, never stored silently as truth.
+- **Reporting must stay a tree** — unresolvable manager → `null`; a cycle → drop the offending edge + a counted warning; **never store a broken tree**.
+- **Formal is the moat, not the headline** — the imported org chart surfaces only as a *deliberately secondary* Reporting-layer toggle (off by default, available on demand), per [PRODUCT.md](PRODUCT.md). The stored edges are the asset; the raw chart is almost a byproduct.
+
+*(Implementation — model choice/id, the proposal schema, the reconcile diff UI, where the punch list lives — deferred to a later conversation by decision 2026-08-28.)*
 
 ---
 
