@@ -29,6 +29,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | CSV/Excel import | **`lib/data/importCommit.ts` is the engine** (validate + commit; deliberately *not* `"use server"`, so tests can drive the real code); `lib/data/import.ts` is the thin workspace-scoped action over it; `components/import/ImportWizard.tsx` is the UI |
 | **Import value normalisation** (employment / timezone / title→discipline) | `lib/data/importMapping.ts` — pure, shared by the wizard's preview and the server commit so both agree by construction. Unit tests `lib/data/__tests__/importMapping.test.ts` |
 | Import tests | `lib/data/__tests__/importS2.integration.mts` drives the **real** engine (prefer it as the model). `import.integration.mts` predates the split and re-implements the resolution logic, so it proves nothing about shipped code |
+| **Import edge cases / known failure modes** | [docs/reference/import-edge-cases.md](reference/import-edge-cases.md) — the 50-org corpus test: non-ISO dates & `kind` vocab hard-fail, flat dumps lose all structure, `guessColumn` Location→Allocation bug, etc. Read before touching import robustness |
 | **Scale fixture + benchmark** | `lib/db/scaleFixture.ts` (`npm run db:scale`, its own workspace — never clobbers the demo org) + `lib/canvas/__tests__/scale.bench.mts` |
 | **Analytics/config design proposals** (not built) | `design/*.dc.html` → published canvas, linked from ROADMAP's analytics section |
 | Seed / demo data | `lib/db/seed.ts` (CLI `npm run db:seed`), `lib/data/demoSeed.ts` (in-app "Load demo org") |

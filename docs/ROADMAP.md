@@ -103,6 +103,33 @@ Pure viz, no schema. Fixes the flat first impression and lands the first slice o
 
 *Two bugs this surfaced and fixed:* ICU matches IANA zone names case-insensitively, so `europe/berlin` was being stored verbatim and would never group with `Europe/Berlin`; and `Etc/GMT` inverts its sign, which would have mislabelled all of Europe.
 
+**▶ Import robustness — outstanding (from the 50-org corpus test, 2026-08-27).** A synthetic corpus spanning size (10 → 10k), tidiness, flat-vs-wizard shape, contractor patterns and multi-file handovers was run through the **real** `commitImport`. Result: **7/50 landed with structure, 20/50 came in as people with no teams, 19/50 hard-failed.** "Nothing blocks an import" is real for the four S2 fields only. Full writeup + the reusable generator/harness: [reference/import-edge-cases.md](reference/import-edge-cases.md). Priority order:
+1. **`normalizeDate()`** in `importMapping.ts` + stop running S1 fields through the strict form validator on the import path — non-ISO dates (`3/1/2021`, `Q1 2021`, `2021`, Excel serials) currently roll back the whole import. Unblocks ~19 orgs.
+2. **`normalizeKind()`** (Squad/Tribe/Chapter/Pod/Dept → team|group) + **skip trailing junk rows** (Total/Note footers fail as "Name is required") — unblocks messy wizard-native files.
+3. **Flat mode** — synthesise org units + parent groups + 100% assignments from a person sheet's `team`/`department` columns. The person's `team` is already in `ImportPersonRow` and silently dropped. Fixes the 20 "people-only" imports; biggest UX win.
+4. **`guessColumn` fix** — `"allocation".includes("location")` auto-maps every *Location* column to *Allocation %*. Add the `["Name","Team","Location"]` unit test.
+5. **Stable identity column** (`email` / `externalId`) on people + teams — prerequisite for re-import, same-name dedupe (9,698 rows → 9,630 people, silent), and multi-file resolution.
+6. **Multi-file wizard** — one session, N files, classify each (roster / structure / contractor list), commit once. This is the "*resolving for that isn't built yet*" item.
+
+**▶ AI-assisted ingestion — the bigger bet** 🧭 *design-first; sequence on top of 1–6, not instead of them.* The corpus test is the argument for it: the deterministic mapper is too brittle to promise "drag your files in and get a map" (7/50). An LLM is exactly the right tool for the *fuzzy-mapping* half of the problem (which sheet is what, arbitrary header→field, `Squad`/`Tribe` vocab, D/M/Y-vs-M/D/Y — unsolvable per value, tractable per *column*). It is **not** the right tool for identity/joins — asking it to fuzzy-match a person across files is how you silently merge two real people (item 5 stays a prerequisite, not something AI replaces).
+
+The load-bearing decision — **AI maps, deterministic code commits:**
+- **AI infers a *mapping spec* from a small sample** of each file (which sheet is which entity, column→field, detected date format, the join key if one exists, flat-vs-hierarchical). It emits the same `ImportPayload`-shaped object the wizard builds today — it never transforms 10k rows and never writes to the DB.
+- **Deterministic code applies that spec to every row** and commits through the existing `commitImport` + the new normalizers (1–3). Keeps cost/latency bounded (one sample call, not a per-row pipeline that'd blow the Vercel function budget), keeps the bulk transform pure and unit-tested, and keeps the schema as the contract.
+- **Preview-before-commit becomes *more* important, not less** — AI fails confidently and silently, the worst failure mode for import. Show provenance ("mapped `Worker Type` → employment") the way the title→discipline preview already shows its work. This is the same [ImportWizard](../components/import/ImportWizard.tsx) philosophy, extended.
+
+Staging:
+- **Tier 1 — AI column/sheet/vocab mapping over the xlsx/csv path we already parse.** Highest value, lowest risk. Fits Heather's *"never going to get good data"* ethos — degrade to a warning, don't hard-fail.
+- **Tier 2 — multi-file classification + join-key detection** (folds item 6 into the AI layer).
+- **Tier 3 — new file types that genuinely need AI/vision:** PDF org charts, Word, a screenshot of an org chart. Real, but don't gate the wedge on it. (Relates to *Backlog → Live data connectors*.)
+
+Guardrails to decide up front, before code:
+- **The 50-org corpus is the eval set.** Grade the AI mapper against it, with the 7 that already pass as a regression guard and the manifest's recorded intended-edge-cases as semi-labels. Bar: *don't ship AI mapping unless it beats the deterministic baseline on the corpus.*
+- **PII / provider** — real customer HR rosters. Send a **sample, not the full roster**; route through the AI Gateway with zero-retention. A deliberate call, not a default.
+- **Determinism** — low temp + a user-lockable mapping spec so a re-import of the same file is stable.
+
+*Why on top of 1–6, not instead:* the deterministic normalizers (dates, kind) are the **executor** the AI's spec drives and the **fallback** it degrades to — AI decides "this column is D/M/Y dates," `normalizeDate` does the parsing. And the AI layer inherits `commitImport`'s transactionality and the identity column for free. Build the floor first; the AI is the ramp onto it.
+
 ### S3 — The lens config  *(colour-by + label-by shipped v0.1.31; toggles outstanding)*
 Per-workspace, persisted to `workspaces.lens` (jsonb). Migration `0004_mean_spirit.sql` — **hand-apply in Neon before the deploy**, same as `0001`/`0003`: `requireWorkspace` does `select({ workspace: workspaces })`, so until the column exists *every* page 500s.
 
