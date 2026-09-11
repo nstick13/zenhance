@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react";
 import Konva from "konva";
 import { Group, Rect, Text, Circle, Shape } from "react-konva";
-import type { MoneyFlowLayout, WorldBounds } from "@/lib/canvas/moneyFlow";
+import { type MoneyFlowLayout, type WorldBounds, FLOW_STROKE } from "@/lib/canvas/moneyFlow";
 import { GRID_SIZE } from "@/lib/canvas/grid";
-import { CARD_PAD, CARD_LINE_H, type AllocationLine, type Box } from "@/lib/canvas/allocationFlow";
+import { CARD_PAD, CARD_LINE_H, ALLOC_STROKE, type AllocationLine, type Box } from "@/lib/canvas/allocationFlow";
 import { pointAlongPath, type Point } from "@/lib/canvas/lineRouting";
 
 /**
@@ -37,8 +37,8 @@ const FONT = "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Aria
 
 const PACKET_DURATION_MS = 3400;
 const PACKETS_PER_FLOW = 2;
-const FLOW_STROKE = 9;
-const ALLOC_STROKE = 6;
+const FLOW_CORNER_R = 60; // 3x the original 20 (Greg, 2026-09-11)
+const ALLOC_CORNER_R = 42; // 3x the original 14
 
 /** A `Shape` sceneFunc that draws `points` as one continuous stroke with a
  *  real rounded arc at every interior vertex (`ctx.arcTo`) — the Mini Metro
@@ -169,10 +169,10 @@ export function MoneyFlowScene({ layout }: { layout: MoneyFlowLayout }) {
               ref={(node) => {
                 if (node) lineRefs.current.set(f.id, node);
               }}
-              sceneFunc={roundedPolylineSceneFunc(f.points, 20)}
+              sceneFunc={roundedPolylineSceneFunc(f.points, FLOW_CORNER_R)}
               stroke={color}
               strokeWidth={FLOW_STROKE}
-              lineCap="round"
+              lineCap="butt"
               opacity={0.7}
               perfectDrawEnabled={false}
             />
@@ -315,10 +315,10 @@ export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
                     ref={(node) => {
                       if (node) lineRefs.current.set(l.id, node);
                     }}
-                    sceneFunc={roundedPolylineSceneFunc(l.points, 14)}
+                    sceneFunc={roundedPolylineSceneFunc(l.points, ALLOC_CORNER_R)}
                     stroke={hub.hue}
                     strokeWidth={ALLOC_STROKE}
-                    lineCap="round"
+                    lineCap="butt"
                     opacity={0.6}
                     perfectDrawEnabled={false}
                   />

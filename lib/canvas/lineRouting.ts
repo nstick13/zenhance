@@ -6,6 +6,12 @@
  */
 export type Point = { x: number; y: number };
 
+/** The minimum gap (edge to edge, not centreline to centreline) between two
+ *  adjacent parallel lines — the "magnet toward each other" spacing (Greg,
+ *  2026-09-11). Shared so every line system's fan-out math derives its
+ *  centreline spacing from its own stroke width the same way. */
+export const LINE_GAP = 2;
+
 /** Diagonal (45°) until one axis aligns with the target, then straight the
  *  rest of the way — the standard two-segment transit-map dog-leg. Returns
  *  the straight-through 2-point path when already axis-aligned or already

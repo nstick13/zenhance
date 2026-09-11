@@ -13,7 +13,7 @@
  * arriving from its own parent, and the lines fanning out to its children)
  * — so spokes never have to terminate inside the card's text.
  */
-import { octilinearPath, fanOffsets, fanPoint, type Point } from "./lineRouting";
+import { octilinearPath, fanOffsets, fanPoint, LINE_GAP, type Point } from "./lineRouting";
 
 export type Box = { x: number; y: number; hw: number; hh: number };
 
@@ -39,7 +39,12 @@ const money = (n: number) =>
 
 export type AllocationChild = Box & { id: string; cost: number };
 
-const FAN_SPACING = 11;
+/** Stroke width for a spoke — exported so the renderer draws lines exactly
+ *  this thick and never drifts from the spacing math below. */
+export const ALLOC_STROKE = 9;
+/** Centreline-to-centreline spacing that gives adjacent parallel spokes
+ *  exactly LINE_GAP of clear space between their edges. */
+const FAN_SPACING = ALLOC_STROKE + LINE_GAP;
 
 /** One line per child, routed octilinearly (Mini Metro style — 45°/straight
  *  segments, never an arbitrary angle) and fanned apart near the hub so

@@ -10,7 +10,15 @@
  * real P&L. There is no finance data in the schema.
  */
 import { snap } from "./grid";
-import { octilinearPath, type Point } from "./lineRouting";
+import { octilinearPath, LINE_GAP, type Point } from "./lineRouting";
+
+/** Stroke width for a money-flow line — exported so the renderer draws
+ *  lines exactly this thick and never drifts from the spacing math below. */
+export const FLOW_STROKE = 13.5;
+/** Shareholders carries two parallel lines (investment in, dividends out);
+ *  this half-offset gives them exactly LINE_GAP of clear space between
+ *  their edges, the same rule every other parallel pair in the app follows. */
+const SHAREHOLDER_HALF_OFFSET = (FLOW_STROKE + LINE_GAP) / 2;
 
 export const DEFAULT_COMPANY_NAME = "Galaxy Holdings";
 
@@ -145,15 +153,15 @@ export function computeMoneyFlowLayout(
     flow(
       "shareholders-in",
       "income",
-      { x: shareholders.x - shareholders.hw, y: cys - 22 },
-      { x: maxX, y: cys - 22 },
+      { x: shareholders.x - shareholders.hw, y: cys - SHAREHOLDER_HALF_OFFSET },
+      { x: maxX, y: cys - SHAREHOLDER_HALF_OFFSET },
       null, // capital raises aren't a recurring monthly figure
     ),
     flow(
       "shareholders-out",
       "outflow",
-      { x: maxX, y: cys + 22 },
-      { x: shareholders.x - shareholders.hw, y: cys + 22 },
+      { x: maxX, y: cys + SHAREHOLDER_HALF_OFFSET },
+      { x: shareholders.x - shareholders.hw, y: cys + SHAREHOLDER_HALF_OFFSET },
       hasCost ? `-${money(dividends)}/mo` : null,
     ),
     flow(
