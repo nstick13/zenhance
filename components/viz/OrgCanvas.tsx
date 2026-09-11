@@ -56,6 +56,19 @@ import {
 } from "@/lib/canvas/myView";
 import { lower, type Vocabulary } from "@/lib/vocabulary";
 import { VocabularyProvider, useVocabulary } from "@/components/VocabularyProvider";
+import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
+import { GridBackdrop, MoneyFlowScene, AllocationScene, type AllocHub } from "@/components/viz/MoneyFlow";
+import { computeMoneyFlowLayout, DEFAULT_COMPANY_NAME } from "@/lib/canvas/moneyFlow";
+import {
+  computeAllocationSpokes,
+  computeHubGeometry,
+  hubRecipient,
+  CARD_W,
+  CARD_PAD,
+  CARD_TITLE_LINE_H,
+  CARD_LINE_H,
+} from "@/lib/canvas/allocationFlow";
+import { snap as snapToGrid } from "@/lib/canvas/grid";
 
 const CROSS_CUTTING_MODE = "connected" as const;
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
@@ -124,7 +137,7 @@ const STREAM_HUES = ["#0e7490", "#4f46e5", "#9d174d", "#15803d", "#a16207"];
 const streamHue = (i: number) => STREAM_HUES[i % STREAM_HUES.length];
 
 const MIN_SCALE = 0.1;
-const MAX_SCALE = 3;
+const MAX_SCALE = 5; // was 3 — raised so "roles" LOD can pack tighter than the old cap allowed
 const TEAM_DROP_PAD = 26; // slack beyond a team's own radius for drop targeting
 
 function lodFor(scale: number): Lod {
@@ -144,10 +157,6 @@ const EMPLOYMENT_LABELS: Record<string, string> = {
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-/** Largest font size at which `text` still fits `width` on one line. */
-const fitFontSize = (text: string, width: number, max: number, min: number) =>
-  clamp(width / Math.max(1, text.length * 0.58), min, max);
 
 /** Intro choreography: each element gets a window inside the 0→1 intro clock,
  *  so the map assembles (hulls → teams → seats) instead of appearing whole. */
@@ -266,6 +275,19 @@ export function OrgCanvas({
   const [addMode, setAddMode] = useState(false); // Option/Alt held during a person drag
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState<"person" | "team" | "stream" | null>(null);
+  // Deepest zoom rung — "click into" a person's task board (mock data, see
+  // lib/mock/personTasks.ts). Feel study for customer research, not a real
+  // work entity yet.
+  const [openTaskPersonId, setOpenTaskPersonId] = useState<string | null>(null);
+
+  // "Snap to object" orbit (Greg, 2026-09-11), client-side only — resets on
+  // reload, no schema change yet. A person orbits their home team by default:
+  // dragging the team carries them along. Drag a person individually and
+  // they detach (falls back to plain grid-snap); the next time their team
+  // moves, a detached person snaps back onto the team's ring instead of
+  // just translating, which is what "moving back into orbit" means here.
+  // Reassigning a person to a different team re-attaches them fresh.
+  const [detachedIds, setDetachedIds] = useState<Set<string>>(new Set());
 
   // --- lens (S3 / S5) --------------------------------------------------------
   // Two tiers, deliberately. `initialLens` is the WORKSPACE DEFAULT — what a
@@ -654,6 +676,111 @@ export function OrgCanvas({
       .filter((t): t is NonNullable<typeof t> => t !== null);
   }, [streams, teams, teamStats, seatsByTeam]);
 
+  // --- money flow — the company container + external entities ---------------
+  // Pure geometry lives in lib/canvas/moneyFlow.ts; this just derives the
+  // stream bounding box and the org's real total monthly cost to feed it.
+  const moneyFlowLayout = useMemo(() => {
+    if (streamAgg.length === 0) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let totalMonthlyCost = 0;
+    for (const t of streamAgg) {
+      minX = Math.min(minX, t.x - t.hw);
+      maxX = Math.max(maxX, t.x + t.hw);
+      minY = Math.min(minY, t.y - t.hh);
+      maxY = Math.max(maxY, t.y + t.hh);
+      totalMonthlyCost += t.cost;
+    }
+    return computeMoneyFlowLayout({ minX, maxX, minY, maxY }, totalMonthlyCost);
+  }, [streamAgg]);
+
+  // --- allocation spokes — how each parent's budget splits across its
+  // children. One "company" hub over the streams, and (once teams are
+  // visible) one hub per stream over its own teams. Recursive by
+  // construction: computeAllocationSpokes doesn't know which level it's at.
+  //
+  // Card placement (Greg, 2026-09-07): every hull's card is locked to its
+  // own top-right corner and always rendered — the SAME card at every zoom
+  // level, so "collapsing" as you zoom out is just the hull's background
+  // fading away around a card that was there all along, not a swap between
+  // two different elements. Once a hull's children are visible, a small
+  // circle appears just below its card and becomes the real spoke endpoint
+  // on both sides (the line arriving from its own parent, and the lines
+  // fanning out to its children) — while collapsed, the card itself is the
+  // endpoint. The company's children (the streams) are always present in
+  // some form, so the company hub is always "expanded."
+  const allocationHubs = useMemo((): AllocHub[] => {
+    if (!moneyFlowLayout || streamAgg.length === 0) return [];
+    const hubs: AllocHub[] = [];
+
+    const totalHeads = streamAgg.reduce((s, t) => s + t.heads, 0);
+    const totalCost = streamAgg.reduce((s, t) => s + t.cost, 0);
+    const companyHull = {
+      x: moneyFlowLayout.company.x,
+      y: moneyFlowLayout.company.y,
+      hw: moneyFlowLayout.company.hw,
+      hh: moneyFlowLayout.company.hh,
+    };
+    const companyGeo = computeHubGeometry(companyHull, false, true);
+
+    // Every stream's own geometry, computed once and reused both as the
+    // target of the company's outgoing spoke and as the hub for the
+    // stream's own outgoing spokes to its teams — so there's exactly one
+    // place each stream "receives" a line, whichever level is asking.
+    const streamGeo = new Map<string, ReturnType<typeof computeHubGeometry>>();
+    for (const t of streamAgg) {
+      const hull = { x: t.x, y: t.y, hw: t.hw, hh: t.hh };
+      streamGeo.set(t.id, computeHubGeometry(hull, t.id !== CROSS_CUTTING_ID, lod !== "streams"));
+    }
+
+    hubs.push({
+      id: "company",
+      card: companyGeo.card,
+      title: DEFAULT_COMPANY_NAME.toUpperCase(),
+      ownerLine: null,
+      statsLine: `${plural(totalHeads, "person").replace("persons", "people")} · ${money(totalCost)}/mo`,
+      hue: C.ink,
+      circle: companyGeo.circle,
+      lines: computeAllocationSpokes(
+        hubRecipient(companyGeo),
+        streamAgg.map((t) => {
+          const r = hubRecipient(streamGeo.get(t.id)!);
+          return { id: t.id, ...r, cost: t.cost };
+        }),
+      ),
+    });
+
+    if (lod !== "streams") {
+      for (const t of streamAgg) {
+        const own = teams.filter((team) => team.streamId === t.id);
+        if (own.length === 0) continue;
+        const hue = hueOf.get(t.id) ?? C.inkSoft;
+        const geo = streamGeo.get(t.id)!;
+        const isBucket = t.id === CROSS_CUTTING_ID;
+        hubs.push({
+          id: `stream-${t.id}`,
+          card: geo.card,
+          title: t.name.toUpperCase(),
+          ownerLine: isBucket ? null : { text: t.leadName ? `Led by ${t.leadName}` : "No owner", warn: !t.leadName },
+          statsLine:
+            t.teams === 0
+              ? `Empty — add a ${lower(vocabulary.team.singular)} to fill it`
+              : `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`,
+          hue,
+          circle: geo.circle,
+          lines: computeAllocationSpokes(
+            hubRecipient(geo),
+            own.map((team) => {
+              const r = teamR(team.id);
+              return { id: team.id, x: team.x, y: team.y, hw: r, hh: r, cost: teamStats.get(team.id)?.cost ?? 0 };
+            }),
+          ),
+        });
+      }
+    }
+
+    return hubs;
+  }, [moneyFlowLayout, streamAgg, lod, teams, hueOf, teamStats, teamR, vocabulary]);
+
   // --- sizing ----------------------------------------------------------------
   useEffect(() => {
     const el = wrapRef.current;
@@ -691,7 +818,7 @@ export function OrgCanvas({
       const stage = stageRef.current;
       if (!stage || size.w === 0) return;
       const s = clamp(
-        Math.min(size.w / (box.hw * 2 * 1.12), size.h / (box.hh * 2 * 1.12)),
+        Math.min(size.w / (box.hw * 2 * 1.04), size.h / (box.hh * 2 * 1.04)),
         MIN_SCALE,
         MAX_SCALE,
       );
@@ -706,6 +833,15 @@ export function OrgCanvas({
   // Open on a *view*, not on "fit everything": land on the value stream with the
   // most open roles (tie-break on headcount) — the one worth looking at.
   const didFit = useRef(false);
+  useEffect(() => {
+    if (!openTaskPersonId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenTaskPersonId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openTaskPersonId]);
+
   useEffect(() => {
     if (didFit.current || size.w === 0) return;
     didFit.current = true;
@@ -950,10 +1086,26 @@ export function OrgCanvas({
     [nearestStream],
   );
 
+  /** Where a member should sit "in orbit" of a team's ring, preserving the
+   *  direction they already were from it — the snap-back-to-orbit point for
+   *  a previously-detached member, or the landing point for one freshly
+   *  assigned to a new team. */
+  const orbitPoint = useCallback(
+    (teamId: string, teamX: number, teamY: number, fromX: number, fromY: number) => {
+      const ringR = teamRingRadius(seatsByTeam.get(teamId) ?? 0);
+      const dx = fromX - teamX, dy = fromY - teamY;
+      const dist = Math.hypot(dx, dy);
+      const ang = dist > 1 ? Math.atan2(dy, dx) : -Math.PI / 2; // no direction yet: default to "12 o'clock"
+      return { x: teamX + ringR * Math.cos(ang), y: teamY + ringR * Math.sin(ang) };
+    },
+    [seatsByTeam],
+  );
+
   const onNodeDragEnd = useCallback(
     (e: KonvaEventObject<DragEvent>, node: CanvasNode) => {
-      const x = e.target.x();
-      const y = e.target.y();
+      const x = snapToGrid(e.target.x());
+      const y = snapToGrid(e.target.y());
+      e.target.position({ x, y }); // snap the shape itself, not just the stored state
       setDropTargetId(null);
       setDropStreamId(null);
       setAddMode(false);
@@ -965,6 +1117,42 @@ export function OrgCanvas({
       });
 
       if (node.kind === "team") {
+        // Orbit (Greg, 2026-09-11): a team carries its home people with it —
+        // rigid-translate whoever's still orbiting, and snap anyone who'd
+        // detached back onto the ring at this new spot instead of leaving
+        // them behind, which was the actual "brittle" bug (a team's own
+        // drag never touched its people's stored, independent positions).
+        const dx = x - node.x, dy = y - node.y;
+        if (dx || dy) {
+          // Computed from the current snapshot first, then applied as one
+          // pure setNodes transform — an updater with side effects (pushing
+          // into an outer array as it maps) would double up under Strict
+          // Mode's double-invoke.
+          const home = nodesRef.current.filter(
+            (n): n is CanvasPerson => n.kind === "person" && n.homeId === node.id,
+          );
+          if (home.length > 0) {
+            const moves = new Map(
+              home.map((n) => [
+                n.id,
+                detachedIds.has(n.id) ? orbitPoint(node.id, x, y, n.x, n.y) : { x: n.x + dx, y: n.y + dy },
+              ]),
+            );
+            setNodes((prev) => prev.map((n) => (moves.has(n.id) ? { ...n, ...moves.get(n.id)! } : n)));
+            const reattached = home.filter((n) => detachedIds.has(n.id)).map((n) => n.id);
+            if (reattached.length > 0) {
+              setDetachedIds((prev) => {
+                const nextSet = new Set(prev);
+                for (const id of reattached) nextSet.delete(id);
+                return nextSet;
+              });
+            }
+            void saveMapNodePositions(
+              home.map((n) => ({ nodeType: "person" as const, nodeId: n.id, ...moves.get(n.id)! })),
+            );
+          }
+        }
+
         if (node.isCrossCutting) return;
         const target = nearestStream(x, y);
         if (!target || target.id === node.streamId) return;
@@ -979,15 +1167,22 @@ export function OrgCanvas({
 
       if (node.kind !== "person" || lod === "streams" || node.allocations.length === 0) return;
       const target = nearestTeam(x, y);
-      if (!target) return;
+      if (!target) {
+        setDetachedIds((prev) => new Set(prev).add(node.id)); // dropped away from any team — detached
+        return;
+      }
       const targetTeamId = target.id;
       const home = [...node.allocations].sort((a, b) => b.pct - a.pct)[0];
-      if (node.allocations.some((a) => a.unitId === targetTeamId)) return;
+      if (node.allocations.some((a) => a.unitId === targetTeamId)) {
+        setDetachedIds((prev) => new Set(prev).add(node.id)); // repositioned within a team they're already on
+        return;
+      }
 
       // Option/Alt-drag *adds* a team instead of moving them to it — the gesture
       // for "they now support this team too". Not stageable in scenario mode,
       // which stages moves (a swapped assignmentId), not new rows.
       if (e.evt.altKey) {
+        setDetachedIds((prev) => new Set(prev).add(node.id)); // landed near the alt team, not their primary
         startTransition(async () => {
           const result = await createAssignment({
             orgUnitId: targetTeamId,
@@ -1003,6 +1198,20 @@ export function OrgCanvas({
       }
 
       if (home.unitId === targetTeamId) return;
+
+      // Reassigned to a different team: land fresh on *its* ring rather than
+      // wherever the pointer happened to be, and drop the detached flag —
+      // "assign to a different parent snaps to its invisible outer circle."
+      const landing = orbitPoint(targetTeamId, target.x, target.y, x, y);
+      setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, ...landing } : n)));
+      setDetachedIds((prev) => {
+        if (!prev.has(node.id)) return prev;
+        const next = new Set(prev);
+        next.delete(node.id);
+        return next;
+      });
+      void saveMapNodePosition("person", node.id, landing.x, landing.y);
+
       if (scenario) {
         setMoves((prev) => {
           const next = new Map(prev);
@@ -1017,7 +1226,7 @@ export function OrgCanvas({
         else router.refresh();
       });
     },
-    [startTransition, lod, nearestTeam, nearestStream, scenario, router],
+    [startTransition, lod, nearestTeam, nearestStream, scenario, router, detachedIds, orbitPoint],
   );
 
   function toggleScenario() {
@@ -1069,16 +1278,28 @@ export function OrgCanvas({
     setCreating(kind);
   }
 
-  const showHover = useCallback((id: string) => {
+  /** Anchors the hover card on the circle's own centre, not the cursor —
+   *  Greg's rule (2026-09-11) for every circular node: the card's top-left
+   *  corner sits exactly at the centre of the hovered circle. `wx`/`wy` are
+   *  world coordinates; converted here using the stage's live transform. */
+  const showHover = useCallback((id: string, wx: number, wy: number) => {
     const stage = stageRef.current;
-    const p = stage?.getPointerPosition();
-    if (!p) return;
-    setHover({ id, x: p.x, y: p.y });
+    if (!stage) return;
+    const k = stage.scaleX();
+    setHover({ id, x: stage.x() + wx * k, y: stage.y() + wy * k });
   }, []);
 
   const selected = selectedId ? byId.get(selectedId) : null;
   const hovered = hover ? byId.get(hover.id) : null;
   const panelOpen = !!selected || !!creating;
+
+  const openTaskPerson = openTaskPersonId ? byId.get(openTaskPersonId) : null;
+  const openTaskPersonTeams = useMemo(() => {
+    if (!openTaskPerson || openTaskPerson.kind !== "person") return [];
+    return openTaskPerson.allocations
+      .map((a) => byId.get(a.unitId)?.name)
+      .filter((n): n is string => !!n);
+  }, [openTaskPerson, byId]);
 
   const showTeams = lod !== "streams";
   const showPeople = lod === "people" || lod === "roles";
@@ -1225,11 +1446,22 @@ export function OrgCanvas({
           }}
         >
           <Layer listening={false}>
+            {moneyFlowLayout && (
+              <>
+                <GridBackdrop bounds={moneyFlowLayout.grid} />
+                <MoneyFlowScene layout={moneyFlowLayout} />
+              </>
+            )}
             {streamAgg.map((t) => {
               const hue = hueOf.get(t.id) ?? C.inkSoft;
               const inP = phase(introT, 0, 0.45);
+              // The analytics overlay (Allocation/Gaps/Cost-ROI) used to only
+              // paint the collapsed streams-LOD card. Now that the card is
+              // always on screen, dim/heat/badge apply directly to the hull
+              // itself instead, so the overlay keeps working at every zoom.
+              const ov = streamOverlay(t.id, t.openRoles, t.cost);
               return (
-              <Group key={`hull-${t.id}`} x={t.x} y={t.y} opacity={inP}>
+              <Group key={`hull-${t.id}`} x={t.x} y={t.y} opacity={(ov.dimmed ? 0.3 : 1) * inP}>
                 {dropStreamId === t.id && (
                   <Rect
                     x={-t.hw - 16}
@@ -1265,180 +1497,92 @@ export function OrgCanvas({
                     perfectDrawEnabled={false}
                   />
                 )}
-                {showTeams && (() => {
-                  // Header: the stream's identity, then who is accountable for it,
-                  // then its size. Each on its own line, and the name shrinks to fit
-                  // a narrow stream rather than wrapping into the lines below it.
-                  const label = t.name.toUpperCase();
-                  const inner = t.hw * 2 - 112;
-                  const nameSize = fitFontSize(label, inner, 34, 15);
-                  const isBucket = t.id === CROSS_CUTTING_ID;
-                  const yName = -t.hh + 38;
-                  const yOwner = yName + nameSize + 12;
-                  const yStats = yOwner + (isBucket ? 0 : 21);
-                  return (
-                    <>
-                      <Rect
-                        x={-t.hw + 46}
-                        y={yName - 2}
-                        width={5}
-                        height={yStats - yName + 20}
-                        cornerRadius={3}
-                        fill={hue}
-                        opacity={0.75}
-                      />
-                      <Text
-                        text={label}
-                        x={-t.hw + 66}
-                        y={yName}
-                        width={inner}
-                        wrap="none"
-                        ellipsis
-                        fontSize={nameSize}
-                        fontStyle="bold"
-                        fontFamily={FONT}
-                        fill={hue}
-                        opacity={0.75}
-                      />
-                      {!isBucket && (
-                        <Text
-                          text={t.leadName ? `Led by ${t.leadName}` : "No owner"}
-                          x={-t.hw + 66}
-                          y={yOwner}
-                          width={inner}
-                          wrap="none"
-                          ellipsis
-                          fontSize={16}
-                          fontStyle={t.leadName ? "normal" : "bold"}
-                          fontFamily={FONT}
-                          fill={t.leadName ? C.inkSoft : C.utilOver}
-                        />
-                      )}
-                      <Text
-                        text={
-                          t.teams === 0
-                            ? `Empty — add a ${lower(vocabulary.team.singular)} to fill it`
-                            : `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`
-                        }
-                        x={-t.hw + 66}
-                        y={yStats}
-                        width={inner}
-                        wrap="none"
-                        ellipsis
-                        fontSize={16}
-                        fontFamily={FONT}
-                        fill={C.inkSoft}
-                        opacity={0.85}
-                      />
-                    </>
-                  );
-                })()}
+                {ov.heatPct > 0 && (
+                  <Rect
+                    x={-t.hw}
+                    y={-t.hh}
+                    width={t.hw * 2}
+                    height={t.hh * 2}
+                    cornerRadius={40}
+                    fill={C.heat}
+                    opacity={ov.heatPct * 0.45}
+                    listening={false}
+                  />
+                )}
+                {/* A standing fact (open roles) stacks above an overlay-driven
+                    badge, both floating just above the card — same two-line
+                    stack the collapsed card used to show. */}
+                {t.openRoles > 0 && (
+                  <Text
+                    text={`${t.openRoles} open`}
+                    x={t.hw - CARD_W - CARD_PAD - 4}
+                    y={-t.hh + CARD_PAD - (ov.badge ? 36 : 18)}
+                    width={CARD_W}
+                    align="right"
+                    fontSize={13}
+                    fontStyle="bold"
+                    fontFamily={FONT}
+                    fill={C.utilOver}
+                    listening={false}
+                  />
+                )}
+                {ov.badge && (
+                  <Text
+                    text={ov.badge}
+                    x={t.hw - CARD_W - CARD_PAD - 4}
+                    y={-t.hh + CARD_PAD - 18}
+                    width={CARD_W}
+                    align="right"
+                    fontSize={13}
+                    fontStyle="bold"
+                    fontFamily={FONT}
+                    fill={C.heat}
+                    listening={false}
+                  />
+                )}
               </Group>
               );
             })}
           </Layer>
 
           <Layer>
-            {/* Drag handles. Only the header strip grabs, not the whole box:
-                the hull covers most of the viewport, and swallowing drags there
-                would cost you pan-anywhere, which is the more common gesture. */}
-            {showTeams &&
-              streamAgg.map((t) => {
-                // No handle on the cross-cutting bucket (not a real unit) or on
-                // an empty stream (nothing to move — its box is a placeholder).
-                if (t.id === CROSS_CUTTING_ID || t.teams === 0) return null;
-                const grabbing = draggingStreamId === t.id;
-                const w = Math.min(t.hw * 2 - 40, 560);
-                return (
-                  <Rect
-                    key={`grip-${t.id}`}
-                    x={t.x - t.hw + 20}
-                    y={t.y - t.hh + 14}
-                    width={w}
-                    height={116}
-                    cornerRadius={22}
-                    fill={hueOf.get(t.id) ?? C.inkSoft}
-                    opacity={grabbing ? 0.14 : 0}
-                    onMouseEnter={() => {
-                      const c = stageRef.current?.container();
-                      if (c) c.style.cursor = "move";
-                    }}
-                    onMouseLeave={() => {
-                      const c = stageRef.current?.container();
-                      if (c) c.style.cursor = "grab";
-                    }}
-                    onMouseDown={(e) => startStreamDrag(e, t.id)}
-                    onTouchStart={(e) => startStreamDrag(e, t.id)}
-                  />
-                );
-              })}
-
-            {!showTeams &&
-              streamAgg.map((t) => {
-                const ov = streamOverlay(t.id, t.openRoles, t.cost);
-                // Collapsed stream card — width grows with team count.
-                const bw = clamp(140 + t.teams * 26, 150, 300);
-                const bh = 104;
-                const tw = bw * 2 - 36;
-                return (
-                  <Group
-                    key={t.id}
-                    x={t.x}
-                    y={t.y}
-                    opacity={ov.dimmed ? 0.3 : 1}
-                    onMouseEnter={() => showHover(t.id)}
-                    onMouseLeave={() => setHover(null)}
-                  >
-                    <Rect
-                      x={-bw}
-                      y={-bh}
-                      width={bw * 2}
-                      height={bh * 2}
-                      cornerRadius={26}
-                      fill={C.white}
-                      stroke={hueOf.get(t.id) ?? C.ink}
-                      strokeWidth={5}
-                      shadowColor={C.ink}
-                      shadowBlur={26}
-                      shadowOpacity={0.1}
-                      shadowOffsetY={5}
-                      perfectDrawEnabled={false}
-                    />
-                    {ov.heatPct > 0 && (
-                      <Rect x={-bw} y={-bh} width={bw * 2} height={bh * 2} cornerRadius={26} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />
-                    )}
-                    <Text text={t.name} x={-tw / 2} y={-42} width={tw} align="center" fontSize={34} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
-                    <Text
-                      text={`${t.heads} people · ${money(t.cost)}/mo`}
-                      x={-tw / 2}
-                      y={4}
-                      width={tw}
-                      align="center"
-                      fontSize={20}
-                      fontFamily={FONT}
-                      fill={C.inkSoft}
-                      listening={false}
-                    />
-                    {t.openRoles > 0 && (
-                      <Text text={`${t.openRoles} open`} x={-tw / 2} y={32} width={tw} align="center" fontSize={19} fontStyle="bold" fontFamily={FONT} fill={C.utilOver} listening={false} />
-                    )}
-                    {ov.badge && (
-                      <Text
-                        text={ov.badge}
-                        x={-tw / 2}
-                        y={t.openRoles > 0 ? 58 : 32}
-                        width={tw}
-                        align="center"
-                        fontSize={18}
-                        fontStyle="bold"
-                        fontFamily={FONT}
-                        fill={C.heat}
-                        listening={false}
-                      />
-                    )}
-                  </Group>
-                );
-              })}
+            {/* Drag handles — the card strip grabs, not the whole box: the
+                hull covers most of the viewport, and swallowing drags there
+                would cost you pan-anywhere, which is the more common gesture.
+                Now that the card is always on screen (it no longer only
+                appears once teams are visible), the grip follows it and
+                works at every zoom level too. */}
+            {streamAgg.map((t) => {
+              // No handle on the cross-cutting bucket (not a real unit) or on
+              // an empty stream (nothing to move — its box is a placeholder).
+              if (t.id === CROSS_CUTTING_ID || t.teams === 0) return null;
+              const grabbing = draggingStreamId === t.id;
+              const cardH =
+                CARD_PAD * 2 + CARD_TITLE_LINE_H + CARD_LINE_H /* owner line */ + CARD_LINE_H;
+              return (
+                <Rect
+                  key={`grip-${t.id}`}
+                  x={t.x + t.hw - CARD_PAD - CARD_W}
+                  y={t.y - t.hh + CARD_PAD}
+                  width={CARD_W}
+                  height={cardH}
+                  cornerRadius={12}
+                  fill={hueOf.get(t.id) ?? C.inkSoft}
+                  opacity={grabbing ? 0.14 : 0}
+                  onMouseEnter={() => {
+                    const c = stageRef.current?.container();
+                    if (c) c.style.cursor = "move";
+                  }}
+                  onMouseLeave={() => {
+                    const c = stageRef.current?.container();
+                    if (c) c.style.cursor = "grab";
+                  }}
+                  onMouseDown={(e) => startStreamDrag(e, t.id)}
+                  onTouchStart={(e) => startStreamDrag(e, t.id)}
+                />
+              );
+            })}
+            <AllocationScene hubs={allocationHubs} />
 
             {showTeams &&
               teams.map((s, si) => {
@@ -1481,7 +1625,7 @@ export function OrgCanvas({
                     draggable
                     onDragMove={(e) => onTeamDragMove(e, s)}
                     onDragEnd={(e) => onNodeDragEnd(e, s)}
-                    onMouseEnter={() => showHover(s.id)}
+                    onMouseEnter={() => showHover(s.id, s.x, s.y)}
                     onMouseLeave={() => setHover(null)}
                     onClick={() => selectNode(s.id)}
                     onTap={() => selectNode(s.id)}
@@ -1568,7 +1712,9 @@ export function OrgCanvas({
                   opacity={(ov.dimmed ? 0.28 : 1) * inP}
                   onClick={() => selectNode(p.id)}
                   onTap={() => selectNode(p.id)}
-                  onMouseEnter={() => showHover(p.id)}
+                  onDblClick={() => setOpenTaskPersonId(p.id)}
+                  onDblTap={() => setOpenTaskPersonId(p.id)}
+                  onMouseEnter={() => showHover(p.id, ix, iy)}
                   onMouseLeave={() => setHover(null)}
                 >
                   {spansStreams && (
@@ -1633,10 +1779,12 @@ export function OrgCanvas({
                     draggable
                     onDragMove={onPersonDragMove}
                     onDragEnd={(e) => onNodeDragEnd(e, p)}
-                    onMouseEnter={() => showHover(p.id)}
+                    onMouseEnter={() => showHover(p.id, ix, iy)}
                     onMouseLeave={() => setHover(null)}
                     onClick={() => selectNode(p.id)}
                     onTap={() => selectNode(p.id)}
+                    onDblClick={() => setOpenTaskPersonId(p.id)}
+                    onDblTap={() => setOpenTaskPersonId(p.id)}
                   >
                     <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : seatColor(p)} strokeWidth={shared ? 5 : 3.5} dash={shared ? [5, 3] : undefined} />
                     {/* The over-110% pip is a *fact*, not a colour choice — it
@@ -1688,6 +1836,37 @@ export function OrgCanvas({
           </Layer>
         </Stage>
 
+        {/* Persistent mini-map (Greg, 2026-09-11) — Galaxy Holdings' direct
+            children (the streams) stay reachable no matter how deep you've
+            zoomed. Pinned to a screen corner, ignores pan/zoom entirely;
+            click a dot to frame that stream. */}
+        {moneyFlowLayout && streamAgg.length > 0 && (
+          <div style={S.miniMap}>
+            <div style={S.miniMapTitle}>{vocabulary.stream.plural}</div>
+            <div style={S.miniMapCanvas}>
+              {streamAgg.map((t) => {
+                const { company } = moneyFlowLayout;
+                const nx = ((t.x - (company.x - company.hw)) / (company.hw * 2)) * 100;
+                const ny = ((t.y - (company.y - company.hh)) / (company.hh * 2)) * 100;
+                return (
+                  <button
+                    key={t.id}
+                    title={t.name}
+                    aria-label={`Jump to ${t.name}`}
+                    onClick={() => frameBox(t)}
+                    style={{
+                      ...S.miniMapDot,
+                      left: `${clamp(nx, 3, 97)}%`,
+                      top: `${clamp(ny, 3, 97)}%`,
+                      background: hueOf.get(t.id) ?? C.inkSoft,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div style={S.lodDock}>
           {lodLabels(vocabulary).map(([id, label]) => (
             <span key={id} style={S.lodItem(lod === id)}>
@@ -1718,14 +1897,7 @@ export function OrgCanvas({
         </div>
 
         {hovered && hover && (
-          <div style={{ ...S.bubble, left: hover.x, top: hover.y }}>
-            <strong>{hovered.name}</strong>
-            <span style={{ fontSize: 11.5, color: "#ffffffbf" }}>
-              {hovered.kind === "person"
-                ? `${hovered.title ?? ""} · ${utilOf(hovered) || "—"}${utilOf(hovered) ? "%" : ""}`
-                : `${teamStats.get(hovered.id)?.heads ?? 0} people · ${money(teamStats.get(hovered.id)?.cost ?? 0)}/mo`}
-            </span>
-          </div>
+          <HoverCard node={hovered} x={hover.x} y={hover.y} disciplines={disciplines} teamStats={teamStats} />
         )}
       </div>
 
@@ -1773,6 +1945,7 @@ export function OrgCanvas({
                   disciplines={disciplines}
                   onSelect={selectNode}
                   onEdit={() => setEditing(true)}
+                  onOpenBoard={() => setOpenTaskPersonId(selected.id)}
                 />
               )}
               {!creating && selected?.kind === "person" && editing && (
@@ -1810,8 +1983,76 @@ export function OrgCanvas({
           </>
         )}
       </aside>
+
+      {openTaskPerson && openTaskPerson.kind === "person" && (
+        <PersonTaskBoard
+          key={openTaskPerson.id}
+          person={openTaskPerson}
+          accent={seatColor(openTaskPerson)}
+          teamNames={openTaskPersonTeams}
+          onBack={() => setOpenTaskPersonId(null)}
+        />
+      )}
     </div>
     </VocabularyProvider>
+  );
+}
+
+/**
+ * The hover-only "quick glance" card (Greg, 2026-09-11) — every circular
+ * node (person seat, ghost seat, team circle) shows this on hover, with its
+ * top-left corner pinned exactly to the circle's centre (no cursor-tracking,
+ * no centring transform). Click still opens the full side panel; this is
+ * strictly a richer preview, not a replacement for it.
+ */
+function HoverCard({
+  node,
+  x,
+  y,
+  disciplines,
+  teamStats,
+}: {
+  node: CanvasNode;
+  x: number;
+  y: number;
+  disciplines: Discipline[];
+  teamStats: Map<string, TeamStats>;
+}) {
+  if (node.kind === "person") {
+    const u = utilOf(node);
+    const discipline = disciplines.find((d) => d.id === node.disciplineId) ?? null;
+    return (
+      <div style={{ ...S.hoverCard, left: x, top: y }}>
+        <div style={S.hoverName}>{node.name}</div>
+        <div style={S.hoverSub}>{node.title ?? "—"}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+          {discipline && <span style={S.hoverTag}>{discipline.name}</span>}
+          {node.employment !== "fte" && node.employment !== "unknown" && (
+            <span style={S.hoverTag}>{EMPLOYMENT_LABELS[node.employment]}</span>
+          )}
+          {node.location && <span style={S.hoverTag}>{node.location}</span>}
+        </div>
+        <div style={{ marginTop: 9, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+          <span style={{ color: C.inkSoft }}>Delivery load</span>
+          <strong style={{ color: utilColor(u) }}>{u ? `${u}%` : "—"}</strong>
+        </div>
+      </div>
+    );
+  }
+  const st = teamStats.get(node.id);
+  return (
+    <div style={{ ...S.hoverCard, left: x, top: y }}>
+      <div style={S.hoverName}>{node.name}</div>
+      <div style={{ ...S.hoverSub, fontWeight: node.leadName ? 400 : 700, color: node.leadName ? C.inkSoft : C.utilOver }}>
+        {node.leadName ? `Led by ${node.leadName}` : "No owner"}
+      </div>
+      <div style={{ ...S.hoverSub, marginTop: 7 }}>
+        {plural(st?.heads ?? 0, "person").replace("persons", "people")} · {money(st?.cost ?? 0)}/mo
+      </div>
+      {(st?.openRoles ?? 0) > 0 && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.utilOver, marginTop: 4 }}>{st!.openRoles} open</div>
+      )}
+    </div>
   );
 }
 
@@ -1823,6 +2064,7 @@ function PersonBody({
   disciplines,
   onSelect,
   onEdit,
+  onOpenBoard,
 }: {
   person: CanvasPerson;
   byId: Map<string, CanvasNode>;
@@ -1830,6 +2072,7 @@ function PersonBody({
   disciplines: Discipline[];
   onSelect: (id: string) => void;
   onEdit: () => void;
+  onOpenBoard: () => void;
 }) {
   const u = utilOf(person);
   const mgr = person.managerId ? byId.get(person.managerId) : null;
@@ -1838,9 +2081,14 @@ function PersonBody({
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ color: C.inkSoft, fontSize: 13 }}>{person.title}</div>
-        <button style={S.editBtn} onClick={onEdit}>
-          Edit
-        </button>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <button style={S.editBtn} onClick={onOpenBoard}>
+            Zoom to tasks →
+          </button>
+          <button style={S.editBtn} onClick={onEdit}>
+            Edit
+          </button>
+        </div>
       </div>
       {/* Discipline is what they *are*; the title above is their HR label. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
@@ -2870,6 +3118,43 @@ const S = {
     cursor: "pointer",
   },
   canvasWrap: { position: "relative" as const, flex: 1, overflow: "hidden", touchAction: "none" as const },
+  miniMap: {
+    position: "absolute" as const,
+    left: 14,
+    top: 14,
+    width: 172,
+    padding: "9px 10px 10px",
+    background: "#ffffffeb",
+    border: `1px solid ${C.line}`,
+    borderRadius: 12,
+    zIndex: 20,
+  },
+  miniMapTitle: {
+    fontSize: 10.5,
+    fontWeight: 700,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+    color: C.inkSoft,
+    marginBottom: 6,
+  },
+  miniMapCanvas: {
+    position: "relative" as const,
+    width: "100%",
+    height: 96,
+    background: C.paper,
+    borderRadius: 8,
+    border: `1px solid ${C.line}`,
+  },
+  miniMapDot: {
+    position: "absolute" as const,
+    width: 9,
+    height: 9,
+    borderRadius: "50%",
+    border: `1.5px solid ${C.white}`,
+    transform: "translate(-50%, -50%)",
+    cursor: "pointer",
+    padding: 0,
+  },
   lodDock: {
     position: "absolute" as const,
     right: 14,
@@ -3019,20 +3304,29 @@ const S = {
     pointerEvents: "none" as const,
   },
   sw: { display: "inline-block", width: 10, height: 10, borderRadius: "50%", marginRight: 5, verticalAlign: "middle" },
-  bubble: {
+  hoverCard: {
     position: "absolute" as const,
-    transform: "translate(-50%, calc(-100% - 14px))",
-    background: C.ink,
-    color: C.white,
-    padding: "8px 12px",
-    borderRadius: 10,
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 2,
+    // Deliberately no centring transform — top-left corner sits exactly at
+    // the hovered circle's centre (Greg's rule, applies to every circular
+    // node at every zoom level).
+    background: C.white,
+    color: C.ink,
+    padding: "11px 13px",
+    borderRadius: 12,
+    border: `1px solid ${C.line}`,
+    boxShadow: "0 10px 28px rgba(34,39,46,0.18)",
     pointerEvents: "none" as const,
-    fontSize: 13,
-    whiteSpace: "nowrap" as const,
+    width: 196,
     zIndex: 35,
+  },
+  hoverName: { fontSize: 14.5, fontWeight: 700, color: C.ink, lineHeight: 1.25 },
+  hoverSub: { fontSize: 12, color: C.inkSoft, marginTop: 2, lineHeight: 1.3 },
+  hoverTag: {
+    fontSize: 10.5,
+    color: C.inkSoft,
+    background: C.paper,
+    borderRadius: 999,
+    padding: "2px 7px",
   },
   panel: {
     position: "absolute" as const,
