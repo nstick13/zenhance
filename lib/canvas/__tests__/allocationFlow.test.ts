@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeAllocationSpokes, computeHubGeometry, hubRecipient, TIER_STROKE, type Box } from "../allocationFlow";
+import { computeAllocationSpokes, hubTitleRadius, hubRecipient, TIER_STROKE, type Box } from "../allocationFlow";
 import { LINE_GAP } from "../lineRouting";
 
 describe("computeAllocationSpokes", () => {
@@ -30,16 +30,10 @@ describe("computeAllocationSpokes", () => {
     expect(onVerticalEdge || onHorizontalEdge).toBe(true);
   });
 
-  it("routes each spoke octilinearly — every segment is horizontal, vertical, or 45°", () => {
+  it("routes each spoke as a plain straight line — just the two endpoints", () => {
     const lines = computeAllocationSpokes(hub, children);
     for (const line of lines) {
-      for (let i = 1; i < line.points.length; i++) {
-        const dx = line.points[i].x - line.points[i - 1].x;
-        const dy = line.points[i].y - line.points[i - 1].y;
-        const axisAligned = dx === 0 || dy === 0;
-        const diagonal = Math.abs(Math.abs(dx) - Math.abs(dy)) < 0.5;
-        expect(axisAligned || diagonal).toBe(true);
-      }
+      expect(line.points).toHaveLength(2);
     }
   });
 
@@ -83,60 +77,24 @@ describe("computeAllocationSpokes", () => {
   });
 });
 
-describe("computeHubGeometry", () => {
-  const hull: Box = { x: 500, y: 500, hw: 400, hh: 300 };
-
-  it("locks the card to the hull's top-right corner", () => {
-    const { card } = computeHubGeometry(hull, true, false);
-    expect(card.x + card.hw).toBeLessThanOrEqual(hull.x + hull.hw);
-    expect(card.y - card.hh).toBeGreaterThanOrEqual(hull.y - hull.hh);
-    // Right-anchored: close to the hull's right edge, not centred or left.
-    expect(hull.x + hull.hw - (card.x + card.hw)).toBeLessThan(30);
+describe("hubTitleRadius", () => {
+  it("grows with child count", () => {
+    expect(hubTitleRadius(6)).toBeGreaterThan(hubTitleRadius(1));
   });
 
-  it("gives a shorter card when there's no owner line", () => {
-    const withOwner = computeHubGeometry(hull, true, false);
-    const withoutOwner = computeHubGeometry(hull, false, false);
-    expect(withoutOwner.card.hh).toBeLessThan(withOwner.card.hh);
-    // Same anchor either way — only the height (and so the vertical centre) changes.
-    expect(withoutOwner.card.x).toBe(withOwner.card.x);
+  it("stays within a sane min/max band regardless of extreme input", () => {
+    expect(hubTitleRadius(0)).toBeGreaterThanOrEqual(78);
+    expect(hubTitleRadius(1000)).toBeLessThanOrEqual(160);
   });
 
-  it("has no circle while collapsed, and one just below the card once expanded", () => {
-    const collapsed = computeHubGeometry(hull, true, false);
-    expect(collapsed.circle).toBeNull();
-
-    const expanded = computeHubGeometry(hull, true, true);
-    expect(expanded.circle).not.toBeNull();
-    expect(expanded.card).toEqual(collapsed.card); // same card either way
-    expect(expanded.circle!.y).toBeGreaterThan(expanded.card.y + expanded.card.hh);
-    expect(expanded.circle!.x).toBe(expanded.card.x);
-  });
-
-  it("grows the card by one line when it carries a produced-value line", () => {
-    const without = computeHubGeometry(hull, true, false, false);
-    const withProduced = computeHubGeometry(hull, true, false, true);
-    expect(withProduced.card.hh).toBeGreaterThan(without.card.hh);
-    expect(withProduced.card.x).toBe(without.card.x); // same anchor, only height changes
-  });
-
-  it("defaults to no produced-value line when the argument is omitted", () => {
-    expect(computeHubGeometry(hull, true, false)).toEqual(computeHubGeometry(hull, true, false, false));
+  it("is deterministic", () => {
+    expect(hubTitleRadius(4)).toBe(hubTitleRadius(4));
   });
 });
 
 describe("hubRecipient", () => {
-  const hull: Box = { x: 0, y: 0, hw: 400, hh: 300 };
-
-  it("is the card while collapsed", () => {
-    const geo = computeHubGeometry(hull, true, false);
-    expect(hubRecipient(geo)).toEqual(geo.card);
-  });
-
-  it("is the circle once expanded", () => {
-    const geo = computeHubGeometry(hull, true, true);
-    const r = hubRecipient(geo);
-    expect(r.x).toBe(geo.circle!.x);
-    expect(r.y).toBe(geo.circle!.y);
+  it("turns a title circle into a square Box a spoke can anchor to", () => {
+    const circle = { x: 10, y: -20, r: 90 };
+    expect(hubRecipient(circle)).toEqual({ x: 10, y: -20, hw: 90, hh: 90 });
   });
 });

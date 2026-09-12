@@ -1,5 +1,6 @@
 import type { OrgUnit, Person, Assignment } from "@/lib/db/schema";
 import { indexById, childUnitsByParent, rootUnits } from "@/lib/org/model";
+import { orbitPositions, angleBetween } from "./radialLayout";
 
 /**
  * Pure, client-safe transform from the org snapshot (the same tree
@@ -130,11 +131,6 @@ export const teamNodeRadius = (seats: number): number => Math.round(clampN(58 + 
 export const teamRingRadius = (seats: number): number =>
   Math.round(Math.max(teamNodeRadius(seats) + 54, (seats * SEAT_ARC) / (2 * Math.PI)));
 
-const ring = (i: number, count: number, radius: number, cx: number, cy: number): Position => {
-  const angle = (2 * Math.PI * i) / Math.max(1, count) - Math.PI / 2;
-  return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
-};
-
 export type CrossCuttingMode = "bucket" | "connected";
 
 export function buildCanvasMap(
@@ -212,21 +208,20 @@ export function buildCanvasMap(
   if (usesCrossCutting)
     streamList.push({ id: CROSS_CUTTING_ID, name: CROSS_CUTTING_NAME, expectedRoi: null, leadPersonId: null, leadName: null });
 
-  // --- anchors: streams laid out in a grid, cross-cutting set apart ----------
-  const STREAM_SPACING = 1400;
+  // --- anchors: the "solar system" layout (Greg, 2026-09-12) ----------------
+  // Exec (cross-cutting, merged with the executive-office concept) sits at
+  // the absolute centre. Every real stream ("function") orbits it, spread
+  // evenly around the full circle — the root-level case has no grandparent
+  // to bias away from, so rule 1 (even distribution) applies rather than
+  // rule 2 (outward-biased arc), which kicks in one level down.
+  const EXEC_ANCHOR: Position = { x: 0, y: 0 };
   const realStreams = streamList.filter((t) => t.id !== CROSS_CUTTING_ID);
-  const perRow = Math.max(1, Math.ceil(Math.sqrt(realStreams.length)));
+  const FUNCTION_ORBIT_RADIUS = Math.max(1800, 1400 + realStreams.length * 200);
   const streamAnchor = new Map<string, Position>();
-  realStreams.forEach((t, i) => {
-    streamAnchor.set(t.id, {
-      x: (i % perRow) * STREAM_SPACING,
-      y: Math.floor(i / perRow) * STREAM_SPACING,
-    });
+  orbitPositions(EXEC_ANCHOR, realStreams.length, FUNCTION_ORBIT_RADIUS, null).forEach((pos, i) => {
+    streamAnchor.set(realStreams[i].id, pos);
   });
-  if (usesCrossCutting) {
-    const midCol = (Math.min(perRow, realStreams.length) - 1) / 2;
-    streamAnchor.set(CROSS_CUTTING_ID, { x: midCol * STREAM_SPACING, y: -STREAM_SPACING });
-  }
+  if (usesCrossCutting) streamAnchor.set(CROSS_CUTTING_ID, EXEC_ANCHOR);
 
   const nodes: CanvasNode[] = [];
   const teamAnchor = new Map<string, Position>();
@@ -258,8 +253,12 @@ export function buildCanvasMap(
     }
     const streamTeams = teamsByStream.get(t.id) ?? [];
     const teamOrbitRadius = Math.max(300, 240 + streamTeams.length * 22);
+    // Rule 2: teams fan out on the side of their function furthest from
+    // Exec, instead of wrapping all the way around it.
+    const awayFromExec = angleBetween(anchor, EXEC_ANCHOR);
+    const teamSeeds = orbitPositions(anchor, streamTeams.length, teamOrbitRadius, awayFromExec);
     streamTeams.forEach((team, i) => {
-      const seed = ring(i, streamTeams.length, teamOrbitRadius, anchor.x, anchor.y);
+      const seed = teamSeeds[i];
       const pos = positions.get(`unit:${team.id}`) ?? seed;
       teamAnchor.set(team.id, pos);
       const openRoles = assignments.filter((a) => a.orgUnitId === team.id && a.isOpenRole).length;
@@ -365,8 +364,13 @@ export function buildCanvasMap(
     if (!anchor) continue;
     members.sort((a, b) => a.name.localeCompare(b.name));
     const radius = teamRingRadius(seatsOf(homeId));
+    // Rule 2: people fan out on the side of their team furthest from its
+    // function (the team's own "parent" in this visual hierarchy).
+    const functionAnchor = streamAnchor.get(teamToStreamId.get(homeId) ?? "") ?? EXEC_ANCHOR;
+    const awayFromFunction = angleBetween(anchor, functionAnchor);
+    const personSeeds = orbitPositions(anchor, members.length, radius, awayFromFunction);
     members.forEach((p, i) => {
-      const seed = ring(i, members.length, radius, anchor.x, anchor.y);
+      const seed = personSeeds[i];
       const pos = positions.get(`person:${p.id}`) ?? seed;
       const allocations: CanvasAllocation[] = (assignmentsByPerson.get(p.id) ?? []).map((a) => ({
         assignmentId: a.id,
@@ -384,13 +388,16 @@ export function buildCanvasMap(
     });
   }
 
-  // Place any truly unallocated cross-cutting people in the bucket
+  // Place any truly unallocated cross-cutting people in the bucket — Exec's
+  // own direct people. Exec has no grandparent to bias away from, so this
+  // is rule 1 (even, full circle) again, same as the functions orbiting it.
   if (bucketMembers.length > 0) {
     const anchor = teamAnchor.get(CROSS_CUTTING_ID);
     if (anchor) {
       const radius = teamRingRadius(bucketMembers.length);
+      const bucketSeeds = orbitPositions(anchor, bucketMembers.length, radius, null);
       bucketMembers.forEach((p, i) => {
-        const seed = ring(i, bucketMembers.length, radius, anchor.x, anchor.y);
+        const seed = bucketSeeds[i];
         const pos = positions.get(`person:${p.id}`) ?? seed;
         nodes.push({
           id: p.id, kind: "person", name: p.name, x: pos.x, y: pos.y,

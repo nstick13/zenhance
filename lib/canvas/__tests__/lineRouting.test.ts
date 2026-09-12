@@ -1,46 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { octilinearPath, pointAlongPath, fanOffsets, fanPoint, computeSpokes } from "../lineRouting";
+import { straightPath, pointAlongPath, fanOffsets, fanPoint, computeSpokes } from "../lineRouting";
 
-describe("octilinearPath", () => {
-  it("passes an already-horizontal line through unchanged", () => {
-    expect(octilinearPath({ x: 0, y: 50 }, { x: 200, y: 50 })).toEqual([
+describe("straightPath", () => {
+  it("is just the two endpoints, no bend", () => {
+    expect(straightPath({ x: 0, y: 50 }, { x: 200, y: 50 })).toEqual([
       { x: 0, y: 50 },
       { x: 200, y: 50 },
     ]);
   });
 
-  it("passes an already-vertical line through unchanged", () => {
-    expect(octilinearPath({ x: 30, y: 0 }, { x: 30, y: 400 })).toEqual([
-      { x: 30, y: 0 },
-      { x: 30, y: 400 },
-    ]);
-  });
-
-  it("passes an already-45° line through unchanged", () => {
-    expect(octilinearPath({ x: 0, y: 0 }, { x: 100, y: 100 })).toEqual([
+  it("works the same for a diagonal, non-axis-aligned pair", () => {
+    expect(straightPath({ x: 0, y: 0 }, { x: 300, y: 100 })).toEqual([
       { x: 0, y: 0 },
-      { x: 100, y: 100 },
+      { x: 300, y: 100 },
     ]);
-  });
-
-  it("bends a shallow line: diagonal until the short axis aligns, then straight", () => {
-    const path = octilinearPath({ x: 0, y: 0 }, { x: 300, y: 100 });
-    expect(path).toHaveLength(3);
-    const [a, bend, b] = path;
-    expect(a).toEqual({ x: 0, y: 0 });
-    expect(b).toEqual({ x: 300, y: 100 });
-    // The bend is a true 45° step off `a` (equal x/y movement)...
-    expect(Math.abs(bend.x - a.x)).toBeCloseTo(Math.abs(bend.y - a.y));
-    // ...and from there to `b` is a pure horizontal run (short axis already closed).
-    expect(bend.y).toBe(b.y);
-  });
-
-  it("bends a steep line the same way, on the other axis", () => {
-    const path = octilinearPath({ x: 0, y: 0 }, { x: 100, y: 300 });
-    expect(path).toHaveLength(3);
-    const [a, bend, b] = path;
-    expect(Math.abs(bend.x - a.x)).toBeCloseTo(Math.abs(bend.y - a.y));
-    expect(bend.x).toBe(b.x);
   });
 });
 

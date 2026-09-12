@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Stage, Layer, Group, Circle, Rect, Text, Arc } from "react-konva";
+import { Stage, Layer, Group, Circle, Text, Arc } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { OrgUnit, Person, Assignment, MapNodeRow, Discipline } from "@/lib/db/schema";
@@ -59,7 +59,6 @@ import { VocabularyProvider, useVocabulary } from "@/components/VocabularyProvid
 import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
 import { tasksForPerson, inProgressCards, producedValue, type MockTask } from "@/lib/mock/personTasks";
 import {
-  GridBackdrop,
   MoneyFlowScene,
   AllocationScene,
   SpokeScene,
@@ -67,17 +66,9 @@ import {
   type ColoredSpoke,
 } from "@/components/viz/MoneyFlow";
 import { computeSpokes } from "@/lib/canvas/lineRouting";
+import { orbitPositions, angleBetween } from "@/lib/canvas/radialLayout";
 import { computeMoneyFlowLayout, DEFAULT_COMPANY_NAME } from "@/lib/canvas/moneyFlow";
-import {
-  computeAllocationSpokes,
-  computeHubGeometry,
-  hubRecipient,
-  CARD_W,
-  CARD_PAD,
-  CARD_TITLE_LINE_H,
-  CARD_LINE_H,
-} from "@/lib/canvas/allocationFlow";
-import { snap as snapToGrid } from "@/lib/canvas/grid";
+import { computeAllocationSpokes, hubRecipient, hubTitleRadius } from "@/lib/canvas/allocationFlow";
 
 const CROSS_CUTTING_MODE = "connected" as const;
 const GHOST_R = 18; // borrowed seat — deliberately smaller than a real seat (22)
@@ -303,8 +294,8 @@ export function OrgCanvas({
   // "Snap to object" orbit (Greg, 2026-09-11), client-side only — resets on
   // reload, no schema change yet. A person orbits their home team by default:
   // dragging the team carries them along. Drag a person individually and
-  // they detach (falls back to plain grid-snap); the next time their team
-  // moves, a detached person snaps back onto the team's ring instead of
+  // they detach (falls back to plain free placement); the next time their
+  // team moves, a detached person snaps back onto the team's ring instead of
   // just translating, which is what "moving back into orbit" means here.
   // Reassigning a person to a different team re-attaches them fresh.
   const [detachedIds, setDetachedIds] = useState<Set<string>>(new Set());
@@ -313,6 +304,12 @@ export function OrgCanvas({
   // CanvasNode-typed `hover`/`HoverCard` above, since a work-item card isn't
   // a CanvasNode. Screen coordinates, same convention as showHover.
   const [cardHover, setCardHover] = useState<{ x: number; y: number; task: MockTask } | null>(null);
+
+  // A hub's (company/stream) hover — same idea again, since an AllocHub
+  // isn't a CanvasNode either. The rich owner/stats/produced-value detail
+  // that used to live on a permanent corner card now only shows here, on
+  // hover of the hub's central title circle (Greg, 2026-09-12).
+  const [hubHover, setHubHover] = useState<{ hub: AllocHub; x: number; y: number } | null>(null);
 
   // --- lens (S3 / S5) --------------------------------------------------------
   // Two tiers, deliberately. `initialLens` is the WORKSPACE DEFAULT — what a
@@ -652,12 +649,13 @@ export function OrgCanvas({
   }, [people, byId, seatsByTeam]);
 
   const streamAgg = useMemo(() => {
-    // An empty stream has no contents to derive a box from, so it gets a
+    // An empty stream has no contents to derive a circle from, so it gets a
     // placeholder parked to the right of everything else. As soon as it holds
-    // a team the box derives from its contents like every other stream.
+    // a team the circle derives from its contents like every other stream.
     const empties: string[] = [];
     let farRight = 0;
     for (const s of teams) farRight = Math.max(farRight, s.x + 700);
+    const PAD = 90; // clearance beyond the farthest team's own ring + label headroom
 
     return streams
       .map((t) => {
@@ -670,30 +668,31 @@ export function OrgCanvas({
             ...t,
             x: farRight + 380,
             y: slot * 420,
-            hw: 320,
-            hh: 150,
+            hw: 280,
+            hh: 280,
             heads: 0,
             cost: 0,
             openRoles: 0,
             teams: 0,
           };
         }
-        // A stream is drawn as a rounded rectangle sized to contain its teams
-        // *and* their member rings — so more teams reads as a bigger block.
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        // A stream is drawn as a circle sized to contain its teams *and*
+        // their member rings — so more teams reads as a bigger circle.
+        // Centred on the teams' own centroid, not a bounding-box centre,
+        // since it's a circle now rather than a rectangle.
+        let cx = 0, cy = 0;
         for (const n of own) {
-          const rr = teamRingRadius(seatsByTeam.get(n.id) ?? 0) + 52; // + label headroom
-          minX = Math.min(minX, n.x - rr);
-          maxX = Math.max(maxX, n.x + rr);
-          minY = Math.min(minY, n.y - rr);
-          maxY = Math.max(maxY, n.y + rr);
+          cx += n.x;
+          cy += n.y;
         }
-        const PAD_X = 70, PAD_TOP = 150, PAD_BOTTOM = 60; // PAD_TOP clears the stream header block
-        minX -= PAD_X; maxX += PAD_X; minY -= PAD_TOP; maxY += PAD_BOTTOM;
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        const hw = (maxX - minX) / 2;
-        const hh = (maxY - minY) / 2;
+        cx /= own.length;
+        cy /= own.length;
+        let radius = 0;
+        for (const n of own) {
+          const rr = teamRingRadius(seatsByTeam.get(n.id) ?? 0) + 52;
+          radius = Math.max(radius, Math.hypot(n.x - cx, n.y - cy) + rr);
+        }
+        radius += PAD;
         let heads = 0;
         let cost = 0;
         let openRoles = 0;
@@ -704,7 +703,7 @@ export function OrgCanvas({
           cost += st.cost;
           openRoles += st.openRoles;
         }
-        return { ...t, x: cx, y: cy, hw, hh, heads, cost, openRoles, teams: own.length };
+        return { ...t, x: cx, y: cy, hw: radius, hh: radius, heads, cost, openRoles, teams: own.length };
       })
       .filter((t): t is NonNullable<typeof t> => t !== null);
   }, [streams, teams, teamStats, seatsByTeam]);
@@ -746,20 +745,17 @@ export function OrgCanvas({
   }, [streamAgg]);
 
   // --- allocation spokes — how each parent's budget splits across its
-  // children. One "company" hub over the streams, and (once teams are
-  // visible) one hub per stream over its own teams. Recursive by
-  // construction: computeAllocationSpokes doesn't know which level it's at.
+  // children. One "company" hub over the streams, and one hub per stream
+  // over its own teams. Recursive by construction: computeAllocationSpokes
+  // doesn't know which level it's at.
   //
-  // Card placement (Greg, 2026-09-07): every hull's card is locked to its
-  // own top-right corner and always rendered — the SAME card at every zoom
-  // level, so "collapsing" as you zoom out is just the hull's background
-  // fading away around a card that was there all along, not a swap between
-  // two different elements. Once a hull's children are visible, a small
-  // circle appears just below its card and becomes the real spoke endpoint
-  // on both sides (the line arriving from its own parent, and the lines
-  // fanning out to its children) — while collapsed, the card itself is the
-  // endpoint. The company's children (the streams) are always present in
-  // some form, so the company hub is always "expanded."
+  // Title circle (Greg, 2026-09-12): every hub — company or stream — is a
+  // circle sized to contain its children, with a smaller circle at its
+  // exact centre carrying the hub's title, always rendered (there's no
+  // "collapsed" state any more; every hub's title circle is permanent).
+  // Spokes always touch that centre, hidden behind the circle. The richer
+  // owner/stats/produced-value detail that used to live on a permanent
+  // corner card now only shows on hover — see HubHoverCard below.
   // What each person is currently producing (Greg, 2026-09-12) — same mock
   // in-progress cards the "cards" LOD shows in orbit, summed per person once
   // here so every hub level (team/stream/company) rolls up from the same
@@ -790,82 +786,69 @@ export function OrgCanvas({
 
     const totalHeads = streamAgg.reduce((s, t) => s + t.heads, 0);
     const totalCost = streamAgg.reduce((s, t) => s + t.cost, 0);
-    const companyHull = {
+    const companyCircle = {
       x: moneyFlowLayout.company.x,
       y: moneyFlowLayout.company.y,
-      hw: moneyFlowLayout.company.hw,
-      hh: moneyFlowLayout.company.hh,
+      r: hubTitleRadius(streamAgg.length),
     };
-    const companyGeo = computeHubGeometry(companyHull, false, true, companyValue > 0);
 
-    // Every stream's own geometry, computed once and reused both as the
+    // Every stream's own title circle, computed once and reused both as the
     // target of the company's outgoing spoke and as the hub for the
     // stream's own outgoing spokes to its teams — so there's exactly one
     // place each stream "receives" a line, whichever level is asking.
-    const streamGeo = new Map<string, ReturnType<typeof computeHubGeometry>>();
+    const streamCircle = new Map<string, { x: number; y: number; r: number }>();
     for (const t of streamAgg) {
-      const hull = { x: t.x, y: t.y, hw: t.hw, hh: t.hh };
-      streamGeo.set(
-        t.id,
-        computeHubGeometry(hull, t.id !== CROSS_CUTTING_ID, lod !== "streams", (streamValue.get(t.id) ?? 0) > 0),
-      );
+      streamCircle.set(t.id, { x: t.x, y: t.y, r: hubTitleRadius(t.teams) });
     }
 
     hubs.push({
       id: "company",
-      card: companyGeo.card,
       title: DEFAULT_COMPANY_NAME.toUpperCase(),
       ownerLine: null,
       statsLine: `${plural(totalHeads, "person").replace("persons", "people")} · ${money(totalCost)}/mo`,
       producedLine: companyValue > 0 ? `Produces ~${money(companyValue)}/mo` : null,
       hue: C.ink,
       tier: 1,
-      circle: companyGeo.circle,
+      circle: companyCircle,
       lines: computeAllocationSpokes(
-        hubRecipient(companyGeo),
+        hubRecipient(companyCircle),
         streamAgg.map((t) => {
-          const r = hubRecipient(streamGeo.get(t.id)!);
+          const r = hubRecipient(streamCircle.get(t.id)!);
           return { id: t.id, ...r, cost: t.cost };
         }),
         1,
       ),
     });
 
-    if (lod !== "streams") {
-      for (const t of streamAgg) {
-        const own = teams.filter((team) => team.streamId === t.id);
-        if (own.length === 0) continue;
-        const hue = hueOf.get(t.id) ?? C.inkSoft;
-        const geo = streamGeo.get(t.id)!;
-        const isBucket = t.id === CROSS_CUTTING_ID;
-        const value = streamValue.get(t.id) ?? 0;
-        hubs.push({
-          id: `stream-${t.id}`,
-          card: geo.card,
-          title: t.name.toUpperCase(),
-          ownerLine: isBucket ? null : { text: t.leadName ? `Led by ${t.leadName}` : "No owner", warn: !t.leadName },
-          statsLine:
-            t.teams === 0
-              ? `Empty — add a ${lower(vocabulary.team.singular)} to fill it`
-              : `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`,
-          producedLine: value > 0 ? `Produces ~${money(value)}/mo` : null,
-          hue,
-          tier: 2,
-          circle: geo.circle,
-          lines: computeAllocationSpokes(
-            hubRecipient(geo),
-            own.map((team) => {
-              const r = teamR(team.id);
-              return { id: team.id, x: team.x, y: team.y, hw: r, hh: r, cost: teamStats.get(team.id)?.cost ?? 0 };
-            }),
-            2,
-          ),
-        });
-      }
+    for (const t of streamAgg) {
+      const own = teams.filter((team) => team.streamId === t.id);
+      if (own.length === 0) continue;
+      const hue = hueOf.get(t.id) ?? C.inkSoft;
+      const circle = streamCircle.get(t.id)!;
+      const isBucket = t.id === CROSS_CUTTING_ID;
+      const value = streamValue.get(t.id) ?? 0;
+      hubs.push({
+        id: `stream-${t.id}`,
+        title: t.name.toUpperCase(),
+        ownerLine: isBucket ? null : { text: t.leadName ? `Led by ${t.leadName}` : "No owner", warn: !t.leadName },
+        statsLine: `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`,
+        producedLine: value > 0 ? `Produces ~${money(value)}/mo` : null,
+        hue,
+        tier: 2,
+        circle,
+        lines: computeAllocationSpokes(
+          hubRecipient(circle),
+          own.map((team) => {
+            const r = teamR(team.id);
+            return { id: team.id, x: team.x, y: team.y, hw: r, hh: r, cost: teamStats.get(team.id)?.cost ?? 0 };
+          }),
+          2,
+        ),
+      });
     }
 
     return hubs;
-  }, [moneyFlowLayout, streamAgg, lod, teams, people, personProducedValue, hueOf, teamStats, teamR, vocabulary]);
+  }, [moneyFlowLayout, streamAgg, teams, people, personProducedValue, hueOf, teamStats, teamR, vocabulary]);
 
   // Railway tier 3: team → person, plain connectors (no cost label — see
   // lib/canvas/lineRouting.ts computeSpokes). Gated on people actually
@@ -1217,9 +1200,8 @@ export function OrgCanvas({
 
   const onNodeDragEnd = useCallback(
     (e: KonvaEventObject<DragEvent>, node: CanvasNode) => {
-      const x = snapToGrid(e.target.x());
-      const y = snapToGrid(e.target.y());
-      e.target.position({ x, y }); // snap the shape itself, not just the stored state
+      const x = e.target.x();
+      const y = e.target.y();
       setDropTargetId(null);
       setDropStreamId(null);
       setAddMode(false);
@@ -1411,6 +1393,14 @@ export function OrgCanvas({
     setCardHover({ task, x: stage.x() + wx * k, y: stage.y() + wy * k });
   }, []);
 
+  /** Same top-left-at-centre rule as showHover, for a hub's title circle. */
+  const showHubHover = useCallback((hub: AllocHub) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const k = stage.scaleX();
+    setHubHover({ hub, x: stage.x() + hub.circle.x * k, y: stage.y() + hub.circle.y * k });
+  }, []);
+
   const selected = selectedId ? byId.get(selectedId) : null;
   const hovered = hover ? byId.get(hover.id) : null;
   const panelOpen = !!selected || !!creating;
@@ -1576,79 +1566,40 @@ export function OrgCanvas({
           }}
         >
           <Layer listening={false}>
-            {moneyFlowLayout && (
-              <>
-                <GridBackdrop bounds={moneyFlowLayout.grid} />
-                <MoneyFlowScene layout={moneyFlowLayout} scale={scale} />
-              </>
-            )}
+            {moneyFlowLayout && <MoneyFlowScene layout={moneyFlowLayout} scale={scale} />}
             {streamAgg.map((t) => {
               const hue = hueOf.get(t.id) ?? C.inkSoft;
               const inP = phase(introT, 0, 0.45);
-              // The analytics overlay (Allocation/Gaps/Cost-ROI) used to only
-              // paint the collapsed streams-LOD card. Now that the card is
-              // always on screen, dim/heat/badge apply directly to the hull
-              // itself instead, so the overlay keeps working at every zoom.
+              // The analytics overlay (Allocation/Gaps/Cost-ROI) paints the
+              // hull itself, so it keeps working at every zoom regardless of
+              // whether the hub's own title circle is drawn on top yet.
               const ov = streamOverlay(t.id, t.openRoles, t.cost);
               return (
               <Group key={`hull-${t.id}`} x={t.x} y={t.y} opacity={(ov.dimmed ? 0.3 : 1) * inP}>
                 {dropStreamId === t.id && (
-                  <Rect
-                    x={-t.hw - 16}
-                    y={-t.hh - 16}
-                    width={t.hw * 2 + 32}
-                    height={t.hh * 2 + 32}
-                    cornerRadius={52}
-                    fill="#34d399"
-                    opacity={0.14}
-                  />
+                  <Circle radius={t.hw + 16} fill="#34d399" opacity={0.14} />
                 )}
-                <Rect
-                  x={-t.hw}
-                  y={-t.hh}
-                  width={t.hw * 2}
-                  height={t.hh * 2}
-                  cornerRadius={40}
+                <Circle
+                  radius={t.hw}
                   fill={C.white}
                   opacity={showTeams ? 0.72 : 0}
                   stroke={dropStreamId === t.id ? "#34d399" : C.line}
                   strokeWidth={dropStreamId === t.id ? 4 / scale : 2 / scale}
                   perfectDrawEnabled={false}
                 />
-                {showTeams && (
-                  <Rect
-                    x={-t.hw}
-                    y={-t.hh}
-                    width={t.hw * 2}
-                    height={t.hh * 2}
-                    cornerRadius={40}
-                    fill={hue}
-                    opacity={0.05}
-                    perfectDrawEnabled={false}
-                  />
-                )}
+                {showTeams && <Circle radius={t.hw} fill={hue} opacity={0.05} perfectDrawEnabled={false} />}
                 {ov.heatPct > 0 && (
-                  <Rect
-                    x={-t.hw}
-                    y={-t.hh}
-                    width={t.hw * 2}
-                    height={t.hh * 2}
-                    cornerRadius={40}
-                    fill={C.heat}
-                    opacity={ov.heatPct * 0.45}
-                    listening={false}
-                  />
+                  <Circle radius={t.hw} fill={C.heat} opacity={ov.heatPct * 0.45} listening={false} />
                 )}
                 {/* A standing fact (open roles) stacks above an overlay-driven
-                    badge, both floating just above the card — same two-line
-                    stack the collapsed card used to show. */}
+                    badge, both centred just above the hull's top edge. */}
                 {t.openRoles > 0 && (
                   <Text
                     text={`${t.openRoles} open`}
-                    x={t.hw - CARD_W - CARD_PAD - 4}
-                    y={-t.hh + CARD_PAD - (ov.badge ? 36 : 18)}
-                    width={CARD_W}
-                    align="right"
+                    x={-140}
+                    y={-t.hh - (ov.badge ? 40 : 22)}
+                    width={280}
+                    align="center"
                     fontSize={13}
                     fontStyle="bold"
                     fontFamily={FONT}
@@ -1659,10 +1610,10 @@ export function OrgCanvas({
                 {ov.badge && (
                   <Text
                     text={ov.badge}
-                    x={t.hw - CARD_W - CARD_PAD - 4}
-                    y={-t.hh + CARD_PAD - 18}
-                    width={CARD_W}
-                    align="right"
+                    x={-140}
+                    y={-t.hh - 22}
+                    width={280}
+                    align="center"
                     fontSize={13}
                     fontStyle="bold"
                     fontFamily={FONT}
@@ -1676,44 +1627,22 @@ export function OrgCanvas({
           </Layer>
 
           <Layer>
-            {/* Drag handles — the card strip grabs, not the whole box: the
-                hull covers most of the viewport, and swallowing drags there
-                would cost you pan-anywhere, which is the more common gesture.
-                Now that the card is always on screen (it no longer only
-                appears once teams are visible), the grip follows it and
-                works at every zoom level too. */}
-            {streamAgg.map((t) => {
-              // No handle on the cross-cutting bucket (not a real unit) or on
-              // an empty stream (nothing to move — its box is a placeholder).
-              if (t.id === CROSS_CUTTING_ID || t.teams === 0) return null;
-              const grabbing = draggingStreamId === t.id;
-              const cardH =
-                CARD_PAD * 2 + CARD_TITLE_LINE_H + CARD_LINE_H /* owner line */ + CARD_LINE_H;
-              return (
-                <Rect
-                  key={`grip-${t.id}`}
-                  x={t.x + t.hw - CARD_PAD - CARD_W}
-                  y={t.y - t.hh + CARD_PAD}
-                  width={CARD_W}
-                  height={cardH}
-                  cornerRadius={12}
-                  fill={hueOf.get(t.id) ?? C.inkSoft}
-                  opacity={grabbing ? 0.14 : 0}
-                  onMouseEnter={() => {
-                    const c = stageRef.current?.container();
-                    if (c) c.style.cursor = "move";
-                  }}
-                  onMouseLeave={() => {
-                    const c = stageRef.current?.container();
-                    if (c) c.style.cursor = "grab";
-                  }}
-                  onMouseDown={(e) => startStreamDrag(e, t.id)}
-                  onTouchStart={(e) => startStreamDrag(e, t.id)}
-                />
-              );
-            })}
-            <AllocationScene hubs={allocationHubs} scale={scale} />
-            <SpokeScene spokes={teamPersonSpokes} strokeWidth={TEAM_PERSON_STROKE} cornerRadius={26} />
+            <AllocationScene
+              hubs={allocationHubs}
+              scale={scale}
+              draggingHubId={draggingStreamId ? `stream-${draggingStreamId}` : null}
+              onHoverHub={showHubHover}
+              onLeaveHub={() => setHubHover(null)}
+              onDragHub={(e, hub) => {
+                // Only a value-stream's own hub is draggable — the company
+                // hub and the cross-cutting bucket have nothing to drag.
+                if (!hub.id.startsWith("stream-")) return;
+                const streamId = hub.id.slice("stream-".length);
+                if (streamId === CROSS_CUTTING_ID) return;
+                startStreamDrag(e, streamId);
+              }}
+            />
+            <SpokeScene spokes={teamPersonSpokes} strokeWidth={TEAM_PERSON_STROKE} />
 
             {showTeams &&
               teams.map((s, si) => {
@@ -1956,9 +1885,12 @@ export function OrgCanvas({
                     )}
                     {lod === "cards" && (() => {
                       // Orbit ring for "what they produce right now" (Greg,
-                      // 2026-09-12) — in-progress work only, capped, spread
-                      // over a 300° arc so nothing collides with the
-                      // title/load% text sitting just below the seat.
+                      // 2026-09-12) — in-progress work only, capped. Rule 2
+                      // of the solar-system layout applies one level deeper
+                      // here too: cards fan out on the side of the person
+                      // furthest from their own team (their "grandparent"),
+                      // which also happens to clear the title/load% text
+                      // sitting just below the seat.
                       const teamNames = p.allocations
                         .map((a) => byId.get(a.unitId)?.name)
                         .filter((n): n is string => !!n);
@@ -1966,12 +1898,10 @@ export function OrgCanvas({
                       const n = cards.length;
                       if (n === 0) return null;
                       const orbitR = 58;
-                      const arcSpan = (300 * Math.PI) / 180;
-                      const arcStart = -Math.PI / 2 - arcSpan / 2;
-                      const positioned = cards.map((task, ci) => {
-                        const angle = n === 1 ? -Math.PI / 2 : arcStart + (ci * arcSpan) / (n - 1);
-                        return { task, cx: orbitR * Math.cos(angle), cy: orbitR * Math.sin(angle) };
-                      });
+                      const home = byId.get(p.homeId);
+                      const awayFromTeam = home ? angleBetween({ x: ix, y: iy }, { x: home.x, y: home.y }) : -Math.PI / 2;
+                      const cardPts = orbitPositions({ x: 0, y: 0 }, n, orbitR, awayFromTeam);
+                      const positioned = cards.map((task, ci) => ({ task, cx: cardPts[ci].x, cy: cardPts[ci].y }));
                       // Railway tier 4: person → card, plain connectors that
                       // match each card's own priced/essential treatment.
                       const spokes: ColoredSpoke[] = computeSpokes(
@@ -1984,7 +1914,7 @@ export function OrgCanvas({
                       });
                       return (
                         <>
-                          <SpokeScene spokes={spokes} strokeWidth={PERSON_CARD_STROKE} cornerRadius={14} />
+                          <SpokeScene spokes={spokes} strokeWidth={PERSON_CARD_STROKE} />
                           {positioned.map(({ task, cx, cy }) => {
                             const priced = task.value !== null;
                             return (
@@ -2075,6 +2005,7 @@ export function OrgCanvas({
           <HoverCard node={hovered} x={hover.x} y={hover.y} disciplines={disciplines} teamStats={teamStats} people={people} />
         )}
         {cardHover && <TaskHoverCard task={cardHover.task} x={cardHover.x} y={cardHover.y} />}
+        {hubHover && <HubHoverCard hub={hubHover.hub} x={hubHover.x} y={hubHover.y} />}
       </div>
 
       <aside style={{ ...S.panel, transform: panelOpen ? "translateX(0)" : "translateX(105%)" }}>
@@ -2270,6 +2201,30 @@ function TaskHoverCard({ task, x, y }: { task: MockTask; x: number; y: number })
         <div style={{ fontSize: 11.5, fontStyle: "italic", color: C.inkSoft, marginTop: 9, lineHeight: 1.35 }}>
           {task.essentialNote}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Hover card for a hub's central title circle (company or value stream) —
+ * the owner/stats/produced-value detail that used to live on a permanent
+ * corner card (Greg, 2026-09-12: "the title rectangle can be the hover
+ * state for the central circle"). Same top-left-at-centre placement rule
+ * as HoverCard.
+ */
+function HubHoverCard({ hub, x, y }: { hub: AllocHub; x: number; y: number }) {
+  return (
+    <div style={{ ...S.hoverCard, left: x, top: y }}>
+      <div style={S.hoverName}>{hub.title}</div>
+      {hub.ownerLine && (
+        <div style={{ ...S.hoverSub, fontWeight: hub.ownerLine.warn ? 700 : 400, color: hub.ownerLine.warn ? C.utilOver : C.inkSoft }}>
+          {hub.ownerLine.text}
+        </div>
+      )}
+      <div style={{ ...S.hoverSub, marginTop: 7 }}>{hub.statsLine}</div>
+      {hub.producedLine && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.utilOk, marginTop: 4 }}>{hub.producedLine}</div>
       )}
     </div>
   );

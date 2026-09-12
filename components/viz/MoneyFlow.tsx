@@ -2,24 +2,21 @@
 
 import { useEffect, useRef } from "react";
 import Konva from "konva";
-import { Group, Rect, Text, Circle, Shape } from "react-konva";
-import { type MoneyFlowLayout, type WorldBounds, FLOW_STROKE } from "@/lib/canvas/moneyFlow";
-import { GRID_SIZE } from "@/lib/canvas/grid";
-import { CARD_PAD, CARD_LINE_H, TIER_STROKE, type AllocationLine, type Box, type Tier } from "@/lib/canvas/allocationFlow";
+import { Group, Rect, Text, Circle, Line } from "react-konva";
+import { type MoneyFlowLayout, FLOW_STROKE } from "@/lib/canvas/moneyFlow";
+import { TIER_STROKE, type AllocationLine, type Tier } from "@/lib/canvas/allocationFlow";
 import { pointAlongPath, type Point, type Spoke } from "@/lib/canvas/lineRouting";
 
 /**
- * The macro layer: the grid backdrop, the company container, and the
- * external entities (customers, shareholders, government, suppliers) with
- * animated flow lines. Rendered behind the existing stream/team/people
- * content, in the same non-listening background layer.
+ * The macro layer: the company container and the external entities
+ * (customers, shareholders, government, suppliers) with animated flow
+ * lines. Rendered behind the existing stream/team/people content, in the
+ * same non-listening background layer.
  *
- * Line rendering (Greg, 2026-09-07): tube-map register — chunky strokes,
- * routed octilinearly (lib/canvas/lineRouting.ts), with a real rounded arc
- * at every bend rather than a sharp corner or a stroke-join rounding. Every
- * routed line in this file goes through `roundedPolylineSceneFunc` so the
- * two line systems (money flow, allocation spokes) read as one visual
- * language.
+ * Every connection in this file is a plain straight line (Greg,
+ * 2026-09-12: "we don't need the railway diagram lines anymore... just
+ * directly connect... using a straight line for now") — no bent routing,
+ * no rounded-corner arcs.
  *
  * Deliberately non-interactive for this first pass — these nodes are
  * derived from the company box, not draggable/persisted data, unlike
@@ -32,30 +29,10 @@ const LINE = "#e4e0d6";
 const INK = "#22272e";
 const INK_SOFT = "#5c6570";
 const WHITE = "#ffffff";
-const GRID_DOT = "#d9d4c5";
 const FONT = "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 const PACKET_DURATION_MS = 3400;
 const PACKETS_PER_FLOW = 2;
-const FLOW_CORNER_R = 60; // 3x the original 20 (Greg, 2026-09-11)
-const ALLOC_CORNER_R = 42; // 3x the original 14
-
-/** A `Shape` sceneFunc that draws `points` as one continuous stroke with a
- *  real rounded arc at every interior vertex (`ctx.arcTo`) — the Mini Metro
- *  look, not just a thick line's own rounded join. */
-function roundedPolylineSceneFunc(points: Point[], radius: number) {
-  return (ctx: Konva.Context, shape: Konva.Shape) => {
-    if (points.length < 2) return;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length - 1; i++) {
-      ctx.arcTo(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, radius);
-    }
-    const last = points[points.length - 1];
-    ctx.lineTo(last.x, last.y);
-    ctx.strokeShape(shape);
-  };
-}
 
 /** A pill-shaped background behind a dollar label so a chunky, saturated
  *  line never fights the text sitting on top of it. */
@@ -87,31 +64,12 @@ function LabelChip({ x, y, width, height, color, text, fontSize }: {
   );
 }
 
-export function GridBackdrop({ bounds }: { bounds: WorldBounds }) {
-  return (
-    <Shape
-      listening={false}
-      perfectDrawEnabled={false}
-      sceneFunc={(ctx, shape) => {
-        ctx.beginPath();
-        const startX = Math.ceil(bounds.minX / GRID_SIZE) * GRID_SIZE;
-        const startY = Math.ceil(bounds.minY / GRID_SIZE) * GRID_SIZE;
-        for (let x = startX; x <= bounds.maxX; x += GRID_SIZE) {
-          for (let y = startY; y <= bounds.maxY; y += GRID_SIZE) {
-            ctx.rect(x - 1, y - 1, 2, 2);
-          }
-        }
-        ctx.fillStyle = GRID_DOT;
-        ctx.fillStrokeShape(shape);
-      }}
-    />
-  );
-}
+const flat = (points: Point[]) => points.flatMap((p) => [p.x, p.y]);
 
 export function MoneyFlowScene({ layout, scale }: { layout: MoneyFlowLayout; scale: number }) {
   const invScale = 1 / scale;
   const groupRef = useRef<Konva.Group | null>(null);
-  const lineRefs = useRef(new Map<string, Konva.Shape>());
+  const lineRefs = useRef(new Map<string, Konva.Line>());
   const packetRefs = useRef(new Map<string, Konva.Circle[]>());
 
   useEffect(() => {
@@ -147,12 +105,11 @@ export function MoneyFlowScene({ layout, scale }: { layout: MoneyFlowLayout; sca
 
   return (
     <Group ref={groupRef} listening={false}>
-      <Rect
-        x={layout.company.x - layout.company.hw}
-        y={layout.company.y - layout.company.hh}
-        width={layout.company.hw * 2}
-        height={layout.company.hh * 2}
-        cornerRadius={56}
+      {/* The "solar system": one circle, centred on Exec (Greg, 2026-09-12). */}
+      <Circle
+        x={layout.company.x}
+        y={layout.company.y}
+        radius={layout.company.hw}
         fill={WHITE}
         opacity={0.55}
         stroke={INK_SOFT}
@@ -166,11 +123,11 @@ export function MoneyFlowScene({ layout, scale }: { layout: MoneyFlowLayout; sca
         const mid = pointAlongPath(f.points, 0.5);
         return (
           <Group key={f.id}>
-            <Shape
+            <Line
               ref={(node) => {
                 if (node) lineRefs.current.set(f.id, node);
               }}
-              sceneFunc={roundedPolylineSceneFunc(f.points, FLOW_CORNER_R)}
+              points={flat(f.points)}
               stroke={color}
               strokeWidth={FLOW_STROKE}
               lineCap="butt"
@@ -243,20 +200,18 @@ export function MoneyFlowScene({ layout, scale }: { layout: MoneyFlowLayout; sca
 }
 
 /**
- * A titled hub card locked to a hull's top-right corner, with spokes to its
- * children (each labeled with that child's share of the hub's budget) and,
- * once its children are visible, a small circle just below the card that
- * spokes actually connect to — both the one arriving from its own parent
- * and the ones fanning out to its children. One instance covers the company
- * → value-stream level; one per stream covers stream → team. The geometry
- * (card size, circle position, spoke routing) comes pre-computed from
- * lib/canvas/allocationFlow.ts so this component only draws it — it never
- * decides layout itself, which is what keeps the card and the spoke
- * endpoints from drifting apart.
+ * A hub's central, permanently-visible title circle, with spokes to its
+ * children (each labeled with that child's share of the hub's budget). One
+ * instance covers the company → value-stream level; one per stream covers
+ * stream → team. The richer owner/stats/produced-value detail lives in a
+ * hover-only DOM popup (OrgCanvas.tsx's HubHoverCard) instead of a
+ * permanent on-canvas card (Greg, 2026-09-12) — this component only draws
+ * the circle, its title, and its spokes; `onHoverHub`/`onLeaveHub`/
+ * `onDragHub` let the parent own everything hover- or drag-related, since
+ * only it knows which hub ids are draggable value streams.
  */
 export type AllocHub = {
   id: string;
-  card: Box;
   title: string;
   ownerLine: { text: string; warn: boolean } | null;
   statsLine: string;
@@ -265,7 +220,7 @@ export type AllocHub = {
    *  when nothing priced is in flight. */
   producedLine: string | null;
   hue: string;
-  circle: { x: number; y: number; r: number } | null;
+  circle: { x: number; y: number; r: number };
   lines: AllocationLine[];
   /** Depth in the hierarchy — used to pick the spoke's stroke width (and,
    *  via computeAllocationSpokes, the fan spacing that's derived from it).
@@ -280,10 +235,24 @@ const ALLOC_BREATHE_MS = 1600;
 const fitFontSize = (text: string, width: number, max: number, min: number) =>
   Math.min(max, Math.max(min, width / Math.max(1, text.length * 0.56)));
 
-export function AllocationScene({ hubs, scale }: { hubs: AllocHub[]; scale: number }) {
+export function AllocationScene({
+  hubs,
+  scale,
+  onHoverHub,
+  onLeaveHub,
+  onDragHub,
+  draggingHubId,
+}: {
+  hubs: AllocHub[];
+  scale: number;
+  onHoverHub?: (hub: AllocHub) => void;
+  onLeaveHub?: () => void;
+  onDragHub?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>, hub: AllocHub) => void;
+  draggingHubId?: string | null;
+}) {
   const invScale = 1 / scale;
   const groupRef = useRef<Konva.Group | null>(null);
-  const lineRefs = useRef(new Map<string, Konva.Shape>());
+  const lineRefs = useRef(new Map<string, Konva.Line>());
 
   useEffect(() => {
     const layer = groupRef.current?.getLayer() ?? null;
@@ -309,109 +278,67 @@ export function AllocationScene({ hubs, scale }: { hubs: AllocHub[]; scale: numb
   }, [hubs]);
 
   return (
-    <Group ref={groupRef} listening={false}>
+    <Group ref={groupRef}>
       {hubs.map((hub) => {
-        const innerW = hub.card.hw * 2 - CARD_PAD * 2;
-        const titleSize = fitFontSize(hub.title, innerW, 16, 11);
-        const yTitle = hub.card.y - hub.card.hh + CARD_PAD;
-        const yOwner = yTitle + titleSize + 5;
-        const yStats = yOwner + (hub.ownerLine ? CARD_LINE_H : 0);
-        const yProduced = yStats + CARD_LINE_H;
+        const titleSize = fitFontSize(hub.title, hub.circle.r * 1.7, 15, 10);
         return (
           <Group key={hub.id}>
             {hub.lines.map((l) => {
               const mid = pointAlongPath(l.points, 0.5);
               return (
                 <Group key={l.id}>
-                  <Shape
+                  <Line
                     ref={(node) => {
                       if (node) lineRefs.current.set(l.id, node);
                     }}
-                    sceneFunc={roundedPolylineSceneFunc(l.points, ALLOC_CORNER_R)}
+                    points={flat(l.points)}
                     stroke={hub.hue}
                     strokeWidth={TIER_STROKE[hub.tier]}
-                    lineCap="butt"
+                    lineCap="round"
                     opacity={0.6}
+                    listening={false}
                     perfectDrawEnabled={false}
                   />
                   <LabelChip x={mid.x - 36} y={mid.y - 10} width={72} height={19} color={hub.hue} text={l.amountLabel} fontSize={10.5} />
                 </Group>
               );
             })}
-            {hub.circle && (
-              <Circle
-                x={hub.circle.x}
-                y={hub.circle.y}
-                radius={hub.circle.r}
-                fill={WHITE}
-                stroke={hub.hue}
-                strokeWidth={invScale}
-                perfectDrawEnabled={false}
-              />
-            )}
-            <Rect
-              x={hub.card.x - hub.card.hw}
-              y={hub.card.y - hub.card.hh}
-              width={hub.card.hw * 2}
-              height={hub.card.hh * 2}
-              cornerRadius={10}
+            <Circle
+              x={hub.circle.x}
+              y={hub.circle.y}
+              radius={hub.circle.r}
               fill={WHITE}
               stroke={hub.hue}
-              strokeWidth={2}
+              strokeWidth={(draggingHubId === hub.id ? 4 : 2.5) * invScale}
+              dash={draggingHubId === hub.id ? [10, 6] : undefined}
+              onMouseEnter={(e) => {
+                const c = e.target.getStage()?.container();
+                if (c) c.style.cursor = "move";
+                onHoverHub?.(hub);
+              }}
+              onMouseLeave={(e) => {
+                const c = e.target.getStage()?.container();
+                if (c) c.style.cursor = "grab";
+                onLeaveHub?.();
+              }}
+              onMouseDown={(e) => onDragHub?.(e, hub)}
+              onTouchStart={(e) => onDragHub?.(e, hub)}
               perfectDrawEnabled={false}
             />
             <Text
               text={hub.title}
-              x={hub.card.x - hub.card.hw + CARD_PAD}
-              y={yTitle}
-              width={innerW}
+              x={hub.circle.x - hub.circle.r}
+              y={hub.circle.y - titleSize / 2}
+              width={hub.circle.r * 2}
+              align="center"
               wrap="none"
               ellipsis
               fontSize={titleSize}
               fontStyle="bold"
               fontFamily={FONT}
               fill={hub.hue}
+              listening={false}
             />
-            {hub.ownerLine && (
-              <Text
-                text={hub.ownerLine.text}
-                x={hub.card.x - hub.card.hw + CARD_PAD}
-                y={yOwner}
-                width={innerW}
-                wrap="none"
-                ellipsis
-                fontSize={11}
-                fontStyle={hub.ownerLine.warn ? "bold" : "normal"}
-                fontFamily={FONT}
-                fill={hub.ownerLine.warn ? "#ef4444" : INK_SOFT}
-              />
-            )}
-            <Text
-              text={hub.statsLine}
-              x={hub.card.x - hub.card.hw + CARD_PAD}
-              y={yStats}
-              width={innerW}
-              wrap="none"
-              ellipsis
-              fontSize={11}
-              fontFamily={FONT}
-              fill={INK_SOFT}
-              opacity={0.85}
-            />
-            {hub.producedLine && (
-              <Text
-                text={hub.producedLine}
-                x={hub.card.x - hub.card.hw + CARD_PAD}
-                y={yProduced}
-                width={innerW}
-                wrap="none"
-                ellipsis
-                fontSize={11}
-                fontStyle="bold"
-                fontFamily={FONT}
-                fill={INCOME}
-              />
-            )}
           </Group>
         );
       })}
@@ -420,29 +347,26 @@ export function AllocationScene({ hubs, scale }: { hubs: AllocHub[]; scale: numb
 }
 
 /**
- * A plain, label-free railway connection — team → person and person → card
- * (Greg, 2026-09-12): "let's see how it looks with the railway design at
- * all layers of zoom." Same octilinear routing and breathing pulse as the
- * cost-bearing spokes above, just without a card/circle/label at either
- * end — the circles already there (team, person, work-item) are the
- * endpoints. Each spoke carries its own colour/dash so a person→card line
- * can match its card's own "priced vs essential" treatment.
+ * A plain, label-free connection — team → person and person → card (Greg,
+ * 2026-09-12) — same straight-line routing as the cost-bearing spokes
+ * above, just without a card/circle/label at either end — the circles
+ * already there (team, person, work-item) are the endpoints. Each spoke
+ * carries its own colour/dash so a person→card line can match its card's
+ * own "priced vs essential" treatment.
  */
 export type ColoredSpoke = Spoke & { color: string; dash?: number[] };
 
 export function SpokeScene({
   spokes,
   strokeWidth,
-  cornerRadius,
   opacity = 0.5,
 }: {
   spokes: ColoredSpoke[];
   strokeWidth: number;
-  cornerRadius: number;
   opacity?: number;
 }) {
   const groupRef = useRef<Konva.Group | null>(null);
-  const lineRefs = useRef(new Map<string, Konva.Shape>());
+  const lineRefs = useRef(new Map<string, Konva.Line>());
 
   useEffect(() => {
     const layer = groupRef.current?.getLayer() ?? null;
@@ -466,16 +390,16 @@ export function SpokeScene({
   return (
     <Group ref={groupRef} listening={false}>
       {spokes.map((s) => (
-        <Shape
+        <Line
           key={s.id}
           ref={(node) => {
             if (node) lineRefs.current.set(s.id, node);
           }}
-          sceneFunc={roundedPolylineSceneFunc(s.points, cornerRadius)}
+          points={flat(s.points)}
           stroke={s.color}
           strokeWidth={strokeWidth}
           dash={s.dash}
-          lineCap="butt"
+          lineCap="round"
           perfectDrawEnabled={false}
         />
       ))}

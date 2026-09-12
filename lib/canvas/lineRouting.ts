@@ -1,8 +1,14 @@
 /**
- * Octilinear line routing — Mini Metro / tube-map style (Greg, 2026-09-07).
- * Segments run horizontal, vertical, or at 45°, never an arbitrary angle,
- * and a bend gets a real rounded arc (drawn by the renderer via `arcTo`)
- * rather than a sharp mitre. Pure geometry, no Konva/React.
+ * Line routing + fan-spacing helpers, shared by every connector in the
+ * canvas (money flow, allocation spokes, team→person, person→card). Pure
+ * geometry, no Konva/React.
+ *
+ * Connections are drawn as plain straight lines (Greg, 2026-09-12: "we
+ * don't need the railway diagram lines anymore... just directly connect...
+ * using a straight line for now") — this replaced the earlier octilinear
+ * ("Mini Metro") bend routing. `straightPath` keeps the same [Point, Point]
+ * shape the old bent paths returned, so callers (label midpoints, packet
+ * animation) didn't need to change.
  */
 export type Point = { x: number; y: number };
 
@@ -12,22 +18,9 @@ export type Point = { x: number; y: number };
  *  centreline spacing from its own stroke width the same way. */
 export const LINE_GAP = 2;
 
-/** Diagonal (45°) until one axis aligns with the target, then straight the
- *  rest of the way — the standard two-segment transit-map dog-leg. Returns
- *  the straight-through 2-point path when already axis-aligned or already
- *  exactly 45°, so an already-orthogonal line (most of the money-flow
- *  lines) passes through unchanged. */
-export function octilinearPath(a: Point, b: Point): Point[] {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  if (dx === 0 || dy === 0 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 0.5) {
-    return [a, b];
-  }
-  const bend =
-    Math.abs(dx) > Math.abs(dy)
-      ? { x: a.x + Math.sign(dx) * Math.abs(dy), y: b.y }
-      : { x: b.x, y: a.y + Math.sign(dy) * Math.abs(dx) };
-  return [a, bend, b];
+/** A direct line from `a` to `b` — no bends. */
+export function straightPath(a: Point, b: Point): Point[] {
+  return [a, b];
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -76,10 +69,10 @@ export type Spoke = { id: string; points: Point[] };
 
 /** A plain, label-free hub-and-spoke: every child's line touches its exact
  *  centre (the circle drawn on top hides the segment inside its own
- *  radius — "ends at circle centre, behind the circle," Greg 2026-09-12),
- *  fanned apart near the hub the same way computeAllocationSpokes does.
- *  Used at levels that don't carry a cost label (team → person, person →
- *  card) — computeAllocationSpokes stays the one for hubs that do. */
+ *  radius — "ends at centre, behind the circle," Greg 2026-09-12), fanned
+ *  apart near the hub the same way computeAllocationSpokes does. Used at
+ *  levels that don't carry a cost label (team → person, person → card) —
+ *  computeAllocationSpokes stays the one for hubs that do. */
 export function computeSpokes(hub: Point, children: (Point & { id: string })[], fanSpacing: number): Spoke[] {
   const ordered = [...children].sort(
     (a, b) => Math.atan2(a.y - hub.y, a.x - hub.x) - Math.atan2(b.y - hub.y, b.x - hub.x),
@@ -87,6 +80,6 @@ export function computeSpokes(hub: Point, children: (Point & { id: string })[], 
   const offsets = fanOffsets(ordered.length, fanSpacing);
   return ordered.map((child, i) => {
     const from = fanPoint(hub, child, offsets[i]);
-    return { id: child.id, points: octilinearPath(from, { x: child.x, y: child.y }) };
+    return { id: child.id, points: straightPath(from, { x: child.x, y: child.y }) };
   });
 }

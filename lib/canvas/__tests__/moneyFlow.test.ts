@@ -1,30 +1,41 @@
 import { describe, it, expect } from "vitest";
 import { computeMoneyFlowLayout } from "../moneyFlow";
-import { GRID_SIZE } from "../grid";
 
 const BOUNDS = { minX: -300, maxX: 2100, minY: -200, maxY: 1500 };
 
 describe("computeMoneyFlowLayout", () => {
-  it("sizes the company box to contain the stream bounds, snapped to the grid", () => {
+  it("centres the company circle on the origin — Exec's own position", () => {
     const { company } = computeMoneyFlowLayout(BOUNDS, 100_000);
-    const left = company.x - company.hw;
-    const right = company.x + company.hw;
-    const top = company.y - company.hh;
-    const bottom = company.y + company.hh;
-    expect(left).toBeLessThanOrEqual(BOUNDS.minX);
-    expect(right).toBeGreaterThanOrEqual(BOUNDS.maxX);
-    expect(top).toBeLessThanOrEqual(BOUNDS.minY);
-    expect(bottom).toBeGreaterThanOrEqual(BOUNDS.maxY);
-    expect(Math.abs(left % GRID_SIZE)).toBe(0);
-    expect(Math.abs(top % GRID_SIZE)).toBe(0);
+    expect(company.x).toBe(0);
+    expect(company.y).toBe(0);
+    expect(company.hw).toBe(company.hh); // a square box standing in for a circle
   });
 
-  it("places every external node's anchor on the grid", () => {
-    const { externalNodes } = computeMoneyFlowLayout(BOUNDS, 100_000);
-    for (const n of externalNodes) {
-      expect(Math.abs(n.x % GRID_SIZE)).toBe(0);
-      expect(Math.abs(n.y % GRID_SIZE)).toBe(0);
+  it("sizes the company circle to reach every corner of the stream bounds", () => {
+    const { company } = computeMoneyFlowLayout(BOUNDS, 100_000);
+    const radius = company.hw;
+    const corners = [
+      { x: BOUNDS.minX, y: BOUNDS.minY },
+      { x: BOUNDS.maxX, y: BOUNDS.minY },
+      { x: BOUNDS.minX, y: BOUNDS.maxY },
+      { x: BOUNDS.maxX, y: BOUNDS.maxY },
+    ];
+    for (const c of corners) {
+      expect(Math.hypot(c.x, c.y)).toBeLessThanOrEqual(radius);
     }
+  });
+
+  it("places each external node at its own compass point around the circle", () => {
+    const { externalNodes } = computeMoneyFlowLayout(BOUNDS, 100_000);
+    const at = (id: string) => externalNodes.find((n) => n.id === id)!;
+    expect(at("customers").y).toBeLessThan(0); // north
+    expect(at("customers").x).toBeCloseTo(0);
+    expect(at("shareholders").x).toBeGreaterThan(0); // east
+    expect(at("shareholders").y).toBeCloseTo(0);
+    expect(at("government").y).toBeGreaterThan(0); // south
+    expect(at("government").x).toBeCloseTo(0);
+    expect(at("suppliers").x).toBeLessThan(0); // west
+    expect(at("suppliers").y).toBeCloseTo(0);
   });
 
   it("keeps income flows pointed at the company and outflows pointed away", () => {
@@ -44,7 +55,12 @@ describe("computeMoneyFlowLayout", () => {
     for (const f of flows) {
       expect(f.points).toHaveLength(2);
       const [a, b] = f.points;
-      expect(a.x === b.x || a.y === b.y).toBe(true);
+      // Without grid-snapping, a compass angle's cos/sin isn't always
+      // *exactly* zero (floating-point trig) — close enough to read as
+      // perfectly axis-aligned on screen is the real bar here.
+      const xAligned = Math.abs(a.x - b.x) < 1e-6;
+      const yAligned = Math.abs(a.y - b.y) < 1e-6;
+      expect(xAligned || yAligned).toBe(true);
     }
   });
 
