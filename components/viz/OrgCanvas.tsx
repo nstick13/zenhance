@@ -57,7 +57,16 @@ import {
 import { lower, type Vocabulary } from "@/lib/vocabulary";
 import { VocabularyProvider, useVocabulary } from "@/components/VocabularyProvider";
 import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
-import { GridBackdrop, MoneyFlowScene, AllocationScene, type AllocHub } from "@/components/viz/MoneyFlow";
+import { tasksForPerson, inProgressCards, producedValue, type MockTask } from "@/lib/mock/personTasks";
+import {
+  GridBackdrop,
+  MoneyFlowScene,
+  AllocationScene,
+  SpokeScene,
+  type AllocHub,
+  type ColoredSpoke,
+} from "@/components/viz/MoneyFlow";
+import { computeSpokes } from "@/lib/canvas/lineRouting";
 import { computeMoneyFlowLayout, DEFAULT_COMPANY_NAME } from "@/lib/canvas/moneyFlow";
 import {
   computeAllocationSpokes,
@@ -107,13 +116,14 @@ const C = {
 const FONT =
   "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif";
 
-type Lod = "streams" | "teams" | "people" | "roles";
+type Lod = "streams" | "teams" | "people" | "roles" | "cards";
 
 const lodLabels = (v: Vocabulary): [Lod, string][] => [
   ["streams", v.stream.plural],
   ["teams", v.team.plural],
   ["people", "People"],
   ["roles", "Roles"],
+  ["cards", "Work"],
 ];
 
 type OverlayType = "none" | "allocation" | "gaps" | "cost";
@@ -140,7 +150,17 @@ const MIN_SCALE = 0.1;
 const MAX_SCALE = 5; // was 3 — raised so "roles" LOD can pack tighter than the old cap allowed
 const TEAM_DROP_PAD = 26; // slack beyond a team's own radius for drop targeting
 
+// Railway tiers 3 & 4 (Greg, 2026-09-12) — tiers 1–2 (company↔stream,
+// stream↔team) live with the cost-bearing spokes in lib/canvas/allocationFlow.ts;
+// these two are plain connectors (team↔person, person↔card), thinner at
+// each level down, spacing derived the same way (stroke + LINE_GAP).
+const TEAM_PERSON_STROKE = 5;
+const TEAM_PERSON_FAN = TEAM_PERSON_STROKE + 2;
+const PERSON_CARD_STROKE = 3;
+const PERSON_CARD_FAN = PERSON_CARD_STROKE + 2;
+
 function lodFor(scale: number): Lod {
+  if (scale >= 3.2) return "cards"; // the deepest rung: a person's in-progress work, orbiting them
   if (scale >= 1.5) return "roles";
   if (scale >= 0.45) return "people";
   if (scale >= 0.26) return "teams";
@@ -289,6 +309,11 @@ export function OrgCanvas({
   // Reassigning a person to a different team re-attaches them fresh.
   const [detachedIds, setDetachedIds] = useState<Set<string>>(new Set());
 
+  // The "cards" LOD's own hover — deliberately separate from the
+  // CanvasNode-typed `hover`/`HoverCard` above, since a work-item card isn't
+  // a CanvasNode. Screen coordinates, same convention as showHover.
+  const [cardHover, setCardHover] = useState<{ x: number; y: number; task: MockTask } | null>(null);
+
   // --- lens (S3 / S5) --------------------------------------------------------
   // Two tiers, deliberately. `initialLens` is the WORKSPACE DEFAULT — what a
   // colleague sees on their first open. What the topbar edits is MY VIEW: mine
@@ -414,6 +439,14 @@ export function OrgCanvas({
         streamHue: hueOf.get(homeStreamOf(p)?.streamId ?? "") ?? null,
       }),
     [lens, disciplineColor, hueOf, homeStreamOf],
+  );
+
+  /** Structural colour: a team wears its value stream's identity. External
+   *  vendor teams keep violet — "who employs them" outranks "which stream
+   *  they serve" for reading the map. */
+  const teamAccent = useCallback(
+    (s: CanvasTeam) => (s.isCrossCutting ? C.cross : s.isExternal ? C.external : (hueOf.get(s.streamId) ?? C.team)),
+    [hueOf],
   );
 
   /** Legend entries for the active lens, counted over the people on the map. */
@@ -684,11 +717,30 @@ export function OrgCanvas({
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     let totalMonthlyCost = 0;
     for (const t of streamAgg) {
-      minX = Math.min(minX, t.x - t.hw);
-      maxX = Math.max(maxX, t.x + t.hw);
-      minY = Math.min(minY, t.y - t.hh);
-      maxY = Math.max(maxY, t.y + t.hh);
+      // Cross-cutting is deliberately parked north of the real grid
+      // (buildCanvasMap.ts) to read as "not a real stream" — including it
+      // here would size the company box around it too, and since it's also
+      // roughly horizontally centred, the revenue line's top-centre landing
+      // point would coincide with its hull, looking like the line connects
+      // to cross-cutting specifically rather than the company as a whole.
+      if (t.id !== CROSS_CUTTING_ID) {
+        minX = Math.min(minX, t.x - t.hw);
+        maxX = Math.max(maxX, t.x + t.hw);
+        minY = Math.min(minY, t.y - t.hh);
+        maxY = Math.max(maxY, t.y + t.hh);
+      }
       totalMonthlyCost += t.cost;
+    }
+    // Degenerate case: nothing but the cross-cutting bucket exists. Fall
+    // back to including it rather than handing computeMoneyFlowLayout an
+    // infinite/inverted box.
+    if (minX === Infinity) {
+      for (const t of streamAgg) {
+        minX = Math.min(minX, t.x - t.hw);
+        maxX = Math.max(maxX, t.x + t.hw);
+        minY = Math.min(minY, t.y - t.hh);
+        maxY = Math.max(maxY, t.y + t.hh);
+      }
     }
     return computeMoneyFlowLayout({ minX, maxX, minY, maxY }, totalMonthlyCost);
   }, [streamAgg]);
@@ -708,9 +760,33 @@ export function OrgCanvas({
   // fanning out to its children) — while collapsed, the card itself is the
   // endpoint. The company's children (the streams) are always present in
   // some form, so the company hub is always "expanded."
+  // What each person is currently producing (Greg, 2026-09-12) — same mock
+  // in-progress cards the "cards" LOD shows in orbit, summed per person once
+  // here so every hub level (team/stream/company) rolls up from the same
+  // numbers rather than each re-deriving them.
+  const personProducedValue = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of people) m.set(p.id, producedValue(tasksForPerson(p, [])));
+    return m;
+  }, [people]);
+
   const allocationHubs = useMemo((): AllocHub[] => {
     if (!moneyFlowLayout || streamAgg.length === 0) return [];
     const hubs: AllocHub[] = [];
+
+    const teamValue = new Map<string, number>();
+    for (const t of teams) {
+      const v = people
+        .filter((p) => p.homeId === t.id)
+        .reduce((s, p) => s + (personProducedValue.get(p.id) ?? 0), 0);
+      teamValue.set(t.id, v);
+    }
+    const streamValue = new Map<string, number>();
+    for (const t of streamAgg) {
+      const own = teams.filter((team) => team.streamId === t.id);
+      streamValue.set(t.id, own.reduce((s, team) => s + (teamValue.get(team.id) ?? 0), 0));
+    }
+    const companyValue = [...streamValue.values()].reduce((s, v) => s + v, 0);
 
     const totalHeads = streamAgg.reduce((s, t) => s + t.heads, 0);
     const totalCost = streamAgg.reduce((s, t) => s + t.cost, 0);
@@ -720,7 +796,7 @@ export function OrgCanvas({
       hw: moneyFlowLayout.company.hw,
       hh: moneyFlowLayout.company.hh,
     };
-    const companyGeo = computeHubGeometry(companyHull, false, true);
+    const companyGeo = computeHubGeometry(companyHull, false, true, companyValue > 0);
 
     // Every stream's own geometry, computed once and reused both as the
     // target of the company's outgoing spoke and as the hub for the
@@ -729,7 +805,10 @@ export function OrgCanvas({
     const streamGeo = new Map<string, ReturnType<typeof computeHubGeometry>>();
     for (const t of streamAgg) {
       const hull = { x: t.x, y: t.y, hw: t.hw, hh: t.hh };
-      streamGeo.set(t.id, computeHubGeometry(hull, t.id !== CROSS_CUTTING_ID, lod !== "streams"));
+      streamGeo.set(
+        t.id,
+        computeHubGeometry(hull, t.id !== CROSS_CUTTING_ID, lod !== "streams", (streamValue.get(t.id) ?? 0) > 0),
+      );
     }
 
     hubs.push({
@@ -738,7 +817,9 @@ export function OrgCanvas({
       title: DEFAULT_COMPANY_NAME.toUpperCase(),
       ownerLine: null,
       statsLine: `${plural(totalHeads, "person").replace("persons", "people")} · ${money(totalCost)}/mo`,
+      producedLine: companyValue > 0 ? `Produces ~${money(companyValue)}/mo` : null,
       hue: C.ink,
+      tier: 1,
       circle: companyGeo.circle,
       lines: computeAllocationSpokes(
         hubRecipient(companyGeo),
@@ -746,6 +827,7 @@ export function OrgCanvas({
           const r = hubRecipient(streamGeo.get(t.id)!);
           return { id: t.id, ...r, cost: t.cost };
         }),
+        1,
       ),
     });
 
@@ -756,6 +838,7 @@ export function OrgCanvas({
         const hue = hueOf.get(t.id) ?? C.inkSoft;
         const geo = streamGeo.get(t.id)!;
         const isBucket = t.id === CROSS_CUTTING_ID;
+        const value = streamValue.get(t.id) ?? 0;
         hubs.push({
           id: `stream-${t.id}`,
           card: geo.card,
@@ -765,7 +848,9 @@ export function OrgCanvas({
             t.teams === 0
               ? `Empty — add a ${lower(vocabulary.team.singular)} to fill it`
               : `${plural(t.teams, lower(vocabulary.team.singular))} · ${plural(t.heads, "person").replace("persons", "people")} · ${money(t.cost)}/mo`,
+          producedLine: value > 0 ? `Produces ~${money(value)}/mo` : null,
           hue,
+          tier: 2,
           circle: geo.circle,
           lines: computeAllocationSpokes(
             hubRecipient(geo),
@@ -773,13 +858,42 @@ export function OrgCanvas({
               const r = teamR(team.id);
               return { id: team.id, x: team.x, y: team.y, hw: r, hh: r, cost: teamStats.get(team.id)?.cost ?? 0 };
             }),
+            2,
           ),
         });
       }
     }
 
     return hubs;
-  }, [moneyFlowLayout, streamAgg, lod, teams, hueOf, teamStats, teamR, vocabulary]);
+  }, [moneyFlowLayout, streamAgg, lod, teams, people, personProducedValue, hueOf, teamStats, teamR, vocabulary]);
+
+  // Railway tier 3: team → person, plain connectors (no cost label — see
+  // lib/canvas/lineRouting.ts computeSpokes). Gated on people actually
+  // being on screen, or these would visibly dangle toward nothing.
+  //
+  // Cross-cutting-homed people who *do* serve real teams are excluded: per
+  // buildCanvasMap.ts, their (x,y) is "only a stable fallback for anything
+  // that reads node coordinates" — a weighted centroid of the teams they
+  // support, never actually drawn as a seat (they render as ghost seats in
+  // each of those teams instead). A spoke to that phantom position is
+  // exactly the "line with no apparent destination" bug — it can land
+  // anywhere across the map, including right on top of an unrelated ghost
+  // seat by coincidence. `crossCuttingTier` is non-null only for these
+  // people; everyone with a real seat (including genuine bucket members
+  // with no team at all) has it null.
+  const teamPersonSpokes = useMemo((): ColoredSpoke[] => {
+    if (lod !== "people" && lod !== "roles" && lod !== "cards") return [];
+    const out: ColoredSpoke[] = [];
+    for (const t of teams) {
+      const home = people.filter((p) => p.homeId === t.id && p.crossCuttingTier === null);
+      if (home.length === 0) continue;
+      const color = teamAccent(t);
+      for (const spoke of computeSpokes({ x: t.x, y: t.y }, home, TEAM_PERSON_FAN)) {
+        out.push({ ...spoke, id: `tp-${t.id}-${spoke.id}`, color });
+      }
+    }
+    return out;
+  }, [lod, teams, people, teamAccent]);
 
   // --- sizing ----------------------------------------------------------------
   useEffect(() => {
@@ -1289,6 +1403,14 @@ export function OrgCanvas({
     setHover({ id, x: stage.x() + wx * k, y: stage.y() + wy * k });
   }, []);
 
+  /** Same top-left-at-centre rule as showHover, for a work-item card circle. */
+  const showCardHover = useCallback((task: MockTask, wx: number, wy: number) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const k = stage.scaleX();
+    setCardHover({ task, x: stage.x() + wx * k, y: stage.y() + wy * k });
+  }, []);
+
   const selected = selectedId ? byId.get(selectedId) : null;
   const hovered = hover ? byId.get(hover.id) : null;
   const panelOpen = !!selected || !!creating;
@@ -1302,7 +1424,15 @@ export function OrgCanvas({
   }, [openTaskPerson, byId]);
 
   const showTeams = lod !== "streams";
-  const showPeople = lod === "people" || lod === "roles";
+  const showPeople = lod === "people" || lod === "roles" || lod === "cards";
+  // Title + load% first appeared at "roles" and stay visible once "cards" adds
+  // the orbiting work-item layer on top — cards are additive, not a replacement.
+  const showRoleDetail = lod === "roles" || lod === "cards";
+  // Text stays a constant screen size at every zoom level (Greg, 2026-09-12)
+  // — countering the stage's own scale on each Text node, so labels don't
+  // balloon and clash with neighbouring circles as you zoom in. Circles and
+  // other shapes are untouched; only text counter-scales.
+  const invScale = 1 / scale;
 
   return (
     <VocabularyProvider vocabulary={vocabulary}>
@@ -1449,7 +1579,7 @@ export function OrgCanvas({
             {moneyFlowLayout && (
               <>
                 <GridBackdrop bounds={moneyFlowLayout.grid} />
-                <MoneyFlowScene layout={moneyFlowLayout} />
+                <MoneyFlowScene layout={moneyFlowLayout} scale={scale} />
               </>
             )}
             {streamAgg.map((t) => {
@@ -1582,19 +1712,13 @@ export function OrgCanvas({
                 />
               );
             })}
-            <AllocationScene hubs={allocationHubs} />
+            <AllocationScene hubs={allocationHubs} scale={scale} />
+            <SpokeScene spokes={teamPersonSpokes} strokeWidth={TEAM_PERSON_STROKE} cornerRadius={26} />
 
             {showTeams &&
               teams.map((s, si) => {
                 const st = teamStats.get(s.id);
-                // Structural colour: a team wears its value stream's identity.
-                // External vendor teams keep violet — "who employs them" outranks
-                // "which stream they serve" for reading the map.
-                const accent = s.isCrossCutting
-                  ? C.cross
-                  : s.isExternal
-                    ? C.external
-                    : (hueOf.get(s.streamId) ?? C.team);
+                const accent = teamAccent(s);
                 const inP = phase(introT, 0.12 + si * 0.04, 0.34);
                 const gap = st && st.target != null ? st.target - Math.round(st.fte) : 0;
                 const ov = teamOverlay(s);
@@ -1639,7 +1763,7 @@ export function OrgCanvas({
                       stroke={
                         dropTargetId === s.id ? (addMode ? C.cross : "#34d399") : selectedId === s.id ? C.ink : accent
                       }
-                      strokeWidth={dropTargetId === s.id ? 5 : selectedId === s.id ? 6 : 4}
+                      strokeWidth={invScale}
                       shadowColor={C.ink}
                       shadowBlur={22}
                       shadowOpacity={0.08}
@@ -1718,7 +1842,7 @@ export function OrgCanvas({
                   onMouseLeave={() => setHover(null)}
                 >
                   {spansStreams && (
-                    <Circle radius={GHOST_R + 5.5} stroke={tierAccent} strokeWidth={1.25} opacity={0.5} listening={false} />
+                    <Circle radius={GHOST_R + 5.5} stroke={tierAccent} strokeWidth={invScale} opacity={0.5} listening={false} />
                   )}
                   <Circle radius={GHOST_R} fill={C.white} />
                   <Arc
@@ -1730,7 +1854,7 @@ export function OrgCanvas({
                     opacity={0.18}
                     listening={false}
                   />
-                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={sel ? 3.5 : 2.5} dash={[4, 4]} />
+                  <Circle radius={GHOST_R} stroke={sel ? C.ink : accent} strokeWidth={invScale} dash={[4, 4]} />
                   {gInitials ? (
                     <Text text={gLabel.primary} x={-20} y={-5} width={40} align="center" fontSize={12} fontStyle="bold" fontFamily={FONT} fill={C.inkSoft} listening={false} />
                   ) : (
@@ -1749,7 +1873,7 @@ export function OrgCanvas({
                   {!gInitials && gLabel.secondary && (
                     <Text text={gLabel.secondary} x={-56} y={GHOST_R + 20} width={112} align="center" fontSize={10.5} fontFamily={FONT} fill={C.inkSoft} opacity={0.75} listening={false} />
                   )}
-                  {lod === "roles" && !gInitials && (
+                  {showRoleDetail && !gInitials && (
                     <Text text={`${a.pct}%`} x={-56} y={GHOST_R + (gLabel.secondary ? 33 : 21)} width={112} align="center" fontSize={11} fontStyle="bold" fontFamily={FONT} fill={accent} listening={false} />
                   )}
                 </Group>
@@ -1786,7 +1910,7 @@ export function OrgCanvas({
                     onDblClick={() => setOpenTaskPersonId(p.id)}
                     onDblTap={() => setOpenTaskPersonId(p.id)}
                   >
-                    <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : seatColor(p)} strokeWidth={shared ? 5 : 3.5} dash={shared ? [5, 3] : undefined} />
+                    <Circle radius={22} fill={C.white} stroke={selectedId === p.id ? C.ink : seatColor(p)} strokeWidth={invScale} dash={shared ? [5, 3] : undefined} />
                     {/* The over-110% pip is a *fact*, not a colour choice — it
                         survives every lens, so switching to colour-by-discipline
                         never hides who is drowning. */}
@@ -1796,10 +1920,10 @@ export function OrgCanvas({
                     ) : (
                       <Text text={label.primary} x={-70} y={28} width={140} align="center" fontSize={13} fontStyle="bold" fontFamily={FONT} fill={C.ink} listening={false} />
                     )}
-                    {!initialsInside && label.secondary && lod !== "roles" && (
+                    {!initialsInside && label.secondary && !showRoleDetail && (
                       <Text text={label.secondary} x={-70} y={44} width={140} align="center" fontSize={11.5} fontFamily={FONT} fill={C.inkSoft} listening={false} />
                     )}
-                    {lod === "roles" && !initialsInside && (
+                    {showRoleDetail && !initialsInside && (
                       <>
                         <Text text={p.title ?? ""} x={-70} y={44} width={140} align="center" fontSize={11.5} fontFamily={FONT} fill={C.inkSoft} listening={false} />
                         <Text
@@ -1820,7 +1944,7 @@ export function OrgCanvas({
                       <Text
                         text={ov.badge}
                         x={-70}
-                        y={initialsInside ? 28 : lod === "roles" ? 74 : 44}
+                        y={initialsInside ? 28 : showRoleDetail ? 74 : 44}
                         width={140}
                         align="center"
                         fontSize={11}
@@ -1830,6 +1954,57 @@ export function OrgCanvas({
                         listening={false}
                       />
                     )}
+                    {lod === "cards" && (() => {
+                      // Orbit ring for "what they produce right now" (Greg,
+                      // 2026-09-12) — in-progress work only, capped, spread
+                      // over a 300° arc so nothing collides with the
+                      // title/load% text sitting just below the seat.
+                      const teamNames = p.allocations
+                        .map((a) => byId.get(a.unitId)?.name)
+                        .filter((n): n is string => !!n);
+                      const cards = inProgressCards(tasksForPerson(p, teamNames));
+                      const n = cards.length;
+                      if (n === 0) return null;
+                      const orbitR = 58;
+                      const arcSpan = (300 * Math.PI) / 180;
+                      const arcStart = -Math.PI / 2 - arcSpan / 2;
+                      const positioned = cards.map((task, ci) => {
+                        const angle = n === 1 ? -Math.PI / 2 : arcStart + (ci * arcSpan) / (n - 1);
+                        return { task, cx: orbitR * Math.cos(angle), cy: orbitR * Math.sin(angle) };
+                      });
+                      // Railway tier 4: person → card, plain connectors that
+                      // match each card's own priced/essential treatment.
+                      const spokes: ColoredSpoke[] = computeSpokes(
+                        { x: 0, y: 0 },
+                        positioned.map(({ task, cx, cy }) => ({ id: task.id, x: cx, y: cy })),
+                        PERSON_CARD_FAN,
+                      ).map((spoke) => {
+                        const priced = cards.find((t) => t.id === spoke.id)!.value !== null;
+                        return { ...spoke, color: priced ? C.utilOk : C.inkSoft, dash: priced ? undefined : [3, 2] };
+                      });
+                      return (
+                        <>
+                          <SpokeScene spokes={spokes} strokeWidth={PERSON_CARD_STROKE} cornerRadius={14} />
+                          {positioned.map(({ task, cx, cy }) => {
+                            const priced = task.value !== null;
+                            return (
+                              <Circle
+                                key={task.id}
+                                x={cx}
+                                y={cy}
+                                radius={9}
+                                fill={C.white}
+                                stroke={priced ? C.utilOk : C.inkSoft}
+                                strokeWidth={invScale}
+                                dash={priced ? undefined : [3, 2]}
+                                onMouseEnter={() => showCardHover(task, ix + cx, iy + cy)}
+                                onMouseLeave={() => setCardHover(null)}
+                              />
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
                   </Group>
                 );
               })}
@@ -1897,8 +2072,9 @@ export function OrgCanvas({
         </div>
 
         {hovered && hover && (
-          <HoverCard node={hovered} x={hover.x} y={hover.y} disciplines={disciplines} teamStats={teamStats} />
+          <HoverCard node={hovered} x={hover.x} y={hover.y} disciplines={disciplines} teamStats={teamStats} people={people} />
         )}
+        {cardHover && <TaskHoverCard task={cardHover.task} x={cardHover.x} y={cardHover.y} />}
       </div>
 
       <aside style={{ ...S.panel, transform: panelOpen ? "translateX(0)" : "translateX(105%)" }}>
@@ -2011,12 +2187,14 @@ function HoverCard({
   y,
   disciplines,
   teamStats,
+  people,
 }: {
   node: CanvasNode;
   x: number;
   y: number;
   disciplines: Discipline[];
   teamStats: Map<string, TeamStats>;
+  people: CanvasPerson[];
 }) {
   if (node.kind === "person") {
     const u = utilOf(node);
@@ -2040,6 +2218,14 @@ function HoverCard({
     );
   }
   const st = teamStats.get(node.id);
+  // What this team is currently producing (Greg, 2026-09-12) — same mock
+  // in-progress cards the "cards" LOD shows around each member, rolled up.
+  // Some cards are deliberately valueless-but-necessary (a component never
+  // sold on its own); a team carrying any of those gets a note saying so,
+  // rather than the number quietly looking too small.
+  const homeCards = people.filter((p) => p.homeId === node.id).map((p) => inProgressCards(tasksForPerson(p, [])));
+  const teamValue = homeCards.reduce((sum, cards) => sum + cards.reduce((s, t) => s + (t.value ?? 0), 0), 0);
+  const hasEssential = homeCards.some((cards) => cards.some((t) => t.value === null));
   return (
     <div style={{ ...S.hoverCard, left: x, top: y }}>
       <div style={S.hoverName}>{node.name}</div>
@@ -2051,6 +2237,39 @@ function HoverCard({
       </div>
       {(st?.openRoles ?? 0) > 0 && (
         <div style={{ fontSize: 12, fontWeight: 700, color: C.utilOver, marginTop: 4 }}>{st!.openRoles} open</div>
+      )}
+      {teamValue > 0 && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.utilOk, marginTop: 4 }}>Produces ~{money(teamValue)}/mo</div>
+      )}
+      {hasEssential && (
+        <div style={{ fontSize: 11, fontStyle: "italic", color: C.inkSoft, marginTop: 6, lineHeight: 1.35 }}>
+          Some of what {node.name} produces isn&rsquo;t sold directly, but is necessary for the end product.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Hover card for a single orbiting work-item circle (the "cards" LOD,
+ * Greg 2026-09-12). Same top-left-at-centre placement rule as HoverCard.
+ * Priced cards show their projected value; essential-but-valueless ones
+ * show the note explaining why they exist despite carrying no price.
+ */
+function TaskHoverCard({ task, x, y }: { task: MockTask; x: number; y: number }) {
+  return (
+    <div style={{ ...S.hoverCard, left: x, top: y, width: 210 }}>
+      <div style={S.hoverName}>{task.title}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
+        <span style={S.hoverTag}>{task.tag}</span>
+        <span style={S.hoverTag}>{task.points} pts</span>
+      </div>
+      {task.value !== null ? (
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.utilOk, marginTop: 9 }}>{money(task.value)} projected</div>
+      ) : (
+        <div style={{ fontSize: 11.5, fontStyle: "italic", color: C.inkSoft, marginTop: 9, lineHeight: 1.35 }}>
+          {task.essentialNote}
+        </div>
       )}
     </div>
   );

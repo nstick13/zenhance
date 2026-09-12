@@ -71,3 +71,22 @@ export function fanPoint(from: Point, to: Point, amount: number): Point {
   const len = Math.hypot(dx, dy) || 1;
   return { x: from.x + (-dy / len) * amount, y: from.y + (dx / len) * amount };
 }
+
+export type Spoke = { id: string; points: Point[] };
+
+/** A plain, label-free hub-and-spoke: every child's line touches its exact
+ *  centre (the circle drawn on top hides the segment inside its own
+ *  radius — "ends at circle centre, behind the circle," Greg 2026-09-12),
+ *  fanned apart near the hub the same way computeAllocationSpokes does.
+ *  Used at levels that don't carry a cost label (team → person, person →
+ *  card) — computeAllocationSpokes stays the one for hubs that do. */
+export function computeSpokes(hub: Point, children: (Point & { id: string })[], fanSpacing: number): Spoke[] {
+  const ordered = [...children].sort(
+    (a, b) => Math.atan2(a.y - hub.y, a.x - hub.x) - Math.atan2(b.y - hub.y, b.x - hub.x),
+  );
+  const offsets = fanOffsets(ordered.length, fanSpacing);
+  return ordered.map((child, i) => {
+    const from = fanPoint(hub, child, offsets[i]);
+    return { id: child.id, points: octilinearPath(from, { x: child.x, y: child.y }) };
+  });
+}

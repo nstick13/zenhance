@@ -55,6 +55,9 @@ function nextStatus(s: TaskStatus): TaskStatus {
   return STATUS_ORDER[(i + 1) % STATUS_ORDER.length];
 }
 
+const money = (n: number) =>
+  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`;
+
 export default function PersonTaskBoard({
   person,
   accent,
@@ -179,6 +182,9 @@ export default function PersonTaskBoard({
                       >
                         {status === "done" ? "✓ " : ""}
                         {t.title}
+                      </div>
+                      <div style={t.value !== null ? styles.cardValue : styles.cardEssential} title={t.essentialNote ?? undefined}>
+                        {t.value !== null ? money(t.value) : "Necessary — not sold on its own"}
                       </div>
                     </button>
                   ))}
@@ -340,4 +346,6 @@ const styles = {
     fontVariantNumeric: "tabular-nums" as const,
   },
   cardTitle: { fontSize: 13, color: P.ink, lineHeight: 1.35 },
+  cardValue: { fontSize: 11, fontWeight: 700, color: "#16a34a", marginTop: 5 },
+  cardEssential: { fontSize: 10.5, fontStyle: "italic" as const, color: P.inkSoft, marginTop: 5 },
 };

@@ -8,6 +8,15 @@
  * client-side and not persisted anywhere. It exists to let customer research
  * react to the *feel* of zooming into a person's work before we commit to a
  * real work entity + join table.
+ *
+ * Projected value (Greg, 2026-09-12): each card carries an illustrative
+ * dollar value — standing for a Jira ticket, a piece of client work, or an
+ * actual produced unit (componentry, a manufactured part). Some cards are
+ * deliberately valueless-but-necessary instead — a component that's never
+ * sold on its own but the end product can't exist without (a screw, a
+ * doll's hand) — carrying a note instead of a number. `producedValue` sums
+ * only the priced cards, which is what lets a parent node's "value to
+ * company" line mean something real relative to what's on screen.
  */
 import type { CanvasPerson } from "@/lib/canvas/buildCanvasMap";
 
@@ -21,6 +30,12 @@ export type MockTask = {
   priority: TaskPriority;
   points: number;
   tag: string;
+  /** Illustrative dollar value of this piece of work, or null when it's
+   *  necessary-but-not-directly-sold (see `essentialNote`). */
+  value: number | null;
+  /** Set only when `value` is null — why this exists despite carrying no
+   *  price of its own. */
+  essentialNote: string | null;
 };
 
 export const STATUS_ORDER: TaskStatus[] = ["backlog", "in_progress", "review", "done"];
@@ -31,6 +46,11 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   review: "Review",
   done: "Done",
 };
+
+/** How many "in orbit" work-item circles a person shows at the deepest
+ *  zoom rung, at most — Greg's cap, so a busy person doesn't ring themself
+ *  with fifty dots. */
+export const MAX_ORBIT_CARDS = 10;
 
 function hashSeed(s: string): number {
   let h = 2166136261;
@@ -90,6 +110,15 @@ const OBJECTS = [
   "a stakeholder deck",
 ];
 
+/** Flavour for the ~1-in-4 cards that carry no price of their own — the
+ *  "barbie doll hand" case: a necessary part of something bigger. */
+const ESSENTIAL_NOTES = [
+  "A necessary part of the larger deliverable — not sold on its own.",
+  "Internal groundwork the finished product depends on, but nothing a customer buys directly.",
+  "Compulsory for the end result to work, even though it carries no price of its own.",
+  "Supports what the team sells without being sellable itself.",
+];
+
 const PRIORITY_WEIGHTS: [TaskPriority, number][] = [
   ["low", 0.3],
   ["medium", 0.5],
@@ -104,6 +133,11 @@ const STATUS_WEIGHTS: [TaskStatus, number][] = [
 ];
 
 const POINTS = [1, 2, 3, 5, 8];
+
+/** Roughly a quarter of cards are essential-but-valueless rather than priced. */
+const ESSENTIAL_CHANCE = 0.25;
+const VALUE_MIN = 400;
+const VALUE_MAX = 6000;
 
 function weightedPick<T>(rand: () => number, weights: [T, number][]): T {
   const r = rand();
@@ -129,6 +163,7 @@ export function tasksForPerson(person: CanvasPerson, tagPool: string[]): MockTas
   for (let i = 0; i < count; i++) {
     const verb = VERBS[Math.floor(rand() * VERBS.length)];
     const object = OBJECTS[Math.floor(rand() * OBJECTS.length)];
+    const essential = rand() < ESSENTIAL_CHANCE;
     tasks.push({
       id: `${person.id}-task-${i}`,
       title: `${verb} ${object}`,
@@ -136,7 +171,22 @@ export function tasksForPerson(person: CanvasPerson, tagPool: string[]): MockTas
       priority: weightedPick(rand, PRIORITY_WEIGHTS),
       points: POINTS[Math.floor(rand() * POINTS.length)],
       tag: pool[Math.floor(rand() * pool.length)],
+      value: essential ? null : Math.round(VALUE_MIN + rand() * (VALUE_MAX - VALUE_MIN)),
+      essentialNote: essential ? ESSENTIAL_NOTES[Math.floor(rand() * ESSENTIAL_NOTES.length)] : null,
     });
   }
   return tasks;
+}
+
+/** The cards a person's orbit actually shows: in-progress only, capped at
+ *  MAX_ORBIT_CARDS — "what they produce right now," not their whole backlog. */
+export function inProgressCards(tasks: MockTask[]): MockTask[] {
+  return tasks.filter((t) => t.status === "in_progress").slice(0, MAX_ORBIT_CARDS);
+}
+
+/** Sum of priced (non-essential) in-progress cards — the figure a parent
+ *  node's "value to company" rolls up from. Essential cards contribute 0
+ *  deliberately: they're necessary, not a line of revenue. */
+export function producedValue(tasks: MockTask[]): number {
+  return inProgressCards(tasks).reduce((sum, t) => sum + (t.value ?? 0), 0);
 }

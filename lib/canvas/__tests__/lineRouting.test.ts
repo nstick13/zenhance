@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { octilinearPath, pointAlongPath, fanOffsets, fanPoint } from "../lineRouting";
+import { octilinearPath, pointAlongPath, fanOffsets, fanPoint, computeSpokes } from "../lineRouting";
 
 describe("octilinearPath", () => {
   it("passes an already-horizontal line through unchanged", () => {
@@ -87,5 +87,41 @@ describe("fanPoint", () => {
 
   it("is a no-op at zero offset", () => {
     expect(fanPoint({ x: 5, y: 5 }, { x: 50, y: 5 }, 0)).toEqual({ x: 5, y: 5 });
+  });
+});
+
+describe("computeSpokes", () => {
+  const hub = { x: 0, y: 0 };
+  const children = [
+    { id: "a", x: -100, y: -80 },
+    { id: "b", x: 100, y: -80 },
+    { id: "c", x: 0, y: 100 },
+  ];
+
+  it("ends every spoke exactly at the child's centre", () => {
+    const spokes = computeSpokes(hub, children, 10);
+    for (const s of spokes) {
+      const end = s.points[s.points.length - 1];
+      const child = children.find((c) => c.id === s.id)!;
+      expect(end).toEqual({ x: child.x, y: child.y });
+    }
+  });
+
+  it("carries no cost label — it's a plain connector", () => {
+    const spokes = computeSpokes(hub, children, 10);
+    for (const s of spokes) {
+      expect(s).not.toHaveProperty("amountLabel");
+    }
+  });
+
+  it("fans siblings apart near the hub", () => {
+    const spokes = computeSpokes(hub, children, 10);
+    const starts = spokes.map((s) => s.points[0]);
+    const unique = new Set(starts.map((p) => `${p.x},${p.y}`));
+    expect(unique.size).toBe(starts.length);
+  });
+
+  it("is deterministic", () => {
+    expect(computeSpokes(hub, children, 10)).toEqual(computeSpokes(hub, children, 10));
   });
 });

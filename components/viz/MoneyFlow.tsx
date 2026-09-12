@@ -5,8 +5,8 @@ import Konva from "konva";
 import { Group, Rect, Text, Circle, Shape } from "react-konva";
 import { type MoneyFlowLayout, type WorldBounds, FLOW_STROKE } from "@/lib/canvas/moneyFlow";
 import { GRID_SIZE } from "@/lib/canvas/grid";
-import { CARD_PAD, CARD_LINE_H, ALLOC_STROKE, type AllocationLine, type Box } from "@/lib/canvas/allocationFlow";
-import { pointAlongPath, type Point } from "@/lib/canvas/lineRouting";
+import { CARD_PAD, CARD_LINE_H, TIER_STROKE, type AllocationLine, type Box, type Tier } from "@/lib/canvas/allocationFlow";
+import { pointAlongPath, type Point, type Spoke } from "@/lib/canvas/lineRouting";
 
 /**
  * The macro layer: the grid backdrop, the company container, and the
@@ -108,7 +108,8 @@ export function GridBackdrop({ bounds }: { bounds: WorldBounds }) {
   );
 }
 
-export function MoneyFlowScene({ layout }: { layout: MoneyFlowLayout }) {
+export function MoneyFlowScene({ layout, scale }: { layout: MoneyFlowLayout; scale: number }) {
+  const invScale = 1 / scale;
   const groupRef = useRef<Konva.Group | null>(null);
   const lineRefs = useRef(new Map<string, Konva.Shape>());
   const packetRefs = useRef(new Map<string, Konva.Circle[]>());
@@ -193,7 +194,7 @@ export function MoneyFlowScene({ layout }: { layout: MoneyFlowLayout }) {
                 radius={FLOW_STROKE * 0.6}
                 fill={WHITE}
                 stroke={color}
-                strokeWidth={2.5}
+                strokeWidth={invScale}
                 perfectDrawEnabled={false}
               />
             ))}
@@ -259,9 +260,18 @@ export type AllocHub = {
   title: string;
   ownerLine: { text: string; warn: boolean } | null;
   statsLine: string;
+  /** "Produces ~$X/mo" — the inferred value of what this hub's people are
+   *  currently shipping, rolled up from their in-progress cards. Absent
+   *  when nothing priced is in flight. */
+  producedLine: string | null;
   hue: string;
   circle: { x: number; y: number; r: number } | null;
   lines: AllocationLine[];
+  /** Depth in the hierarchy — used to pick the spoke's stroke width (and,
+   *  via computeAllocationSpokes, the fan spacing that's derived from it).
+   *  See lib/canvas/allocationFlow.ts's TIER_STROKE — the single source of
+   *  truth for both. */
+  tier: Tier;
 };
 
 const ALLOC_BREATHE_MS = 1600;
@@ -270,7 +280,8 @@ const ALLOC_BREATHE_MS = 1600;
 const fitFontSize = (text: string, width: number, max: number, min: number) =>
   Math.min(max, Math.max(min, width / Math.max(1, text.length * 0.56)));
 
-export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
+export function AllocationScene({ hubs, scale }: { hubs: AllocHub[]; scale: number }) {
+  const invScale = 1 / scale;
   const groupRef = useRef<Konva.Group | null>(null);
   const lineRefs = useRef(new Map<string, Konva.Shape>());
 
@@ -305,6 +316,7 @@ export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
         const yTitle = hub.card.y - hub.card.hh + CARD_PAD;
         const yOwner = yTitle + titleSize + 5;
         const yStats = yOwner + (hub.ownerLine ? CARD_LINE_H : 0);
+        const yProduced = yStats + CARD_LINE_H;
         return (
           <Group key={hub.id}>
             {hub.lines.map((l) => {
@@ -317,7 +329,7 @@ export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
                     }}
                     sceneFunc={roundedPolylineSceneFunc(l.points, ALLOC_CORNER_R)}
                     stroke={hub.hue}
-                    strokeWidth={ALLOC_STROKE}
+                    strokeWidth={TIER_STROKE[hub.tier]}
                     lineCap="butt"
                     opacity={0.6}
                     perfectDrawEnabled={false}
@@ -333,7 +345,7 @@ export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
                 radius={hub.circle.r}
                 fill={WHITE}
                 stroke={hub.hue}
-                strokeWidth={2.5}
+                strokeWidth={invScale}
                 perfectDrawEnabled={false}
               />
             )}
@@ -386,9 +398,87 @@ export function AllocationScene({ hubs }: { hubs: AllocHub[] }) {
               fill={INK_SOFT}
               opacity={0.85}
             />
+            {hub.producedLine && (
+              <Text
+                text={hub.producedLine}
+                x={hub.card.x - hub.card.hw + CARD_PAD}
+                y={yProduced}
+                width={innerW}
+                wrap="none"
+                ellipsis
+                fontSize={11}
+                fontStyle="bold"
+                fontFamily={FONT}
+                fill={INCOME}
+              />
+            )}
           </Group>
         );
       })}
+    </Group>
+  );
+}
+
+/**
+ * A plain, label-free railway connection — team → person and person → card
+ * (Greg, 2026-09-12): "let's see how it looks with the railway design at
+ * all layers of zoom." Same octilinear routing and breathing pulse as the
+ * cost-bearing spokes above, just without a card/circle/label at either
+ * end — the circles already there (team, person, work-item) are the
+ * endpoints. Each spoke carries its own colour/dash so a person→card line
+ * can match its card's own "priced vs essential" treatment.
+ */
+export type ColoredSpoke = Spoke & { color: string; dash?: number[] };
+
+export function SpokeScene({
+  spokes,
+  strokeWidth,
+  cornerRadius,
+  opacity = 0.5,
+}: {
+  spokes: ColoredSpoke[];
+  strokeWidth: number;
+  cornerRadius: number;
+  opacity?: number;
+}) {
+  const groupRef = useRef<Konva.Group | null>(null);
+  const lineRefs = useRef(new Map<string, Konva.Shape>());
+
+  useEffect(() => {
+    const layer = groupRef.current?.getLayer() ?? null;
+    const anim = new Konva.Animation((frame) => {
+      if (!frame) return;
+      const t = frame.time;
+      spokes.forEach((s, i) => {
+        const ref = lineRefs.current.get(s.id);
+        if (ref) {
+          const breathe = Math.sin(t / 1700 + i * 0.6) * 0.5 + 0.5;
+          ref.opacity(opacity * (0.55 + 0.45 * breathe));
+        }
+      });
+    }, layer);
+    anim.start();
+    return () => {
+      anim.stop();
+    };
+  }, [spokes, opacity]);
+
+  return (
+    <Group ref={groupRef} listening={false}>
+      {spokes.map((s) => (
+        <Shape
+          key={s.id}
+          ref={(node) => {
+            if (node) lineRefs.current.set(s.id, node);
+          }}
+          sceneFunc={roundedPolylineSceneFunc(s.points, cornerRadius)}
+          stroke={s.color}
+          strokeWidth={strokeWidth}
+          dash={s.dash}
+          lineCap="butt"
+          perfectDrawEnabled={false}
+        />
+      ))}
     </Group>
   );
 }
