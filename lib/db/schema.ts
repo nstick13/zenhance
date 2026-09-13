@@ -36,6 +36,9 @@ export const orgUnitKind = pgEnum("org_unit_kind", ["group", "team"]);
 
 export const mapNodeType = pgEnum("map_node_type", ["unit", "person"]);
 
+/** A unit on an orbit, or a person's seat on one. */
+export const orbitalNodeType = pgEnum("orbital_node_type", ["unit", "seat"]);
+
 /**
  * How a person is employed. Deliberately a fixed enum, not a workspace-defined
  * list: outsourcing exposure is a headline finding, so "contractor" has to mean
@@ -245,6 +248,46 @@ export const mapNodes = pgTable(
   ],
 );
 
+// --- orbital nodes (the orbital map's persisted arrangement) ---------------
+// The orbital map doesn't place things in x/y — a node's position *is* which
+// orbit it sits on and where round that orbit it sits (lib/orbital/*). So it
+// needs its own store rather than a second meaning for `map_nodes`.
+//
+// `parentId` is an **override, not an org edit**: dragging a team into
+// another stream rearranges this map without touching `org_units.parent_id`,
+// so an arrangement survives a reload while the org of record stays exactly
+// as it was. Promoting one of these to a real restructure is a separate,
+// deliberate act (Greg, 2026-09-13). Polymorphic and FK-free for the same
+// reason `map_nodes` is: it's advisory placement, and a seat id is synthetic.
+export const orbitalNodes = pgTable(
+  "orbital_nodes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    boardId: text("board_id").notNull().default("default"),
+    nodeType: orbitalNodeType("node_type").notNull(),
+    nodeId: text("node_id").notNull(),
+    /** Absolute angle in radians, measured from the centre of the map. */
+    angle: numeric("angle", { precision: 9, scale: 6 }),
+    /** Unit this node was dropped onto: the parent for a unit, the host for
+     *  a seat. Null means "wherever the org says". */
+    parentId: text("parent_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("orbital_nodes_workspace_board_node_uq").on(
+      t.workspaceId,
+      t.boardId,
+      t.nodeType,
+      t.nodeId,
+    ),
+    index("orbital_nodes_workspace_idx").on(t.workspaceId),
+  ],
+);
+
 // --- findings policy (S5 tab 5: the detector/policy config) ---------------
 /**
  * A workspace's rules for what the findings detectors may raise. Deliberately
@@ -395,5 +438,6 @@ export type Discipline = typeof disciplines.$inferSelect;
 export type OrgUnit = typeof orgUnits.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
 export type MapNodeRow = typeof mapNodes.$inferSelect;
+export type OrbitalNodeRow = typeof orbitalNodes.$inferSelect;
 export type FindingsPolicyRow = typeof findingsPolicy.$inferSelect;
 export type PodTemplateRoleRow = typeof podTemplateRoles.$inferSelect;

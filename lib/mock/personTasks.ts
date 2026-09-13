@@ -18,7 +18,6 @@
  * only the priced cards, which is what lets a parent node's "value to
  * company" line mean something real relative to what's on screen.
  */
-import type { CanvasPerson } from "@/lib/canvas/buildCanvasMap";
 
 export type TaskStatus = "backlog" | "in_progress" | "review" | "done";
 export type TaskPriority = "low" | "medium" | "high";
@@ -155,7 +154,7 @@ function weightedPick<T>(rand: () => number, weights: [T, number][]): T {
  * (this module stays pure and knows nothing about the org graph), used to
  * flavour each card so it reads as "their work," not generic filler.
  */
-export function tasksForPerson(person: CanvasPerson, tagPool: string[]): MockTask[] {
+export function tasksForPerson(person: { id: string }, tagPool: string[]): MockTask[] {
   const rand = mulberry32(hashSeed(person.id));
   const count = 4 + Math.floor(rand() * 6); // 4–9 cards
   const pool = tagPool.length > 0 ? tagPool : ["General"];

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, mapNodes, disciplines, workspaces, eq, and, sql } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, orbitalNodes, disciplines, workspaces, eq, and, sql } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
@@ -460,6 +460,62 @@ export async function saveMapNodePositions(
       target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
       set: { x: sql`excluded.x`, y: sql`excluded.y`, updatedAt: new Date() },
     });
+  return { ok: true, data: undefined };
+}
+
+// --- orbital arrangement ----------------------------------------------------
+/**
+ * Persist where a node sits on the orbital map: its angle, and the unit it
+ * was dropped onto. The parent here is an **arrangement override, not an org
+ * edit** — `org_units.parent_id` is untouched, so a rearranged map survives a
+ * reload without quietly restructuring the company. See lib/db/schema.ts.
+ */
+export async function saveOrbitalNodes(
+  rows: { nodeType: "unit" | "seat"; nodeId: string; angle: number | null; parentId: string | null }[],
+  boardId = "default",
+): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  if (rows.length === 0) return { ok: true, data: undefined };
+  if (rows.length > 2000) return fail("Too many nodes in one write");
+  const values = [];
+  for (const r of rows) {
+    if (r.nodeType !== "unit" && r.nodeType !== "seat") return fail("Invalid node type");
+    if (!r.nodeId) return fail("Missing node id");
+    if (r.angle !== null && !Number.isFinite(r.angle)) return fail("Invalid angle");
+    values.push({
+      workspaceId: workspace.id,
+      boardId,
+      nodeType: r.nodeType,
+      nodeId: r.nodeId,
+      angle: r.angle === null ? null : r.angle.toFixed(6),
+      parentId: r.parentId,
+    });
+  }
+  await db
+    .insert(orbitalNodes)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [
+        orbitalNodes.workspaceId,
+        orbitalNodes.boardId,
+        orbitalNodes.nodeType,
+        orbitalNodes.nodeId,
+      ],
+      set: {
+        angle: sql`excluded.angle`,
+        parentId: sql`excluded.parent_id`,
+        updatedAt: new Date(),
+      },
+    });
+  return { ok: true, data: undefined };
+}
+
+/** Throw the arrangement away and fall back to the computed layout. */
+export async function clearOrbitalNodes(boardId = "default"): Promise<ActionResult> {
+  const { workspace } = await requireWorkspace();
+  await db
+    .delete(orbitalNodes)
+    .where(and(eq(orbitalNodes.workspaceId, workspace.id), eq(orbitalNodes.boardId, boardId)));
   return { ok: true, data: undefined };
 }
 

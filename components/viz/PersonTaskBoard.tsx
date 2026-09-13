@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { CanvasPerson } from "@/lib/canvas/buildCanvasMap";
 import {
   tasksForPerson,
   STATUS_ORDER,
@@ -64,7 +63,8 @@ export default function PersonTaskBoard({
   teamNames,
   onBack,
 }: {
-  person: CanvasPerson;
+  /** Only identity is needed — widened so both maps can open this board. */
+  person: { id: string; name: string; title?: string | null };
   accent: string;
   teamNames: string[];
   onBack: () => void;

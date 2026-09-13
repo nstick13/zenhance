@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { getOrgSnapshot, getMapNodes, getFindingsPolicy } from "@/lib/data/queries";
+import { getOrgSnapshot, getMapNodes, getOrbitalNodes, getFindingsPolicy } from "@/lib/data/queries";
 import { RadialOrg } from "@/components/viz/RadialOrg";
 import { OrgCanvasLoader } from "@/components/viz/OrgCanvasLoader";
+import { OrbitalMapLoader } from "@/components/viz/orbital/OrbitalMapLoader";
+import { OrgViewSwitcher } from "@/components/viz/OrgViewSwitcher";
 import { loadDemoOrg } from "@/lib/data/actions";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 
@@ -53,24 +55,21 @@ export default async function OrgPage({
     );
   }
 
-  // The canvas is the product; the radial is the alternate lens at ?view=radial.
-  if (view === "radial") {
-    const findingsPolicy = await getFindingsPolicy();
-    return (
-      <div className="h-[calc(100vh-57px)]">
-        <RadialOrg
-          people={people}
-          units={units}
-          assignments={assignments}
-          findingsPolicy={findingsPolicy}
-        />
-      </div>
-    );
-  }
+  // Every view shares one shell so the switcher is always in the same place.
+  const shell = (id: string, map: React.ReactNode) => (
+    <div className="relative h-[calc(100vh-57px)]">
+      {map}
+      <OrgViewSwitcher active={id} />
+    </div>
+  );
 
-  const mapNodeRows = await getMapNodes();
-  return (
-    <div className="h-[calc(100vh-57px)]">
+  // The v2 canvas, now the alternate lens at ?view=canvas — the orbital map
+  // took over as the default on 2026-09-13 (Greg: "this needs to replace the
+  // current view as the default visualisation and behaviour").
+  if (view === "canvas") {
+    const mapNodeRows = await getMapNodes();
+    return shell(
+      "canvas",
       <OrgCanvasLoader
         people={people}
         units={units}
@@ -79,7 +78,32 @@ export default async function OrgPage({
         disciplines={disciplines}
         lens={lens}
         vocabulary={vocabulary}
-      />
-    </div>
+      />,
+    );
+  }
+
+  if (view === "radial") {
+    const findingsPolicy = await getFindingsPolicy();
+    return shell(
+      "radial",
+      <RadialOrg
+        people={people}
+        units={units}
+        assignments={assignments}
+        findingsPolicy={findingsPolicy}
+      />,
+    );
+  }
+
+  const savedNodes = await getOrbitalNodes();
+  return shell(
+    "orbital",
+    <OrbitalMapLoader
+      people={people}
+      units={units}
+      assignments={assignments}
+      vocabulary={vocabulary}
+      savedNodes={savedNodes}
+    />,
   );
 }

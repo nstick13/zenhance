@@ -5,6 +5,7 @@ import {
   orgUnits,
   assignments,
   mapNodes,
+  orbitalNodes,
   disciplines,
   eq,
   and,
@@ -14,6 +15,7 @@ import {
   type OrgUnit,
   type Assignment,
   type MapNodeRow,
+  type OrbitalNodeRow,
   type Discipline,
 } from "@/lib/db/orm";
 import { requireWorkspace } from "@/lib/auth/workspace";
@@ -196,6 +198,16 @@ export async function getMapNodes(boardId = "default"): Promise<MapNodeRow[]> {
     .select()
     .from(mapNodes)
     .where(and(eq(mapNodes.workspaceId, workspace.id), eq(mapNodes.boardId, boardId)));
+}
+
+/** The orbital map's saved arrangement — which orbit each node sits on and
+ *  where round it. Absent rows simply fall back to the computed layout. */
+export async function getOrbitalNodes(boardId = "default"): Promise<OrbitalNodeRow[]> {
+  const { workspace } = await requireWorkspace();
+  return db
+    .select()
+    .from(orbitalNodes)
+    .where(and(eq(orbitalNodes.workspaceId, workspace.id), eq(orbitalNodes.boardId, boardId)));
 }
 
 export async function getOrgUnit(id: string): Promise<OrgUnit | null> {
