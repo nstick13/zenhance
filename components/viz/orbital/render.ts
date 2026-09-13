@@ -23,8 +23,15 @@ import {
   workCapsuleLength,
   type Point,
 } from "@/lib/orbital/geometry";
-import type { OrbitalScene } from "@/lib/orbital/layout";
-import { lerp, type Reveal } from "@/lib/orbital/lod";
+import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
+import {
+  UNIT_CULL_PX,
+  drawnUnitRadius,
+  lerp,
+  smoothstep,
+  unitPresence,
+  type Reveal,
+} from "@/lib/orbital/lod";
 import {
   UNIT_RING_KEYS,
   type SeatProgress,
@@ -67,6 +74,9 @@ export type RenderCtx = {
   moneyByUnit: Map<string, number>;
   maxMoney: number;
   externals: ExternalFlow[];
+  /** Formal reporting lines, person → their manager, as seat id pairs. */
+  reportingLines: { from: string; to: string }[];
+  showReporting: boolean;
   /** Live, spring-animated position of a node, by motion key. */
   at: (key: string, fallback: Point) => Point;
   ripples: Ripple[];
@@ -75,6 +85,11 @@ export type RenderCtx = {
   hoveredRing: RingHover | null;
   hoveredWork: { seatId: string; index: number } | null;
   hoveredUnitId: string | null;
+  draggedUnitId: string | null;
+  /** Live stage zoom, read straight off the camera each frame — node sizes
+   *  hold still against it, so they can't be quantised to React's throttled
+   *  copy without visibly pulsing. */
+  scale: number;
   now: number;
 };
 
@@ -91,6 +106,14 @@ const RING_THIN_STEP = 5.5;
 const RING_THIN_INSET = 7;
 
 const SEAT_RING_WIDTH = 2.4;
+
+/** A unit's gauges fade in between these two on-screen node sizes. Below the
+ *  first they are a smudge; above the second you can read them. */
+const RING_MIN_PX = 5;
+const RING_CLEAR_PX = 11;
+
+/** Below this on-screen size a node doesn't get a shadow — see paintUnitDiscs. */
+const SHADOW_MIN_PX = 7;
 
 /** Rings sit back until you ask them a question (Greg, 2026-09-14). */
 const RING_RESTING_ALPHA = 0.34;
@@ -113,12 +136,90 @@ export function ringGeometry(
   unit: { r: number; seatRingRadius: number },
   index: number,
   settle: number,
+  /** How much the node itself has been inflated to stay visible. The rings are
+   *  the node's furniture, so they take the same magnification — otherwise an
+   *  inflated disc simply swallows them. It is 1 at every zoom that matters. */
+  inflate = 1,
 ) {
-  const base = lerp(unit.seatRingRadius, unit.r + RING_THIN_INSET, settle);
-  const step = lerp(RING_CHUNKY_STEP, RING_THIN_STEP, settle);
+  const base = lerp(unit.seatRingRadius, unit.r + RING_THIN_INSET, settle) * inflate;
+  const step = lerp(RING_CHUNKY_STEP, RING_THIN_STEP, settle) * inflate;
   return {
     radius: base + index * step,
-    width: lerp(RING_CHUNKY_WIDTH, RING_THIN_WIDTH, settle),
+    width: lerp(RING_CHUNKY_WIDTH, RING_THIN_WIDTH, settle) * inflate,
+  };
+}
+
+/** The drawn size of a unit at the current zoom — the one number the disc,
+ *  its label and its hit test all have to agree on. */
+export function unitDrawRadius(unit: PlacedUnit, scale: number): number {
+  return drawnUnitRadius(unit, scale, unit.drawCeiling);
+}
+
+/**
+ * The unit circles themselves.
+ *
+ * These used to be React-managed Konva nodes, which was fine while their size
+ * was fixed. It isn't any more: a node holds a minimum size on *screen* when
+ * zoomed out (see `drawnUnitRadius`), which means its world radius has to
+ * change on every frame of a zoom. React only hears about the camera in
+ * throttled 3% steps, and a 3% wobble on something the eye expects to be
+ * frozen is exactly the sort of thing you notice. So the discs are painted
+ * from the live camera like everything else that morphs, and the React nodes
+ * behind them are left as invisible handles for dragging and hover.
+ */
+export function paintUnitDiscs(get: CtxGetter) {
+  return (ctx: Konva.Context) => {
+    const c = get();
+    if (!c) return;
+    const scale = Math.max(c.scale, 1e-6);
+    const inv = 1 / scale;
+
+    ctx.save();
+    for (const unit of c.scene.units) {
+      const r = unitDrawRadius(unit, scale);
+      if (r * scale < UNIT_CULL_PX) continue;
+      const centre = c.at(uid(unit.id), unit);
+      const dragged = c.draggedUnitId === unit.id;
+      const hovered = c.hoveredUnitId === unit.id;
+
+      // A speck held above the pixel floor shouldn't read as solidly as a
+      // bubble you could point at, so the faintest ones sit back into the page.
+      ctx.setAttr("globalAlpha", dragged || hovered ? 1 : unitPresence(r * scale));
+      ctx.setAttr("fillStyle", C.unitFill);
+      ctx.setAttr("strokeStyle", dragged ? C.accent : C.unitStroke);
+      ctx.setAttr("lineWidth", (dragged ? 3 : 1.75) * Math.min(inv, r / 6));
+      // The paper lift, but only on nodes big enough to cast one — a shadow
+      // under a two-pixel dot is just a smudge, and there are four hundred
+      // of them.
+      const lifted = r * scale > SHADOW_MIN_PX;
+      if (lifted) {
+        ctx.setAttr("shadowColor", C.ink);
+        ctx.setAttr("shadowBlur", (dragged ? 26 : 14) * inv);
+        ctx.setAttr("shadowOffsetY", (dragged ? 8 : 3) * inv);
+        ctx.setAttr("globalAlpha", (dragged ? 0.16 : 0.06) * (dragged || hovered ? 1 : unitPresence(r * scale)));
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, r, 0, TAU, false);
+        ctx.fill();
+        ctx.setAttr("shadowColor", "transparent");
+        ctx.setAttr("shadowBlur", 0);
+        ctx.setAttr("shadowOffsetY", 0);
+        ctx.setAttr("globalAlpha", dragged || hovered ? 1 : unitPresence(r * scale));
+      }
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y, r, 0, TAU, false);
+      ctx.fill();
+      ctx.stroke();
+
+      if (unit.isExternal && r * scale > 6) {
+        ctx.setAttr("lineWidth", inv);
+        ctx.setLineDash([6 * inv, 5 * inv]);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, r - 6 * inv, 0, TAU, false);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.restore();
   };
 }
 
@@ -140,18 +241,25 @@ export function paintUnitRings(get: CtxGetter) {
     for (const unit of c.scene.units) {
       const progress = c.unitRings.get(unit.id);
       if (!progress || progress.people === 0) continue;
+      const drawn = unitDrawRadius(unit, c.scale);
+      // Three gauges around a two-pixel dot are not three gauges, they're a
+      // smudge — and on a 400-unit map they turn the whole far view fuzzy.
+      // Rings wait until the node is big enough to actually carry them.
+      const legible = smoothstep(RING_MIN_PX, RING_CLEAR_PX, drawn * c.scale);
+      if (legible <= 0.01) continue;
       const centre = c.at(uid(unit.id), unit);
       const from = unit.seatFanAngle - Math.max(unit.seatFanSpan, 0.9) / 2;
+      const inflate = drawn / Math.max(unit.r, 1e-6);
 
       UNIT_RING_KEYS.forEach((key, i) => {
         const value = Math.max(0, Math.min(1, progress[key]));
-        const { radius, width } = ringGeometry(unit, i, settle);
+        const { radius, width } = ringGeometry(unit, i, settle, inflate);
         if (radius <= 0) return;
         const hovered = c.hoveredRing?.unitId === unit.id && c.hoveredRing.key === key;
         const colour = key === "delivery" ? C.ink : key === "sprint" ? C.inkSoft : healthColor(value);
 
         if (settle > 0.02) {
-          ctx.setAttr("globalAlpha", (hovered ? 0.7 : 0.3) * settle);
+          ctx.setAttr("globalAlpha", (hovered ? 0.7 : 0.3) * settle * legible);
           ctx.setAttr("strokeStyle", C.track);
           ctx.setAttr("lineWidth", width);
           ctx.beginPath();
@@ -166,7 +274,7 @@ export function paintUnitRings(get: CtxGetter) {
           ctx.setAttr("shadowBlur", 14);
           ctx.setAttr("shadowOffsetY", 3);
         }
-        ctx.setAttr("globalAlpha", hovered ? 1 : RING_RESTING_ALPHA);
+        ctx.setAttr("globalAlpha", (hovered ? 1 : RING_RESTING_ALPHA) * legible);
         ctx.setAttr("strokeStyle", colour);
         ctx.setAttr("lineWidth", hovered ? width * 1.35 : width);
         ctx.beginPath();
@@ -396,6 +504,38 @@ export function paintSeatLinks(get: CtxGetter) {
       const to = c.at(sid(seat.id), seat);
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
+    }
+    ctx.strokeShape(shape);
+  };
+}
+
+/**
+ * Who reports to whom, drawn dotted so it reads as a different kind of line
+ * from the solid delivery structure it crosses (Greg, 2026-09-14). The gap
+ * between the two *is* the product's thesis: the org chart and the way work
+ * actually flows are rarely the same shape.
+ */
+export function paintReportingLines(get: CtxGetter) {
+  return (ctx: Konva.Context, shape: Konva.Shape) => {
+    const c = get();
+    if (!c || !c.showReporting) return;
+    if (c.reveal.people <= 0.02) return;
+    // Only the person under the cursor (Greg, 2026-09-14). Drawing every
+    // reporting line at once on a 2,500-person org buries the map in dashes
+    // and answers a question nobody asked; drawn one person at a time it
+    // answers exactly the question you're pointing at.
+    const focus = c.focusSeatId;
+    if (!focus) return;
+    ctx.beginPath();
+    for (const line of c.reportingLines) {
+      if (line.from !== focus && line.to !== focus) continue;
+      const from = c.scene.seatById.get(line.from);
+      const to = c.scene.seatById.get(line.to);
+      if (!from || !to) continue;
+      const a = c.at(sid(from.id), from);
+      const b = c.at(sid(to.id), to);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
     }
     ctx.strokeShape(shape);
   };

@@ -10,6 +10,7 @@ import {
   eq,
   and,
   asc,
+  inArray,
   sql,
   type Person,
   type OrgUnit,
@@ -18,7 +19,7 @@ import {
   type OrbitalNodeRow,
   type Discipline,
 } from "@/lib/db/orm";
-import { requireWorkspace } from "@/lib/auth/workspace";
+import { requireWorkspace, listWorkspaces } from "@/lib/auth/workspace";
 import { normalizeLens, type Lens } from "@/lib/canvas/lens";
 import { normalizeVocabulary, type Vocabulary } from "@/lib/vocabulary";
 import {
@@ -198,6 +199,22 @@ export async function getMapNodes(boardId = "default"): Promise<MapNodeRow[]> {
     .select()
     .from(mapNodes)
     .where(and(eq(mapNodes.workspaceId, workspace.id), eq(mapNodes.boardId, boardId)));
+}
+
+/** Every company this user can switch to, with a headcount so the switcher
+ *  can say how big each one is. */
+export async function listWorkspaceOptions(
+  userId: string,
+): Promise<{ id: string; name: string; headcount: number }[]> {
+  const rows = await listWorkspaces(userId);
+  if (rows.length === 0) return [];
+  const counts = await db
+    .select({ workspaceId: people.workspaceId, headcount: sql<number>`count(*)::int` })
+    .from(people)
+    .where(inArray(people.workspaceId, rows.map((w) => w.id)))
+    .groupBy(people.workspaceId);
+  const byId = new Map(counts.map((c) => [c.workspaceId, c.headcount]));
+  return rows.map((w) => ({ id: w.id, name: w.name, headcount: byId.get(w.id) ?? 0 }));
 }
 
 /** The orbital map's saved arrangement — which orbit each node sits on and

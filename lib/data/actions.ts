@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { people, orgUnits, assignments, mapNodes, orbitalNodes, disciplines, workspaces, eq, and, sql } from "@/lib/db/orm";
-import { requireWorkspace } from "@/lib/auth/workspace";
+import { requireWorkspace, selectWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
   orgUnitInput,
@@ -460,6 +460,20 @@ export async function saveMapNodePositions(
       target: [mapNodes.workspaceId, mapNodes.boardId, mapNodes.nodeType, mapNodes.nodeId],
       set: { x: sql`excluded.x`, y: sql`excluded.y`, updatedAt: new Date() },
     });
+  return { ok: true, data: undefined };
+}
+
+// --- switching company ------------------------------------------------------
+/**
+ * Change which company the app is looking at. The switch is validated against
+ * the user's memberships inside `selectWorkspace`, so this action cannot be
+ * used to reach a tenant they don't belong to.
+ */
+export async function switchWorkspace(workspaceId: string): Promise<ActionResult> {
+  const { userId } = await requireWorkspace();
+  const ok = await selectWorkspace(userId, workspaceId);
+  if (!ok) return fail("No access to that company");
+  revalidatePath("/", "layout");
   return { ok: true, data: undefined };
 }
 

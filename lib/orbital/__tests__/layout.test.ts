@@ -98,6 +98,29 @@ describe("layoutOrbital — holds up as the org grows", () => {
       }
     }
   });
+
+  it("grows the nodes with the rungs, so a big org isn't a field of specks", () => {
+    // The regression this guards: node size was indexed against the *unfitted*
+    // bands, which measure a few hundred units where the finished map has
+    // thousands. Nothing ever cleared the base radii, the whole pass was dead
+    // code, and a 2,400-person org drew every team at the r=20 floor.
+    const small = scene();
+    const big = wide(14, 10, 9);
+    expect(big.maxDepth).toBeGreaterThanOrEqual(2);
+    for (let d = 1; d <= big.maxDepth; d++) {
+      expect(big.bands[d].nodeRadius).toBeGreaterThan(small.bands[d].nodeRadius * 1.5);
+    }
+  });
+
+  it("never lets a rung's nodes outgrow the rung inside it", () => {
+    // Size is the only thing carrying depth once you're too far out to read a
+    // label, so it has to fall monotonically whatever the arithmetic wants.
+    for (const s of [scene(), wide(8, 6, 8), wide(14, 10, 9)]) {
+      for (let d = 1; d < s.bands.length; d++) {
+        expect(s.bands[d].nodeRadius).toBeLessThan(s.bands[d - 1].nodeRadius);
+      }
+    }
+  });
 });
 
 describe("layoutOrbital — angle follows the parent", () => {
@@ -304,14 +327,27 @@ describe("angle overrides", () => {
   });
 
   it("carries the dragged node's subtree round with it", () => {
+    // Not by an identical delta: a child is placed inside the slice its parent
+    // hands it, and a drag re-centres that slice on the angle it was dropped
+    // at — so the subtree follows the *slice*, not the parent's own offset
+    // within it. What has to hold is that the family travels with its parent
+    // and stays underneath it.
     const tree = buildOrbitalTree(demoInput());
     const before = layoutOrbital(tree);
     const shift = 0.6;
     const after = layoutOrbital(tree, {
       angleOverrides: new Map([["atlas", before.unitById.get("atlas")!.angle + shift]]),
     });
-    const movedChild = after.unitById.get("starlight")!;
-    const originalChild = before.unitById.get("starlight")!;
-    expect(angleDelta(originalChild.angle, movedChild.angle)).toBeCloseTo(shift, 5);
+    const parentBefore = before.unitById.get("atlas")!;
+    const parentAfter = after.unitById.get("atlas")!;
+    const childBefore = before.unitById.get("starlight")!;
+    const childAfter = after.unitById.get("starlight")!;
+
+    expect(parentAfter.angle).toBeCloseTo(parentBefore.angle + shift, 5); // it went where it was put
+    expect(sectorContains(parentAfter.sector, childAfter.angle)).toBe(true); // child still its parent's
+    // And the child didn't drift away from its parent while following.
+    const offsetBefore = Math.abs(angleDelta(parentBefore.angle, childBefore.angle));
+    const offsetAfter = Math.abs(angleDelta(parentAfter.angle, childAfter.angle));
+    expect(offsetAfter).toBeLessThanOrEqual(offsetBefore + 0.05);
   });
 });

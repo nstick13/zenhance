@@ -45,8 +45,55 @@ export const REVEAL_BANDS = {
   labels: [5.3, 6.0],
 } as const;
 
-/** Below this only the company and its first rung are drawn at all. */
-export const CULL_SCALE = REVEAL_BANDS.deepUnits[0];
+/** A node drawn smaller than this on screen isn't worth a draw call. Nothing
+ *  reaches it while `drawnUnitRadius` is holding the floors below. */
+export const UNIT_CULL_PX = 0.35;
+
+/**
+ * How big a unit actually draws at a given zoom.
+ *
+ * Northwind is 45,000 units across. Pulled back far enough to see it whole,
+ * every node is a fraction of a pixel and the map reads as fog — Greg,
+ * 2026-09-14: "the scale of the organisational nodes is far too small to be
+ * seen meaningfully at any level of zoom". So a node claims a minimum size *on
+ * screen*, and how much it claims depends on how central it is: the company
+ * and its divisions hold a legible bubble however far out you pull, while the
+ * deep teams sit as faint specks and swell toward their true size as you come
+ * down to them.
+ *
+ * Two properties make this safe rather than a hack. A node never draws
+ * *smaller* than it was laid out, so its people and their work can't come
+ * adrift from it — the inflation only ever adds, and it melts away exactly
+ * when the zoom stops needing it. And each rung's ceiling is held short of
+ * both its neighbour and its own arc slot, so no amount of pulling back turns
+ * the rings into a blot.
+ *
+ * The side effect is the one Greg asked for: while the floor is binding, a
+ * node's screen size doesn't change as you zoom — the central ones "remain the
+ * same absolute size as we zoomed in" — and it starts growing the moment its
+ * real radius overtakes the floor.
+ */
+const SCREEN_FLOOR_PX = [30, 11, 8, 6, 4.4, 3.2, 2.4, 1.8, 1.4, 1.15, 1, 0.9];
+const SCREEN_FLOOR_DEEPEST = 0.85;
+
+export function screenFloorPx(depth: number): number {
+  return SCREEN_FLOOR_PX[depth] ?? SCREEN_FLOOR_DEEPEST;
+}
+
+export function drawnUnitRadius(
+  unit: { r: number; depth: number },
+  scale: number,
+  ceiling: number,
+): number {
+  const floor = screenFloorPx(unit.depth) / Math.max(scale, 1e-6);
+  return Math.min(Math.max(unit.r, floor), Math.max(unit.r, ceiling));
+}
+
+/** How present a node looks. A speck held above the pixel floor shouldn't read
+ *  as solidly as a bubble you could click, so the faintest ones sit back. */
+export function unitPresence(drawnScreenPx: number): number {
+  return 0.35 + 0.65 * smoothstep(1, 4, drawnScreenPx);
+}
 
 export type Reveal = {
   deepUnits: number;

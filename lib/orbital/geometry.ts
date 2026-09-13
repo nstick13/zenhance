@@ -86,8 +86,11 @@ export const SEAT_GAP = 10;
 export const SEAT_ORBIT_GAP = 38;
 /** Seats fan across the outward side only — never a full collar. */
 export const SEAT_MAX_SPAN = 200 * DEG;
-/** A second seat ring starts here when the first one is full. */
-export const SEAT_RING_STEP = 2 * SEAT_RADIUS + 7;
+/** A second seat ring has to clear the *furniture* of the first, not just its
+ *  circles: a person's work capsule reaches a long way outward, and a ring
+ *  spaced only by seat width lands its people straight through it (Greg,
+ *  2026-09-14 — the crowding at detail zoom). Defined below, once the capsule
+ *  constants exist. */
 
 /** A work item orbiting a person, as a dot in the far view. */
 export const WORK_RADIUS = 3;
@@ -109,12 +112,23 @@ export const workCapsuleLength = (count: number): number =>
 /** Clear space between one band's outermost content and the next band's nodes. */
 export const BAND_PAD = 78;
 
+/** How far a person's own furniture reaches beyond them: the capsule holding
+ *  their board, which is the longest thing they carry. */
+export const seatFurnitureReach = (workCount: number): number =>
+  workCount > 0 ? SEAT_RADIUS + WORK_CAPSULE_GAP + workCapsuleLength(workCount) : SEAT_RADIUS;
+
+/** Gap between one seat ring and the next — wide enough that the inner ring's
+ *  work never reaches the outer ring's people. */
+export const SEAT_RING_STEP = 2 * SEAT_RADIUS + WORK_CAPSULE_GAP + workCapsuleLength(8) + 12;
+
 export const seatRingRadius = (unitR: number, ring = 0): number =>
   unitR + SEAT_ORBIT_GAP + SEAT_RADIUS + ring * SEAT_RING_STEP;
 
-/** How far a unit's own furniture (its seat rings) reaches past its centre. */
-export const unitOuterExtent = (unitR: number, seatRings: number): number =>
-  seatRings > 0 ? seatRingRadius(unitR, seatRings - 1) + SEAT_RADIUS : unitR;
+/** How far a unit's own furniture — its seat rings, and the work those people
+ *  carry — reaches past its centre. The work matters: leaving it out is what
+ *  left the detail rungs too tight while the upper ones sprawled. */
+export const unitOuterExtent = (unitR: number, seatRings: number, workReach = 0): number =>
+  seatRings > 0 ? seatRingRadius(unitR, seatRings - 1) + Math.max(SEAT_RADIUS, workReach) : unitR;
 
 /** How far a seat's work grid reaches past the seat's centre. */
 export const workOuterExtent = (workCount: number): number =>
@@ -147,10 +161,23 @@ export function packRing(
   if (count <= 0) return [];
   if (count === 1) return [normalizeAngle(center)];
   const natural = angularStep(itemRadius, gap, ringRadius);
-  const step = Math.min(natural, maxSpan / (count - 1));
+  // Shoulder to shoulder is right when the sector is snug. But a deep org has
+  // rungs whose sectors are enormous compared to what a handful of siblings
+  // need, and packing them at the minimum there funnels the whole company
+  // into a couple of thin radial spikes. So a cluster may open out — never
+  // past half its sector, and never more than a few times its natural
+  // spacing, which leaves a snug cluster (and the small-org look) untouched.
+  const roomy = Math.min(natural * SPREAD_LIMIT, (maxSpan * SPREAD_SECTOR_CAP) / (count - 1));
+  const step = Math.min(Math.max(natural, roomy), maxSpan / (count - 1));
   const half = (count - 1) / 2;
   return Array.from({ length: count }, (_, i) => normalizeAngle(center + (i - half) * step));
 }
+
+/** How far past shoulder-to-shoulder a cluster may open when it has room, and
+ *  the most of its sector it may ever occupy — together these keep "tight
+ *  clusters, wide gaps" true while letting a sparse deep org breathe. */
+const SPREAD_LIMIT = 2.5;
+const SPREAD_SECTOR_CAP = 0.35;
 
 /** Evenly spread `count` items around a whole circle — what the company's own
  *  children get, since the centre has no "outward" direction to cluster on. */
@@ -182,7 +209,9 @@ export function relaxAngles(
   // Nothing can be spread wider than the circle itself.
   const sep = circular ? Math.min(minSeparation, TAU / n) : minSeparation;
   const out = angles.map(normalizeAngle);
-  const weight = (i: number) => (pinned[i] ? 0.12 : 1);
+  // A pinned angle is the user's own placement: it doesn't give ground. The
+  // free siblings absorb the whole shift instead.
+  const weight = (i: number) => (pinned[i] ? 0 : 1);
   // Gaps must be measured the long way round when that is the way round they
   // actually go: the last node's gap back to the first spans most of the
   // circle, and normalizing it into (-π, π] would read as "overlapping" and
@@ -208,15 +237,80 @@ export function relaxAngles(
       const shortfall = sep - forwardGap(out[a], out[b]);
       if (shortfall <= 1e-6) continue;
       settled = false;
-      const wa = weight(a);
-      const wb = weight(b);
-      const total = wa + wb || 1;
+      let wa = weight(a);
+      let wb = weight(b);
+      // Two pinned neighbours have to share the move, or neither ever yields.
+      if (wa + wb === 0) {
+        wa = 1;
+        wb = 1;
+      }
+      const total = wa + wb;
       out[a] = normalizeAngle(out[a] - (shortfall * wa) / total);
       out[b] = normalizeAngle(out[b] + (shortfall * wb) / total);
     }
     if (settled) break;
   }
   return out;
+}
+
+/**
+ * Guard for a weight, nothing more. Weights arrive as angular need in radians
+ * — fractions well below 1 — so this must not round them up to a floor of 1,
+ * which would hand every sibling an identical slice and throw away the
+ * proportionality the whole layout depends on.
+ */
+export const weightShare = (weight: number): number => Math.max(weight, 1e-9);
+
+/**
+ * Divide a sector between children in proportion to how much of the org sits
+ * under each — the rule that makes a deep company tractable (Greg,
+ * 2026-09-14: "size the concentric circles according to... the number of teams
+ * they contain").
+ *
+ * The alternative — giving every child the same slice, or slicing at the
+ * midpoints between wherever they happen to sit — makes a node's share shrink
+ * geometrically with depth, so an eleven-rung org needs an exponentially
+ * growing radius to fit anything. Proportional shares shrink only as fast as
+ * the org actually branches, which is linear in the number of teams.
+ *
+ * `fill` leaves a margin at each end, so families still read as clusters with
+ * gaps between them rather than one unbroken ring.
+ */
+export function subdivideByWeight(
+  parent: Sector,
+  weights: number[],
+  fill = 1,
+  focus?: number,
+  /** Fill the sector whatever the need — what the company's own ring does,
+   *  since its children wrap the circle rather than cluster on one side. */
+  stretch = false,
+): { sector: Sector; center: number }[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  const shaped = weights.map(weightShare);
+  const total = shaped.reduce((sum, w) => sum + w, 0);
+  const available = parent.halfSpan * 2 * fill;
+
+  // Slices are the width each child actually needs. When the sector is roomier
+  // than the family — a small org, where a stream's three teams need a sliver
+  // of the ninety degrees it owns — the surplus is simply left empty, which is
+  // what makes families read as clusters with gaps between them. Only when the
+  // need exceeds the room does everything compress to fit.
+  const scale = stretch || total > available ? available / total : 1;
+  const blockSpan = total * scale;
+
+  // Centre the block on the parent itself, so its children sit outboard of it
+  // rather than spread across a sector it happens to own.
+  const slack = Math.max(available - blockSpan, 0) / 2;
+  const offset = focus === undefined ? 0 : Math.max(-slack, Math.min(slack, angleDelta(parent.center, focus)));
+  let cursor = parent.center + offset - blockSpan / 2;
+
+  return shaped.map((w) => {
+    const slice = w * scale;
+    const center = normalizeAngle(cursor + slice / 2);
+    cursor += slice;
+    return { sector: { center, halfSpan: slice / 2 }, center };
+  });
 }
 
 /**

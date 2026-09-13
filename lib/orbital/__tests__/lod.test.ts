@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { REVEAL_BANDS, lerp, revealAt, smoothstep, tierAt } from "../lod";
+import {
+  REVEAL_BANDS,
+  drawnUnitRadius,
+  lerp,
+  revealAt,
+  screenFloorPx,
+  smoothstep,
+  tierAt,
+} from "../lod";
 
 describe("smoothstep", () => {
   it("is flat at both ends, so a morph never snaps at the boundary", () => {
@@ -132,5 +140,58 @@ describe("lerp", () => {
     expect(lerp(10, 20, 0)).toBe(10);
     expect(lerp(10, 20, 1)).toBe(20);
     expect(lerp(10, 20, 0.5)).toBe(15);
+  });
+});
+
+describe("drawnUnitRadius", () => {
+  // A rung-1 division and a rung-8 team on the 45,000-unit Northwind map.
+  const division = { r: 216, depth: 1 };
+  const divisionCeiling = 216 + 4738 * 0.45;
+  const team = { r: 51, depth: 8 };
+  const teamCeiling = 51 + 4108 * 0.3;
+
+  it("never draws a node smaller than it was laid out", () => {
+    // The whole safety property: inflation only ever adds, so a node's people
+    // and their work can never come adrift from the circle they belong to.
+    for (const scale of [0.005, 0.02, 0.1, 0.5, 1, 4, 12]) {
+      expect(drawnUnitRadius(division, scale, divisionCeiling)).toBeGreaterThanOrEqual(division.r);
+      expect(drawnUnitRadius(team, scale, teamCeiling)).toBeGreaterThanOrEqual(team.r);
+    }
+  });
+
+  it("holds a central node at one size on screen while you zoom", () => {
+    // Greg, 2026-09-14: "more central nodes would effectively remain the same
+    // absolute size as we zoomed in".
+    const px = (scale: number) => drawnUnitRadius(division, scale, divisionCeiling) * scale;
+    expect(px(0.02)).toBeCloseTo(px(0.04), 5);
+    expect(px(0.02)).toBeCloseTo(screenFloorPx(1), 5);
+  });
+
+  it("hands over to the node's real size once the zoom no longer needs the floor", () => {
+    const crossover = screenFloorPx(1) / division.r;
+    expect(drawnUnitRadius(division, crossover * 2, divisionCeiling)).toBe(division.r);
+    // …and from there it grows with the map like anything else.
+    const px = (scale: number) => drawnUnitRadius(division, scale, divisionCeiling) * scale;
+    expect(px(1)).toBeGreaterThan(px(0.5));
+  });
+
+  it("keeps a deep node a speck where a central one is a bubble", () => {
+    // The far view Greg asked for: majors legible, the rest small dots that
+    // swell as you come down to them.
+    const far = 0.006;
+    const deep = drawnUnitRadius(team, far, teamCeiling) * far;
+    const near = drawnUnitRadius(division, far, far > 0 ? divisionCeiling : 0) * far;
+    expect(deep).toBeLessThan(near / 4);
+    expect(deep).toBeGreaterThan(0.35); // still worth a draw call
+  });
+
+  it("never inflates past the room the rung has", () => {
+    expect(drawnUnitRadius(division, 1e-6, divisionCeiling)).toBe(divisionCeiling);
+  });
+
+  it("shrinks the floor with depth, so size keeps carrying how central a node is", () => {
+    for (let d = 1; d < 12; d++) {
+      expect(screenFloorPx(d)).toBeLessThan(screenFloorPx(d - 1));
+    }
   });
 });

@@ -31,7 +31,7 @@ import {
   polar,
   type Point,
 } from "@/lib/orbital/geometry";
-import { CULL_SCALE, LOD_LADDER, revealAt, smoothstep, tierAt } from "@/lib/orbital/lod";
+import { LOD_LADDER, UNIT_CULL_PX, revealAt, smoothstep, tierAt } from "@/lib/orbital/lod";
 import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
 import {
   UNIT_RING_KEYS,
@@ -50,15 +50,18 @@ import {
   paintDust,
   paintExternalFlows,
   paintPreview,
+  paintReportingLines,
   paintRipples,
   paintSeatLinks,
   paintSeatRings,
   paintTorus,
+  paintUnitDiscs,
   paintUnitLinks,
   paintUnitRings,
   paintWorkCapsules,
   paintWorkDots,
   ringGeometry,
+  unitDrawRadius,
   type ExternalFlow,
   type RenderCtx,
   type RingHover,
@@ -93,7 +96,6 @@ type Props = {
   savedNodes: OrbitalNodeRow[];
 };
 
-const MIN_SCALE = 0.06;
 const MAX_SCALE = 12;
 
 /** A label appears once its circle is big enough on screen to hold it. */
@@ -145,6 +147,7 @@ function makeDust(count: number, radius: number): Point[] {
 
 type Painter = (ctx: Konva.Context, shape: Konva.Shape) => void;
 type Painters = {
+  unitDiscs: Painter;
   unitRings: Painter;
   torus: Painter;
   seatRings: Painter;
@@ -152,6 +155,7 @@ type Painters = {
   workDots: Painter;
   unitLinks: Painter;
   seatLinks: Painter;
+  reportingLines: Painter;
   externalFlows: Painter;
   preview: Painter;
   ripples: Painter;
@@ -191,6 +195,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const [scale, setScale] = useState(0.4);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [viewBox, setViewBox] = useState<{ minX: number; minY: number; maxX: number; maxY: number } | null>(
+    null,
+  );
+  const [showReporting, setShowReporting] = useState(true);
   const [openWork, setOpenWork] = useState<{ seat: PlacedSeat; task: MockTask } | null>(null);
   const [openBoard, setOpenBoard] = useState<{ id: string; name: string; title: string | null } | null>(
     null,
@@ -231,6 +239,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const ringHoverRef = useRef<RingHover | null>(null);
   const workHoverRef = useRef<{ seatId: string; index: number } | null>(null);
   const unitHoverRef = useRef<string | null>(null);
+  const showReportingRef = useRef(true);
   const pressOriginRef = useRef<Point | null>(null);
   const pressMovedRef = useRef(false);
   const renderRef = useRef<RenderCtx | null>(null);
@@ -368,8 +377,32 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const totalPayroll = moneyByUnit.get(scene.units.find((u) => !u.parentId)?.id ?? "") ?? 0;
   const maxMoney = useMemo(() => Math.max(1, ...moneyByUnit.values()), [moneyByUnit]);
 
+  /** Formal reporting lines, drawn between each person's primary seat and
+   *  their manager's. Someone with several seats reports from the one they
+   *  give most of their week to. */
+  const reportingLines = useMemo(() => {
+    const primary = new Map<string, PlacedSeat>();
+    for (const seat of scene.seats) {
+      if (!seat.personId) continue;
+      const held = primary.get(seat.personId);
+      if (!held || seat.allocationPct > held.allocationPct) primary.set(seat.personId, seat);
+    }
+    const out: { from: string; to: string }[] = [];
+    for (const p of people) {
+      if (!p.managerId || p.managerId === p.id) continue;
+      const from = primary.get(p.id);
+      const to = primary.get(p.managerId);
+      if (from && to) out.push({ from: from.id, to: to.id });
+    }
+    return out;
+  }, [scene, people]);
+
   const reveal = useMemo(() => revealAt(scale), [scale]);
   const tier = tierAt(reveal);
+  useEffect(() => {
+    showReportingRef.current = showReporting;
+    dirtyRef.current = true;
+  }, [showReporting]);
   const outerRadius = scene.extent + 60;
   const worldRadius = outerRadius + EXTERNAL_GAP + EXTERNAL_R * 2;
   const dust = useMemo(() => makeDust(220, worldRadius * 1.25), [worldRadius]);
@@ -392,13 +425,34 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     [outerRadius, totalPayroll],
   );
 
+  // Units used to be culled below a fixed zoom, which quietly hid everything
+  // past CEO+1 on a map whose whole structural range sits *under* that zoom —
+  // half of why Northwind read as empty. Cull by what a node is actually worth
+  // drawing instead: too small to see is the only reason to leave one out.
   const visibleUnits = useMemo(
-    () => (scale < CULL_SCALE ? scene.units.filter((u) => u.depth <= 1) : scene.units),
+    () => scene.units.filter((u) => unitDrawRadius(u, scale) * scale >= UNIT_CULL_PX),
     [scene, scale],
   );
+
   // People appear at 1.75x; below that only the lead is drawn, so the seat
   // list has to stay mounted for it even when the crowd is gone.
   const showSeats = reveal.people > 0.015 || reveal.lead > 0.015;
+
+  /**
+   * Only mount the seats that are actually on screen. A 2,400-person org has
+   * 2,400+ seats, and at the zoom where people are drawn you can see a few
+   * dozen of them — mounting the rest is pure cost. The box is deliberately
+   * generous and updated on a throttle, so a fast pan never outruns it.
+   */
+  const seatsInView = useMemo(() => {
+    if (!showSeats) return [];
+    const crowd = reveal.people > 0.015;
+    const pool = crowd ? scene.seats : scene.seats.filter((s) => s.kind === "lead");
+    if (!viewBox || pool.length < 220) return pool;
+    return pool.filter(
+      (s) => s.x >= viewBox.minX && s.x <= viewBox.maxX && s.y >= viewBox.minY && s.y <= viewBox.maxY,
+    );
+  }, [scene, showSeats, reveal.people, viewBox]);
 
   // --- motion targets ------------------------------------------------------
   const buildTargets = useCallback((s: OrbitalScene, drag: DragState | null) => {
@@ -496,6 +550,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       moneyByUnit,
       maxMoney,
       externals,
+      reportingLines,
+      showReporting,
       at: animatedAt,
       ripples: ripplesRef.current,
       snap: null,
@@ -503,6 +559,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       hoveredRing: null,
       hoveredWork: null,
       hoveredUnitId: null,
+      draggedUnitId: null,
+      scale: scaleRef.current,
       now: performance.now(),
     };
     dirtyRef.current = true;
@@ -515,6 +573,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     moneyByUnit,
     maxMoney,
     externals,
+    reportingLines,
+    showReporting,
     animatedAt,
   ]);
 
@@ -536,6 +596,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       // the morph tracks the wheel exactly rather than in throttled steps.
       const live = revealAt(stage.scaleX());
       ctx.reveal = live;
+      ctx.scale = stage.scaleX();
       ctx.now = now;
       ctx.ripples = ripplesRef.current;
       ctx.snap = snapHint(dragRef.current);
@@ -543,9 +604,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       ctx.hoveredRing = ringHoverRef.current;
       ctx.hoveredWork = workHoverRef.current;
       ctx.hoveredUnitId = unitHoverRef.current;
+      ctx.showReporting = showReportingRef.current;
 
       motionRef.current.step(dt, targetsRef.current);
       const drag = dragRef.current;
+      ctx.draggedUnitId = drag?.kind === "unit" ? drag.id : null;
       const peopleOut = live.people;
       const seatScale = peopleOut * peopleOut * (3 - 2 * peopleOut);
 
@@ -619,10 +682,44 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     return () => ro.disconnect();
   }, []);
 
+  /** Recompute the culling box, at most every 120ms — mounting and unmounting
+   *  hundreds of seats on every mousemove would cost more than it saves. */
+  const viewClock = useRef(0);
+  const refreshViewBox = useCallback(
+    (force = false) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const now = performance.now();
+      if (!force && now - viewClock.current < 120) return;
+      viewClock.current = now;
+      const k = stage.scaleX() || 1;
+      const w = stage.width() / k;
+      const h = stage.height() / k;
+      const padX = w * 0.6;
+      const padY = h * 0.6;
+      const minX = -stage.x() / k - padX;
+      const minY = -stage.y() / k - padY;
+      setViewBox({ minX, minY, maxX: minX + w + padX * 2, maxY: minY + h + padY * 2 });
+    },
+    [],
+  );
+
+  // How far out you're allowed to go has to depend on the org: a 2,500-person
+  // map is forty thousand units across, and a fixed floor would strand you
+  // zoomed into the middle of it, unable to see the whole thing.
+  const minScale = useMemo(
+    () => Math.min(0.06, ((Math.min(size.w, size.h) || 600) / (worldRadius * 2 * 1.06)) * 0.85),
+    [size, worldRadius],
+  );
+  const minScaleRef = useRef(minScale);
+  useEffect(() => {
+    minScaleRef.current = minScale;
+  }, [minScale]);
+
   const applyCamera = useCallback((next: number, centre: Point, screen: Point) => {
     const stage = stageRef.current;
     if (!stage) return;
-    const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
+    const clamped = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next));
     stage.scale({ x: clamped, y: clamped });
     stage.position({ x: screen.x - centre.x * clamped, y: screen.y - centre.y * clamped });
     stage.batchDraw();
@@ -631,7 +728,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     // React only needs to know when the change is big enough to matter to a
     // label or the HUD; the morph itself reads the stage directly.
     setScale((prev) => (Math.abs(Math.log(clamped / prev)) > 0.03 ? clamped : prev));
-  }, []);
+    refreshViewBox(true);
+  }, [refreshViewBox]);
 
   const frame = useCallback(
     (radius: number, centre: Point = { x: 0, y: 0 }) => {
@@ -829,10 +927,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       }
     }
 
+    const live = stage.scaleX();
     for (const unit of s.units) {
       const d = Math.hypot(world.x - unit.x, world.y - unit.y);
+      const inflate = unitDrawRadius(unit, live) / Math.max(unit.r, 1e-6);
       for (let i = 0; i < UNIT_RING_KEYS.length; i++) {
-        const g = ringGeometry(unit, i, rv.ringSettle);
+        const g = ringGeometry(unit, i, rv.ringSettle, inflate);
         if (Math.abs(d - g.radius) <= Math.max(g.width, 7) / 2 + 2) {
           return { kind: "ring", unitId: unit.id, ring: UNIT_RING_KEYS[i] };
         }
@@ -932,6 +1032,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   useEffect(() => {
     const get = () => renderRef.current;
     setPainters({
+      unitDiscs: paintUnitDiscs(get),
       unitRings: paintUnitRings(get),
       torus: paintTorus(get),
       seatRings: paintSeatRings(get),
@@ -939,6 +1040,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       workDots: paintWorkDots(get),
       unitLinks: paintUnitLinks(get),
       seatLinks: paintSeatLinks(get),
+      reportingLines: paintReportingLines(get),
       externalFlows: paintExternalFlows(get),
       preview: paintPreview(get),
       ripples: paintRipples(get),
@@ -962,8 +1064,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
         }}
         onDragMove={() => {
           dirtyRef.current = true;
+          refreshViewBox();
           bgLayerRef.current?.batchDraw();
         }}
+        onDragEnd={() => refreshViewBox(true)}
         onMouseDown={() => {
           const p = stageRef.current?.getPointerPosition();
           pressOriginRef.current = p ? { x: p.x, y: p.y } : null;
@@ -1055,6 +1159,16 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
             <>
               {/* Weighted by the money running through each branch. */}
               <Shape sceneFunc={painters.unitLinks} perfectDrawEnabled={false} listening={false} />
+              {/* Dotted: the formal reporting line, a different kind of
+                  relationship from the solid delivery structure. */}
+              <Shape
+                sceneFunc={painters.reportingLines}
+                stroke={C.inkSoft}
+                strokeWidth={1.2}
+                dash={[5, 5]}
+                opacity={0.5}
+                perfectDrawEnabled={false}
+              />
               <Shape
                 sceneFunc={painters.seatLinks}
                 stroke={C.seatLink}
@@ -1065,6 +1179,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
               />
               <Shape sceneFunc={painters.workCapsules} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.workDots} perfectDrawEnabled={false} listening={false} />
+              {/* The unit circles. Painted rather than React-managed because
+                  their size tracks the live camera — see paintUnitDiscs. The
+                  Groups in the node layer above are their handles. */}
+              <Shape sceneFunc={painters.unitDiscs} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.torus} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.unitRings} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.seatRings} perfectDrawEnabled={false} listening={false} />
@@ -1082,14 +1200,17 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
 
         <Layer ref={nodeLayerRef}>
           {visibleUnits.map((unit) => {
-            const isDragged = dragging === uid(unit.id);
+            // What you can grab is exactly what you can see: the handle takes
+            // the disc's drawn size, not its laid-out one. Reading it from
+            // React's throttled scale is fine here — the circle is invisible,
+            // so a 3% step in it is a 3% step in nothing.
+            const drawn = unitDrawRadius(unit, scale);
             return (
               <Group
                 key={unit.id}
                 ref={(node) => registerNode(uid(unit.id), node)}
                 x={unit.x}
                 y={unit.y}
-                opacity={unit.depth > 1 ? reveal.deepUnits : 1}
                 draggable={unit.depth > 0}
                 onDragStart={() => onUnitDragStart(unit)}
                 onDragMove={onUnitDragMove}
@@ -1101,27 +1222,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
                 onMouseLeave={() => setHover(null)}
                 onDblClick={() => frame(unit.r * 4.5, { x: unit.x, y: unit.y })}
               >
-                <Circle
-                  radius={unit.r}
-                  fill={C.unitFill}
-                  stroke={isDragged ? C.accent : C.unitStroke}
-                  strokeWidth={(isDragged ? 3 : 1.75) / Math.max(scale, 0.08)}
-                  shadowColor={C.ink}
-                  shadowBlur={isDragged ? 26 : 14}
-                  shadowOpacity={isDragged ? 0.16 : 0.06}
-                  shadowOffsetY={isDragged ? 8 : 3}
-                  perfectDrawEnabled={false}
-                />
-                {unit.isExternal && (
-                  <Circle
-                    radius={unit.r - 6}
-                    stroke={C.unitStroke}
-                    strokeWidth={1 / Math.max(scale, 0.08)}
-                    dash={[6, 5]}
-                    listening={false}
-                    perfectDrawEnabled={false}
-                  />
-                )}
+                <Circle radius={drawn} fill="transparent" perfectDrawEnabled={false} />
                 {labelFits(unit.r, scale) && (
                   <Text
                     text={unit.name}
@@ -1141,9 +1242,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
             );
           })}
 
-          {showSeats &&
-            scene.seats.map((seat) => {
-              if (reveal.people <= 0.015 && seat.kind !== "lead") return null;
+          {seatsInView.map((seat) => {
               const isDragged = dragging === sid(seat.id);
               const open = seat.kind === "open";
               const strain = seat.personId ? vitals.get(seat.personId)?.strain : undefined;
@@ -1307,6 +1406,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
           </span>
         ))}
         <span style={S.hudScale}>{scale.toFixed(2)}×</span>
+        <button
+          type="button"
+          onClick={() => setShowReporting((v) => !v)}
+          style={S.hudToggle(showReporting)}
+          title="Reporting lines — dotted, shown for whoever you point at"
+        >
+          reporting
+        </button>
       </div>
 
       <div style={S.controls}>
@@ -1614,6 +1721,17 @@ const S = {
     opacity: on ? 1 : 0.55,
   }),
   hudScale: { color: C.inkSoft, fontVariantNumeric: "tabular-nums" as const, marginLeft: 4 },
+  hudToggle: (on: boolean) => ({
+    marginLeft: 4,
+    padding: "3px 8px",
+    borderRadius: 999,
+    border: `1px ${on ? "solid" : "dashed"} ${C.link}`,
+    background: on ? C.paper : "transparent",
+    font: `500 11px ${FONT}`,
+    color: on ? C.ink : C.inkSoft,
+    cursor: "pointer",
+    opacity: on ? 1 : 0.7,
+  }),
   controls: {
     position: "absolute" as const,
     right: 16,

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { requireWorkspace } from "@/lib/auth/workspace";
+import { listWorkspaceOptions } from "@/lib/data/queries";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { isClerkEnabled } from "@/lib/auth/currentUser";
 import { PaletteSwitcher } from "@/components/PaletteSwitcher";
 import { normalizeVocabulary } from "@/lib/vocabulary";
@@ -13,7 +15,8 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { workspace } = await requireWorkspace();
+  const { workspace, userId } = await requireWorkspace();
+  const companies = await listWorkspaceOptions(userId);
   // The nav wears the workspace's own word for the bottom rung (S5 tab 1).
   const vocab = normalizeVocabulary(workspace.vocabulary);
 
@@ -44,7 +47,10 @@ export default async function AppLayout({
         </div>
         <div className="flex items-center gap-3 text-sm text-ink-soft">
           <PaletteSwitcher />
-          <span>{workspace.name}</span>
+          <WorkspaceSwitcher
+            current={{ id: workspace.id, name: workspace.name }}
+            options={companies}
+          />
           {isClerkEnabled() ? (
             <UserButtonSlot />
           ) : (

@@ -34,10 +34,9 @@ import {
   packRing,
   polar,
   relaxAngles,
+  seatFurnitureReach,
   seatRingRadius,
-  spreadRing,
-  subdivideCircle,
-  subdivideSector,
+  subdivideByWeight,
   unitOuterExtent,
   unitRadius,
   workGridPoints,
@@ -73,6 +72,10 @@ export type PlacedUnit = {
   isExternal: boolean;
   vendorName: string | null;
   totalSeats: number;
+  /** The most this node may be inflated to when zoomed out far enough that its
+   *  true size would be sub-pixel (see lod.drawnUnitRadius). Uniform across a
+   *  rung, so size keeps carrying depth and nothing else. */
+  drawCeiling: number;
 };
 
 export type PlacedSeat = {
@@ -101,6 +104,8 @@ export type Band = {
   radius: number;
   /** Outer edge of the rung's territory, used for the backdrop rings. */
   outer: number;
+  /** How big a node on this rung is — indexed to the rung, not a constant. */
+  nodeRadius: number;
 };
 
 export type Link = {
@@ -146,7 +151,104 @@ const SEAT_FAN_RESERVE = 0.5;
 const CHILD_GAP = 34;
 /** Fraction of a sector a cluster is allowed to fill, so a cluster never runs
  *  right up to the boundary it shares with its neighbour. */
-const SECTOR_USE = 0.92;
+/** Share of a node's sector handed to its children, leaving a margin so
+ *  families still read as clusters with gaps rather than one unbroken ring.
+ *  Generous at the top where there is room, tighter with depth so the margin
+ *  doesn't compound away the whole circle — and exactly 1 at the centre,
+ *  whose children wrap the full circle and so have no seam to leave a margin
+ *  at. (A margin there is a dead zone a drag can fall into and be flung to
+ *  the far side.) */
+const fillAt = (depth: number) => (depth === 0 ? 1 : depth === 1 ? 0.86 : 0.96);
+
+/** A sector a touch narrower, for clamping a child inside its own slice
+ *  without landing it on the shared boundary. */
+const shrink = (sector: Sector): Sector => ({
+  center: sector.center,
+  halfSpan: Math.max(sector.halfSpan * 0.98, 1e-5),
+});
+
+/**
+ * Tile a sector between children when one of them is pinned to an exact
+ * angle: that child's slice is centred on it, and everyone before and after
+ * shares out the arc that remains on their side.
+ */
+function tileAround(
+  parent: Sector,
+  ids: string[],
+  weightOf: (id: string) => number,
+  fill: number,
+  pinnedIndex: number,
+  pinnedAngle: number,
+): { sector: Sector; center: number }[] {
+  const span = parent.halfSpan * 2 * fill;
+  const start = parent.center - span / 2;
+  const weights = ids.map(weightOf);
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  const pinnedWidth = (weights[pinnedIndex] / total) * span;
+
+  // How far into the span the pinned angle sits, measured *forward* from its
+  // start — a shortest-path delta wraps negative on a near-full circle and
+  // would throw the slice to the wrong end.
+  const forward = (((pinnedAngle - start) % TAU) + TAU) % TAU;
+  const offset = Math.min(Math.max(forward, pinnedWidth / 2), Math.max(span - pinnedWidth / 2, pinnedWidth / 2));
+  const lowEdge = start + offset - pinnedWidth / 2;
+  const highEdge = lowEdge + pinnedWidth;
+
+  const fillRange = (from: number, to: number, slice: number[]) => {
+    const sum = slice.reduce((a, b) => a + b, 0) || 1;
+    let cursor = from;
+    return slice.map((w) => {
+      const width = ((to - from) * w) / sum;
+      const sector = { center: normalizeAngle(cursor + width / 2), halfSpan: width / 2 };
+      cursor += width;
+      return { sector, center: sector.center };
+    });
+  };
+
+  return [
+    ...fillRange(start, lowEdge, weights.slice(0, pinnedIndex)),
+    {
+      sector: { center: normalizeAngle(lowEdge + pinnedWidth / 2), halfSpan: pinnedWidth / 2 },
+      center: normalizeAngle(lowEdge + pinnedWidth / 2),
+    },
+    ...fillRange(highEdge, start + span, weights.slice(pinnedIndex + 1)),
+  ];
+}
+/** The gap between rungs, in node radii, that a node grows toward. Small orgs
+ *  already beat this with their base radii and are left alone. */
+const TARGET_GAP_RATIO = 9;
+/** However roomy the rung, a node never grows more than this much past its
+ *  base size — the rungs are already telling you the hierarchy. */
+const NODE_MAX_GROWTH = 3;
+/** A node may never fill more than this share of its arc slot… */
+const NODE_SLOT_FILL = 0.34;
+/** …nor grow past this share of its parent rung's node, so the hierarchy
+ *  always reads from the size alone.
+ *
+ *  The shrink eases off with depth. A flat 0.7 per rung is right at the top —
+ *  a division should read as plainly smaller than the company — but compounded
+ *  over Northwind's twelve rungs it reaches 0.7¹¹, which pinned every rung past
+ *  CEO+6 to the minimum radius however much room it had. Easing toward 0.93
+ *  keeps the hierarchy strictly decreasing while letting the deep rungs take
+ *  the space they've actually got. */
+const DEPTH_SHRINK_TOP = 0.7;
+const DEPTH_SHRINK_DEEP = 0.93;
+const DEPTH_SHRINK_EASE = 0.62;
+const shrinkAt = (depth: number) =>
+  DEPTH_SHRINK_DEEP - (DEPTH_SHRINK_DEEP - DEPTH_SHRINK_TOP) * DEPTH_SHRINK_EASE ** (depth - 1);
+
+/** Zoomed right out, a node may be inflated to stay visible — but never past
+ *  this share of the distance to the next rung, nor this share of its own arc
+ *  slot. Whichever binds first is what keeps the rings readable as rings.
+ *
+ *  The centre gets a larger share because it has no inner neighbour to crowd:
+ *  the only thing it can run into is the first rung coming the other way, and
+ *  0.45 plus that rung's 0.3 still leaves a quarter of the gap clear. It needs
+ *  the room — a pivot that draws the same size as its divisions doesn't read
+ *  as the pivot. */
+const DRAW_GAP_SHARE = 0.3;
+const DRAW_GAP_SHARE_ROOT = 0.45;
+
 
 /** How many seats fit on one ring before another is needed. */
 function seatRingCapacity(unitR: number, ring: number): number {
@@ -219,55 +321,178 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
   const overrides = opts.angleOverrides;
 
   // --- bands: one radius per rung ------------------------------------------
-  // A rung's radius is the larger of two demands. Geometrically it has to
-  // clear the rung inside it. But it must *also* be long enough round that
-  // everything standing on it fits shoulder to shoulder: a rung holding
-  // eighty teams needs far more circumference than one holding eight, and
-  // sizing only by node radius silently compressed the packer until siblings
-  // overlapped — invisible on the demo org, ruinous on a real one.
-  const ringsByUnit = new Map<string, number>();
-  const haloByDepth: number[] = [];
+  // A rung only has to clear the rung inside it. Whether the whole org fits
+  // *round* the map is settled separately, by measuring angular need and
+  // scaling — which is what keeps the upper rungs tight on a big org instead
+  // of inheriting the outermost rung's enormous radius.
   const countByDepth: number[] = [];
-  const widestParentByDepth: number[] = [];
-  const ringsByDepth: number[] = [];
   for (const unit of tree.units.values()) {
-    const r = unitRadius(unit.depth);
-    const rings = seatRingCount(r, unit.seatIds.length);
-    ringsByUnit.set(unit.id, rings);
-    haloByDepth[unit.depth] = Math.max(haloByDepth[unit.depth] ?? 0, unitOuterExtent(r, rings));
-    ringsByDepth[unit.depth] = Math.max(ringsByDepth[unit.depth] ?? 0, rings);
     countByDepth[unit.depth] = (countByDepth[unit.depth] ?? 0) + 1;
-    const kids = unit.childIds.filter((id) => tree.units.has(id)).length;
-    widestParentByDepth[unit.depth] = Math.max(widestParentByDepth[unit.depth] ?? 0, kids);
   }
 
-  /** Arc a node on this rung occupies, including the share of its own seat
-   *  fan we reserve so neighbouring fans don't interleave. */
-  const packRadiusAt = (depth: number) => {
-    const r = unitRadius(depth);
-    const fanOuter = unitOuterExtent(r, ringsByDepth[depth] ?? 0);
-    return r + (fanOuter - r) * SEAT_FAN_RESERVE;
+  const seatsByDepth = new Map<number, number[]>();
+  /** The most work any one person on this rung carries — what their capsule
+   *  needs room for, and the thing the halo used to ignore. */
+  const workReachByDepth = new Map<number, number>();
+  for (const unit of tree.units.values()) {
+    seatsByDepth.set(unit.depth, [...(seatsByDepth.get(unit.depth) ?? []), unit.seatIds.length]);
+    let busiest = 0;
+    for (const id of unit.seatIds) busiest = Math.max(busiest, tree.seats.get(id)?.workCount ?? 0);
+    workReachByDepth.set(
+      unit.depth,
+      Math.max(workReachByDepth.get(unit.depth) ?? 0, seatFurnitureReach(busiest)),
+    );
+  }
+
+  /** Seat rings needed by the busiest unit on a rung, at a given node size. */
+  const ringsAt = (depth: number, r: number) => {
+    let rings = 0;
+    for (const count of seatsByDepth.get(depth) ?? []) {
+      rings = Math.max(rings, seatRingCount(r, count));
+    }
+    return rings;
   };
 
-  const bandRadius: number[] = [0];
-  // How much angle one node on a rung has to give its own children. The
-  // company spreads its children over the whole circle; deeper rungs pack
-  // tight, so a node inherits roughly one packing step.
-  let parentSpan = TAU;
-  for (let d = 1; d <= tree.maxDepth; d++) {
-    const arcWidth = 2 * packRadiusAt(d) + CHILD_GAP;
-    const geometric =
-      bandRadius[d - 1] + (haloByDepth[d - 1] ?? unitRadius(d - 1)) + unitRadius(d) + BAND_PAD;
-    // Everything on the rung has to fit round it…
-    const circumference = ((countByDepth[d] ?? 0) * arcWidth) / TAU;
-    // …and the busiest single parent's cluster has to fit in its own share.
-    const widest = widestParentByDepth[d - 1] ?? 0;
-    const cluster =
-      d === 1 || widest < 2 ? 0 : ((widest - 1) * arcWidth) / (SECTOR_USE * parentSpan);
-    bandRadius[d] = Math.max(geometric, circumference, cluster);
-    parentSpan =
-      d === 1 ? TAU / Math.max(1, countByDepth[1] ?? 1) : arcWidth / Math.max(1, bandRadius[d]);
+  /** Rung sizing: clear the rung inside, given a node radius per rung. */
+  const sizeBands = (radiusAt: (depth: number) => number): number[] => {
+    const haloByDepth: number[] = [];
+    const ringsByDepth: number[] = [];
+    for (const [depth, seatCounts] of seatsByDepth) {
+      const r = radiusAt(depth);
+      const reach = workReachByDepth.get(depth) ?? 0;
+      for (const count of seatCounts) {
+        const rings = seatRingCount(r, count);
+        haloByDepth[depth] = Math.max(haloByDepth[depth] ?? 0, unitOuterExtent(r, rings, reach));
+        ringsByDepth[depth] = Math.max(ringsByDepth[depth] ?? 0, rings);
+      }
+    }
+    const bands: number[] = [0];
+    for (let d = 1; d <= tree.maxDepth; d++) {
+      bands[d] =
+        bands[d - 1] + (haloByDepth[d - 1] ?? radiusAt(d - 1)) + radiusAt(d) + BAND_PAD;
+    }
+    return bands;
+  };
+
+  /**
+   * How much *angle* each unit actually needs — the number the whole layout
+   * turns on.
+   *
+   * Counting teams isn't enough. A team sitting at CEO+2 and one at CEO+10
+   * each need a node's width of arc, but arc is radius times angle, so the
+   * shallow one costs several times the angle of the deep one. Measuring need
+   * in radians against the rung each unit stands on is what lets a ragged org
+   * — Greg's "a delivery team at CEO+2 and another at CEO+10" — sit on a map
+   * that isn't mostly empty.
+   *
+   * A branch needs whatever its children need; a leaf needs its own width.
+   */
+  const measureNeeds = (bands: number[], radiusAt: (d: number) => number, packRadius: (d: number) => number) => {
+    const need = new Map<string, number>();
+    const visit = (id: string): number => {
+      const unit = tree.units.get(id);
+      if (!unit) return 0;
+      const kids = unit.childIds.filter((cid) => tree.units.has(cid));
+      const below = kids.reduce((sum, cid) => sum + visit(cid), 0) / fillAt(unit.depth);
+      // The centre stands at radius zero, so it has no arc of its own — its
+      // need is simply whatever its children need, which is the whole circle.
+      const band = bands[unit.depth] ?? 0;
+      const own = band > 0 ? (2 * packRadius(unit.depth) + CHILD_GAP) / band : 0;
+      const total = Math.max(own, below);
+      need.set(id, total);
+      return total;
+    };
+    visit(tree.rootId);
+    return need;
+  };
+
+  // --- make it fit, all at once --------------------------------------------
+  // Measure what the org needs in radians at these radii. If the centre needs
+  // more than a full circle, the map is simply too small: scale it until it
+  // fits. Need is inversely proportional to radius, so this converges in a
+  // step or two — and scaling everything keeps the rungs' relative spacing,
+  // rather than letting the outermost one run away from the rest.
+  const fitBands = (start: number[], radiusAt: (d: number) => number) => {
+    const packForNeeds = (d: number) => {
+      const r = radiusAt(d);
+      const fanOuter = unitOuterExtent(r, ringsAt(d, r), workReachByDepth.get(d) ?? 0);
+      return r + (fanOuter - r) * SEAT_FAN_RESERVE;
+    };
+    let bands = start;
+    let needs = measureNeeds(bands, radiusAt, packForNeeds);
+    for (let pass = 0; pass < 4; pass++) {
+      const overflow = (needs.get(tree.rootId) ?? 0) / TAU;
+      if (overflow <= 1.001) break;
+      bands = bands.map((b, d) => (d === 0 ? b : b * overflow));
+      needs = measureNeeds(bands, radiusAt, packForNeeds);
+    }
+    return { bands, needs };
+  };
+
+  // --- node size is indexed to the rung it stands on ------------------------
+  // A rung's radius scales with headcount, but a node's own radius used to be
+  // a constant — so on a 2,400-person org a team was an r=36 dot adrift in a
+  // 2,900-unit gap (Greg, 2026-09-14: "the gap is quite high, we might need to
+  // index it somewhat"). A node now grows to fill a share of its *arc slot* —
+  // the circumference each node on that rung gets to itself — which keeps the
+  // picture proportionate at any size. It only ever grows: a crowded rung's
+  // slot is already about one node wide, so small orgs are untouched.
+  //
+  // The gaps have to be the *fitted* ones. Indexing against the unfitted bands
+  // measured a few hundred units where the map would really have thousands,
+  // so nothing ever cleared the base radii and the whole pass was dead code.
+  const firstPass = fitBands(sizeBands(unitRadius), unitRadius).bands;
+  const radiusByDepth: number[] = [];
+  for (let d = 0; d <= tree.maxDepth; d++) {
+    const base = unitRadius(d);
+    const gap = d === 0 ? (firstPass[1] ?? 0) : (firstPass[d] ?? 0) - (firstPass[d - 1] ?? 0);
+    // Grow only toward a sane gap-to-node ratio. On a small org the base
+    // radii already beat the target, so nothing moves at all — which is the
+    // point: this exists for the big ones.
+    const wanted = gap / TARGET_GAP_RATIO;
+    const slot = d === 0 ? Infinity : (TAU * (firstPass[d] ?? 0)) / Math.max(1, countByDepth[d] ?? 1);
+    // A node may never outgrow its parent's rung: the hierarchy has to stay
+    // legible at a glance, whatever the arithmetic says.
+    const ceiling = d === 0 ? Infinity : (radiusByDepth[d - 1] ?? base) * shrinkAt(d);
+    radiusByDepth[d] = Math.max(base, Math.min(wanted, slot * NODE_SLOT_FILL, ceiling, base * NODE_MAX_GROWTH));
   }
+  const radiusAt = (depth: number) => radiusByDepth[Math.max(0, Math.min(depth, tree.maxDepth))] ?? unitRadius(depth);
+
+  // Re-size the rungs for the bigger nodes. Bands only ever grow here, so the
+  // slots the radii were derived from can only have got roomier — which makes
+  // the sizes above conservative rather than stale, and stops the two from
+  // chasing each other.
+  const secondPass = sizeBands(radiusAt);
+  const fitted = fitBands(
+    secondPass.map((v, d) => Math.max(v, firstPass[d] ?? 0)),
+    radiusAt,
+  );
+  const bandRadius = fitted.bands;
+  const needs = fitted.needs;
+
+  /** Each unit's share of its parent's sector, by the angle it actually needs. */
+  const needOf = (id: string) => Math.max(needs.get(id) ?? 1e-6, 1e-6);
+
+  const ringsByUnit = new Map<string, number>();
+  const haloByDepth: number[] = [];
+  for (const unit of tree.units.values()) {
+    const r = radiusAt(unit.depth);
+    const rings = seatRingCount(r, unit.seatIds.length);
+    ringsByUnit.set(unit.id, rings);
+    haloByDepth[unit.depth] = Math.max(
+      haloByDepth[unit.depth] ?? 0,
+      unitOuterExtent(r, rings, workReachByDepth.get(unit.depth) ?? 0),
+    );
+  }
+  const ringsByDepth: number[] = [];
+  for (const unit of tree.units.values()) {
+    ringsByDepth[unit.depth] = Math.max(ringsByDepth[unit.depth] ?? 0, ringsByUnit.get(unit.id) ?? 0);
+  }
+  const packRadiusAt = (depth: number) => {
+    const r = radiusAt(depth);
+    const fanOuter = unitOuterExtent(r, ringsByDepth[depth] ?? 0, workReachByDepth.get(depth) ?? 0);
+    return r + (fanOuter - r) * SEAT_FAN_RESERVE;
+  };
 
   const units: PlacedUnit[] = [];
   const seats: PlacedSeat[] = [];
@@ -316,7 +541,7 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
     fanAngle: number,
     homeAngle: number,
   ): number => {
-    const unitR = unitRadius(unit.depth);
+    const unitR = radiusAt(unit.depth);
     let widestSpan = 0;
     const all = unit.seatIds
       .map((id) => tree.seats.get(id))
@@ -367,7 +592,7 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
     const unit = tree.units.get(unitId);
     if (!unit) return;
     const depth = unit.depth;
-    const r = unitRadius(depth);
+    const r = radiusAt(depth);
     const childDepth = depth + 1;
     const childBand = bandRadius[childDepth] ?? 0;
 
@@ -383,19 +608,41 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
       const packR = packRadiusAt(childDepth);
       const circular = depth === 0;
 
-      const natural = circular
-        ? spreadRing(rawChildIds.length, startAngle)
-        : packRing(
-            rawChildIds.length,
-            packR,
-            CHILD_GAP,
-            childBand,
-            angle,
-            Math.max(sector.halfSpan * 2 * SECTOR_USE, 1e-3),
-          );
+      // Each child gets the slice of this node's sector its own subtree
+      // needs. Slices tile the sector exactly, so two families can never
+      // reach into each other however the weights fall.
+      const parentSector = circular
+        ? { center: startAngle + Math.PI, halfSpan: Math.PI }
+        : sector;
+      const weightOf = (id: string) => needOf(id);
+      const tile = (ids: string[]) =>
+        subdivideByWeight(
+          parentSector,
+          ids.map(weightOf),
+          fillAt(depth),
+          circular ? undefined : angle,
+          circular,
+        );
+
+      // A child may be pulled toward its parent, but not so far that it
+      // crowds the neighbour it shares a boundary with: it has to keep its
+      // own half-width inside its slice. Clamping to the boundary itself is
+      // what let two pulled siblings meet there and overlap.
+      const ownHalfAngle = (2 * packR + CHILD_GAP) / Math.max(1, childBand) / 2;
+      const room = (slice: Sector): Sector => ({
+        center: slice.center,
+        halfSpan: Math.max(slice.halfSpan - ownHalfAngle, 0),
+      });
+
+      // Pull each child back toward its parent's own angle — the family
+      // bunches on the side facing away from the grandparent, which is the
+      // arrangement in the concept drawing.
+      const settle = (slices: ReturnType<typeof tile>) => slices.map((s) => s.center);
+
+      const natural = settle(tile(rawChildIds));
 
       // A dragged node is pinned to the angle the pointer left it at; the
-      // rest keep their packed places and shuffle only enough to make room.
+      // rest keep their places and shuffle only enough to make room.
       const pinned = rawChildIds.map((id) => overrides?.get(id) !== undefined);
       const wanted = rawChildIds.map((id, i) => {
         const forced = overrides?.get(id);
@@ -408,17 +655,31 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
         circular,
       );
 
-      // Re-sort into angular order: an override can carry a node clean past a
-      // sibling, and the sector split below assumes they arrive in order.
-      const ordered = rawChildIds
-        .map((id, i) => ({ id, angle: circular ? relaxed[i] : clampToSector(sector, relaxed[i]) }))
-        .sort((a, b) => angleDelta(sector.center, a.angle) - angleDelta(sector.center, b.angle));
+      // Re-tile in the order the children actually ended up in, so the slices
+      // still tile and each child still sits inside its own.
+      const order = rawChildIds
+        .map((id, i) => ({ id, angle: relaxed[i] }))
+        .sort((a, b) => angleDelta(parentSector.center, a.angle) - angleDelta(parentSector.center, b.angle));
+      // A node the pointer placed keeps exactly the angle it was dropped at:
+      // its slice forms *around* it and the siblings tile what's left either
+      // side. Without this the tiling would drag the node off the spot the
+      // drop preview promised.
+      const pinnedAt = order.findIndex((c) => overrides?.get(c.id) !== undefined);
+      const finalSlices =
+        pinnedAt >= 0
+          ? tileAround(parentSector, order.map((c) => c.id), weightOf, fillAt(depth), pinnedAt, order[pinnedAt].angle)
+          : tile(order.map((c) => c.id));
+      const ordered = order.map((c, i) => ({
+        id: c.id,
+        // Inside its slice by its own half-width, so neighbours always keep a
+        // full node's arc between them.
+        angle: clampToSector(shrink(room(finalSlices[i].sector)), c.angle),
+        sector: finalSlices[i].sector,
+      }));
 
       childIds = ordered.map((c) => c.id);
       childAngles = ordered.map((c) => c.angle);
-      childSectors = circular
-        ? subdivideCircle(childAngles)
-        : subdivideSector(sector, childAngles);
+      childSectors = ordered.map((c) => c.sector);
     }
 
     const occupied = [
@@ -451,6 +712,8 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
       isExternal: unit.isExternal,
       vendorName: unit.vendorName,
       totalSeats: unit.totalSeats,
+      // Filled in once every unit is placed and its neighbours are known.
+      drawCeiling: r,
     });
 
     childIds.forEach((id, i) => {
@@ -476,11 +739,35 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
   for (let d = 0; d <= tree.maxDepth; d++) {
     const inner = bandRadius[d] ?? 0;
     const next = bandRadius[d + 1];
-    const halo = haloByDepth[d] ?? unitRadius(d);
-    bands.push({ depth: d, radius: inner, outer: next != null ? (inner + halo + next) / 2 : inner + halo });
+    const halo = haloByDepth[d] ?? radiusAt(d);
+    bands.push({
+      depth: d,
+      radius: inner,
+      outer: next != null ? (inner + halo + next) / 2 : inner + halo,
+      nodeRadius: radiusAt(d),
+    });
   }
 
-  let extent = bands.length > 0 ? bands[bands.length - 1].outer : unitRadius(0);
+  // --- how far each node may be inflated when zoomed out -------------------
+  // The limit is radial: how much room there is before the next rung. It is
+  // deliberately *not* the distance to the nearest sibling. Siblings are
+  // packed shoulder to shoulder — CHILD_GAP apart — so a sibling-based cap
+  // forbids inflation entirely wherever a cluster exists, which is everywhere
+  // that matters; and capping node by node made two divisions on the same rung
+  // draw at different sizes, which reads as "this one is smaller" when size is
+  // the thing carrying depth. So the ceiling is uniform per rung, and a tight
+  // family zoomed right out is allowed to merge into one chain of circles —
+  // which is what a tight family *is*.
+  for (const u of units) {
+    const d = u.depth;
+    const gap =
+      d === 0
+        ? (bandRadius[1] ?? radiusAt(0))
+        : (bandRadius[d] ?? 0) - (bandRadius[d - 1] ?? 0);
+    u.drawCeiling = u.r + gap * (d === 0 ? DRAW_GAP_SHARE_ROOT : DRAW_GAP_SHARE);
+  }
+
+  let extent = bands.length > 0 ? bands[bands.length - 1].outer : radiusAt(0);
   for (const seat of seats) {
     const reach = Math.hypot(seat.x, seat.y) + workOuterExtent(seat.work.length) + WORK_RADIUS;
     if (reach > extent) extent = reach;
