@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
-import { people, orgUnits, assignments, mapNodes, orbitalNodes, disciplines, workspaces, eq, and, sql } from "@/lib/db/orm";
+import { people, orgUnits, assignments, mapNodes, orbitalNodes, disciplines, workspaces, memberships, eq, and, sql } from "@/lib/db/orm";
 import { requireWorkspace, selectWorkspace } from "@/lib/auth/workspace";
 import {
   personInput,
@@ -18,6 +18,8 @@ import {
   podTemplateRoleInput,
 } from "@/lib/validation";
 import { seedDemoOrg } from "@/lib/data/demoSeed";
+import { seedDemoCompanyInto } from "@/lib/db/companies";
+import { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
 import {
   createDisciplineOp,
   updateDisciplineOp,
@@ -558,6 +560,33 @@ export async function saveLens(raw: unknown): Promise<ActionResult> {
 export async function loadDemoOrg(): Promise<never> {
   const { workspace } = await requireWorkspace();
   await seedDemoOrg(workspace.id);
+  revalidateAll();
+  redirect("/org");
+}
+
+// --- demo companies ---------------------------------------------------------
+/**
+ * Create a **new** workspace for the signed-in user, fill it with one of the
+ * demo companies, and switch to it. Deliberately never touches the workspace
+ * you're currently in — the point is to end up with more than one, so the
+ * header's company switcher has something to switch between.
+ *
+ * Owner is whoever is signed in, so this works the same for the local
+ * `dev-user` bypass and for a real Clerk account in production. That's the
+ * difference from `npm run db:companies`, which is hardcoded to `dev-user`.
+ */
+export async function seedDemoCompany(kind: DemoCompanyKind): Promise<never> {
+  const { userId } = await requireWorkspace();
+  const [ws] = await db
+    .insert(workspaces)
+    .values({ name: DEMO_COMPANIES[kind].name, ownerUserId: userId })
+    .returning();
+  await db
+    .insert(memberships)
+    .values({ workspaceId: ws.id, userId, role: "owner" })
+    .onConflictDoNothing();
+  await seedDemoCompanyInto(db, ws.id, kind);
+  await selectWorkspace(userId, ws.id);
   revalidateAll();
   redirect("/org");
 }

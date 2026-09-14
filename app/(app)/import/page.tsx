@@ -1,4 +1,5 @@
 import { ImportWizard } from "@/components/import/ImportWizard";
+import { DemoCompanyCards } from "@/components/import/DemoCompanyCards";
 import { getDisciplines } from "@/lib/data/queries";
 
 export default async function ImportPage() {
@@ -16,6 +17,7 @@ export default async function ImportPage() {
         </p>
       </div>
       <ImportWizard knownDisciplines={disciplines.map((d) => d.name)} />
+      <DemoCompanyCards />
     </div>
   );
 }

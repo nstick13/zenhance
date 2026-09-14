@@ -24,6 +24,8 @@ export type DeepOrgOptions = {
   maxDepth?: number;
   /** Deterministic seed. */
   seed?: number;
+  /** Name for the root unit. Defaults to the invented carrier's name. */
+  rootName?: string;
 };
 
 export type DeepOrg = {
@@ -98,7 +100,7 @@ export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): De
     updatedAt: now,
   });
 
-  const root = makeUnit("Northwind Freight & Logistics", null, "group");
+  const root = makeUnit(opts.rootName ?? "Northwind Freight & Logistics", null, "group");
   units.push(root);
 
   let peopleBudget = targetPeople;

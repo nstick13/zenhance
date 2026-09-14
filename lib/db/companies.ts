@@ -1,13 +1,10 @@
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
 import { buildDeepOrg } from "./deepOrg";
+import { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
 
 /**
  * Two more companies for the dev user, so the map can be judged at sizes the
@@ -32,8 +29,10 @@ import { buildDeepOrg } from "./deepOrg";
 
 const OWNER = "dev-user";
 
-export const SPARROW_WORKSPACE = "Sparrow Jam Manufacturing, OH";
-export const LARGE_WORKSPACE = "Northwind Freight & Logistics";
+export { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
+
+export const SPARROW_WORKSPACE = DEMO_COMPANIES.small.name;
+export const LARGE_WORKSPACE = DEMO_COMPANIES.large.name;
 
 type Db = PostgresJsDatabase<typeof schema>;
 
@@ -51,18 +50,18 @@ async function insertInChunks<T>(
   }
 }
 
-/** Find or create a dev-user-owned workspace by name, with membership. */
-async function workspaceNamed(db: Db, name: string): Promise<string> {
+/** Find or create a workspace by name, owned by `owner`, with membership. */
+async function workspaceNamed(db: Db, name: string, owner: string = OWNER): Promise<string> {
   const { workspaces, memberships } = schema;
   const existing = (
     await db.select().from(workspaces).where(eq(workspaces.name, name)).limit(1)
   )[0];
   const ws =
     existing ??
-    (await db.insert(workspaces).values({ name, ownerUserId: OWNER }).returning())[0];
+    (await db.insert(workspaces).values({ name, ownerUserId: owner }).returning())[0];
   await db
     .insert(memberships)
-    .values({ workspaceId: ws.id, userId: OWNER, role: "owner" })
+    .values({ workspaceId: ws.id, userId: owner, role: "owner" })
     .onConflictDoNothing();
   return ws.id;
 }
@@ -128,9 +127,8 @@ const JAM_ASSIGNMENTS: { person: string | null; unit: string; role: string; pct?
   { person: null, unit: "Packing & Dispatch", role: "Operator", open: true },
 ];
 
-async function seedSparrowJam(db: Db): Promise<{ people: number; units: number }> {
+export async function seedSparrowJam(db: Db, wid: string): Promise<{ people: number; units: number }> {
   const { people, orgUnits, assignments, disciplines } = schema;
-  const wid = await workspaceNamed(db, SPARROW_WORKSPACE);
   await clearOrg(db, wid);
 
   const discId: Record<string, string> = {};
@@ -201,12 +199,16 @@ async function seedSparrowJam(db: Db): Promise<{ people: number; units: number }
 
 // --- the large one ----------------------------------------------------------
 
-async function seedLarge(db: Db): Promise<{ people: number; units: number; teams: number; depth: number }> {
+export async function seedLarge(db: Db, wid: string): Promise<{ people: number; units: number; teams: number; depth: number }> {
   const { people, orgUnits, assignments, disciplines } = schema;
-  const wid = await workspaceNamed(db, LARGE_WORKSPACE);
   await clearOrg(db, wid);
 
-  const org = buildDeepOrg(wid, { people: 2400, maxDepth: 11, seed: 20260914 });
+  const org = buildDeepOrg(wid, {
+    people: 2400,
+    maxDepth: 11,
+    seed: 20260914,
+    rootName: LARGE_WORKSPACE,
+  });
 
   await insertInChunks(db, disciplines, org.disciplines);
   // People before units: org_units.leadPersonId references people.id. And
@@ -243,14 +245,35 @@ async function seedLarge(db: Db): Promise<{ people: number; units: number; teams
   };
 }
 
+/**
+ * Fill an existing, empty workspace with one of the demo companies. The caller
+ * owns creating the workspace and its membership, which is what lets the same
+ * code seed for `dev-user` from the CLI and for a signed-in Clerk user from
+ * the app. Re-running clears that workspace's org first, so it's idempotent.
+ */
+export async function seedDemoCompanyInto(
+  db: Db,
+  wid: string,
+  kind: DemoCompanyKind,
+): Promise<{ people: number; units: number }> {
+  return kind === "small" ? seedSparrowJam(db, wid) : seedLarge(db, wid);
+}
+
 async function main() {
+  // CLI-only bootstrap. Kept inside main() so importing this module from the
+  // app (for the in-app "start from an example" action) doesn't run dotenv or
+  // open a second connection pool.
+  const { config } = await import("dotenv");
+  config({ path: ".env.local" });
+  config();
+
   const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
   const db = drizzle(sql, { schema });
 
-  const jam = await seedSparrowJam(db);
+  const jam = await seedSparrowJam(db, await workspaceNamed(db, SPARROW_WORKSPACE));
   console.log(`Seeded "${SPARROW_WORKSPACE}":`, jam);
 
-  const large = await seedLarge(db);
+  const large = await seedLarge(db, await workspaceNamed(db, LARGE_WORKSPACE));
   console.log(`Seeded "${LARGE_WORKSPACE}":`, large);
 
   console.log("\nBoth are now in the header's company switcher for dev-user.");
