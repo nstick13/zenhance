@@ -72,7 +72,92 @@ Heather offered feedback and may be able to use it internally — *"probably not
 
 ---
 
+## 🔴 Scale UAT — what 2,400 people exposed (2026-09-13)
+
+First time either map was driven against a real enterprise shape. Nate ran the new
+in-app seeder (`/import` → "No file handy?" → **Large organization**) and clicked
+around. **Both findings are navigation/modelling, not performance** — rendering held
+up fine at 2,562 people / 411 units. **Design-first: discuss with Greg before coding.**
+
+### 🔴 Orbital: optical zoom can't hold context at 12 rungs
+
+**The complaint, verbatim:** *"Orbital loses context quickly because of the scale."*
+
+**Observed, at four zoom levels of the same org:**
+
+| Scale | What's on screen |
+|---|---|
+| 0.02× | All 12 rungs, no labels. Shape without identity. |
+| 0.74× | One division circle fills the frame, one dot on its rim. Mostly empty — the ring is sized for the whole rung while each parent holds ~4 children. |
+| 1.82× | An arc and a dot. Nothing says where you are. |
+| 6.25× | A person and their work — genuinely useful. But no idea whose team, under which division. |
+
+**There is no zoom at which you can read a unit *and* know where it sits.** That's the
+whole finding.
+
+**Root cause — inherent, not a tuning problem.** Radius = depth, and navigation is
+**purely optical zoom + pan**: `grep -iE "breadcrumb|reroot|drill|focusUnit|zoomTo|flyTo"
+components/viz/orbital/OrbitalMap.tsx` returns nothing. To make a rung-10 node legible
+you need ~6× scale; at 6× that ring's circumference is tens of thousands of pixels, so
+its parent's centre is necessarily off-screen. The zoom that grants legibility is the
+zoom that destroys context.
+
+**What is working and should not be touched:** the LOD ladder (`lib/orbital/lod.ts`) is
+right. Detail morphing instead of popping is the correct call and it's well tested.
+**Detail and place are different problems** — Orbital currently only solves detail.
+
+**Proposals, ranked. #1 alone probably closes the complaint:**
+
+1. **Click-to-recenter + breadcrumb.** Click a unit → it animates to centre, its subtree
+   becomes the rungs. A breadcrumb in the chrome (`Company › Vertex Division › Trident
+   Sector › …`), always visible, every crumb clickable. Collapses 12 rungs to the ~3 the
+   geometry actually handles well. `Fit` / `Reset orbits` already provide the way out.
+   ⚠️ **Interacts with `orbital_nodes` overrides** — decide what a saved arrangement means
+   when the map is re-rooted. This is the part most likely to conflict with Greg's model,
+   which is why it's a conversation first.
+   *Prior art in this repo:* the **Radial** view already navigates this way ("sibling
+   satellites + parent"); it's a settled decision in agent memory that Orbital dropped.
+2. **Make the tier bar clickable.** `Company · Structure · Teams · People · Work` is a
+   *read-out* of the current LOD tier (`lod.ts` `LodTier`), not a control — but it reads
+   as navigation and invites clicking. Either wire each to its zoom band or restyle it so
+   it stops advertising something it doesn't do. Cheap.
+3. **Size rungs by occupancy** (`lib/orbital/layout.ts`). Every rung is sized for the
+   deepest content while each parent holds ~4 children, so outer rungs are mostly empty
+   (the 0.74× and 1.82× screenshots). Hardest of the three; do it last, if at all.
+
+**Separate small bug, independent of the above:** at ~6× the person's name label renders
+*over* their work dots instead of beside or below them (`components/viz/orbital/render.ts`).
+Isolated; fixable without waiting on the navigation decision.
+
+### 🟠 Canvas: the two-tier model flattens a deep org into a starburst
+
+At 0.40× on the same company the canvas draws a dense radial moiré of labelled `$X/mo`
+lines. **Not a render bug and not the data** — max fan-out in the tree is 4.
+
+**Cause:** the canvas has exactly **two tiers** (value stream → team) and flattens
+everything beneath a top-level unit into direct children of one hub. One root, 274 teams
+⇒ a single hub emits dozens-to-hundreds of spokes, and `computeAllocationSpokes`
+([OrgCanvas.tsx](../components/viz/OrgCanvas.tsx) ~813/~839) draws **one labelled line
+per child with no cap**. The demo org is 4 streams × 7 teams, so the ceiling had never
+been hit. This is the *"Konva render cost at ~1,600 seat-like elements is still
+un-eyeballed"* unknown from the scale benchmark, now eyeballed — and the answer is that
+the limit is structural, not computational.
+
+**Decision pending — Nate's call:**
+- **Leave it.** Canvas is an alternate lens now, not the default; radial is already unlinked.
+- **Gate it** *(recommended)*. Above N teams show "this view is built for smaller orgs — try
+  Orbital" rather than rendering. Solves the failure mode that matters (this appearing in
+  front of a client) for very little work, and puts no effort into a deprecating surface.
+- **Degrade it.** Spokes only for the focused hub, or drop per-spoke labels above ~12
+  children and bundle the rest. Only worth it if the canvas is staying.
+
+### Why this was findable at all
+Three months of building on a 45-person fixture never surfaced either ceiling. The large
+demo org found both within a minute of clicking. Keep seeding it before shipping map work.
+
 ## ▶ Next build (start here)
+
+> 🔴 **Read [Scale UAT — what 2,400 people exposed](#-scale-uat--what-2400-people-exposed-2026-09-13) first** if you're picking up map work. Orbital navigation is the live open question; it is **design-first and unstarted** — talk to Greg before writing code.
 
 > **The through-line:** Nate's three instincts (2026-08-26) — *"make it configurable," "the load screen is uninspiring," "show who owns a value stream"* — converge on one sequence. You cannot offer "colour by discipline" or "show FTE vs contractor inside a team" until those are real fields; and the moment they are, three findings from [PRODUCT.md](PRODUCT.md)'s menu unlock for free. **The field layer is the unlock; the display config is what makes it feel personal.**
 
