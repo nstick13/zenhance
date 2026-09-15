@@ -200,6 +200,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   );
   const [showReporting, setShowReporting] = useState(true);
   const [openWork, setOpenWork] = useState<{ seat: PlacedSeat; task: MockTask } | null>(null);
+  const [focusedUnitId, setFocusedUnitId] = useState<string | null>(null);
   const [openBoard, setOpenBoard] = useState<{ id: string; name: string; title: string | null } | null>(
     null,
   );
@@ -236,6 +237,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const ripplesRef = useRef<Ripple[]>([]);
   const dirtyRef = useRef(true);
   const focusRef = useRef<string | null>(null);
+  /** The unit last clicked, and the route to it from the centre — read by the
+   *  painters every frame, so clicking never waits on a React render. */
+  const focusUnitRef = useRef<{ id: string | null; path: ReadonlySet<string> }>({ id: null, path: new Set() });
   const ringHoverRef = useRef<RingHover | null>(null);
   const workHoverRef = useRef<{ seatId: string; index: number } | null>(null);
   const unitHoverRef = useRef<string | null>(null);
@@ -304,6 +308,21 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     () => layoutOrbital(applyOverrides(baseTree, overrides), { angleOverrides }),
     [baseTree, overrides, angleOverrides],
   );
+
+  // The focus path: the unit you clicked and each unit above it, back to the
+  // company (Greg, 2026-09-15). Rebuilt against the live scene, so it follows a
+  // node that gets dragged to a new parent, and quietly empties if the unit is
+  // gone — switching company, say.
+  useEffect(() => {
+    const path = new Set<string>();
+    let unit = focusedUnitId ? scene.unitById.get(focusedUnitId) : undefined;
+    while (unit) {
+      path.add(unit.id);
+      unit = unit.parentId ? scene.unitById.get(unit.parentId) : undefined;
+    }
+    focusUnitRef.current = { id: path.size > 0 ? focusedUnitId : null, path };
+    dirtyRef.current = true;
+  }, [scene, focusedUnitId]);
 
   // --- what the rings say --------------------------------------------------
   const seatRings = useMemo(() => {
@@ -560,6 +579,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       hoveredWork: null,
       hoveredUnitId: null,
       draggedUnitId: null,
+      focusedUnitId: focusUnitRef.current.id,
+      focusPath: focusUnitRef.current.path,
       scale: scaleRef.current,
       now: performance.now(),
     };
@@ -604,6 +625,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       ctx.hoveredRing = ringHoverRef.current;
       ctx.hoveredWork = workHoverRef.current;
       ctx.hoveredUnitId = unitHoverRef.current;
+      ctx.focusedUnitId = focusUnitRef.current.id;
+      ctx.focusPath = focusUnitRef.current.path;
       ctx.showReporting = showReportingRef.current;
 
       motionRef.current.step(dt, targetsRef.current);
@@ -784,6 +807,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       const s = sceneRef.current;
       if (!s) return;
       setHover(null);
+      // Dropping a node is not choosing it.
+      pressMovedRef.current = true;
       setDragging(uid(unit.id));
       dragRef.current = {
         kind: "unit",
@@ -997,7 +1022,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     }
   }, [hitTest, pointerWorld, screenOf]);
 
-  const onStageClick = useCallback(() => {
+  const onStageClick = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     // Konva fires click at the end of a drag too, so a pan across the map
     // would otherwise open whatever happened to be under the cursor.
     if (pressMovedRef.current) return;
@@ -1005,7 +1030,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     const s = sceneRef.current;
     if (!world || !s) return;
     const hit = hitTest(world);
-    if (hit?.kind !== "work") return;
+    if (hit?.kind !== "work") {
+      // Clicking open paper lets go of the route. A click on a unit bubbles up
+      // here too, but its target is the unit, not the stage.
+      if (!hit && e.target === e.target.getStage()) setFocusedUnitId(null);
+      return;
+    }
     const seat = s.seatById.get(hit.seatId);
     const task = seat?.personId ? boards.get(seat.personId)?.[hit.index] : undefined;
     if (seat && task) setOpenWork({ seat, task });
@@ -1212,6 +1242,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
                 x={unit.x}
                 y={unit.y}
                 draggable={unit.depth > 0}
+                // Konva starts a drag on any movement at all, so a click with
+                // a pixel of jitter became a zero-length drop — which re-ran
+                // the snap and, now, would swallow the click that focuses the
+                // node. A few pixels is the difference between the two.
+                dragDistance={4}
                 onDragStart={() => onUnitDragStart(unit)}
                 onDragMove={onUnitDragMove}
                 onDragEnd={onUnitDragEnd}
@@ -1220,6 +1255,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
                   setHover({ kind: "unit", unit, x: at.x, y: at.y });
                 }}
                 onMouseLeave={() => setHover(null)}
+                onClick={() => {
+                  if (pressMovedRef.current) return;
+                  // Every path starts at the company, so clicking it clears
+                  // the route rather than drawing one of zero length.
+                  setFocusedUnitId(unit.depth === 0 ? null : unit.id);
+                }}
                 onDblClick={() => frame(unit.r * 4.5, { x: unit.x, y: unit.y })}
               >
                 <Circle radius={drawn} fill="transparent" perfectDrawEnabled={false} />

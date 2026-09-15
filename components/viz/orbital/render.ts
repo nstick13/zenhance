@@ -86,6 +86,11 @@ export type RenderCtx = {
   hoveredWork: { seatId: string; index: number } | null;
   hoveredUnitId: string | null;
   draggedUnitId: string | null;
+  /** The unit last clicked, and every unit on the way to it from the centre.
+   *  Drawn heavier so you can find your way back out of a big org — the scale
+   *  UAT's complaint was that the map "loses context quickly". */
+  focusedUnitId: string | null;
+  focusPath: ReadonlySet<string>;
   /** Live stage zoom, read straight off the camera each frame — node sizes
    *  hold still against it, so they can't be quantised to React's throttled
    *  copy without visibly pulsing. */
@@ -114,6 +119,13 @@ const RING_CLEAR_PX = 11;
 
 /** Below this on-screen size a node doesn't get a shadow — see paintUnitDiscs. */
 const SHADOW_MIN_PX = 7;
+
+/** The focus path (Greg, 2026-09-15): a thicker outline on every unit from the
+ *  company to the one you clicked — thickest on that one — and a heavier line
+ *  between them. Screen pixels, so it reads the same at every zoom. */
+const PATH_STROKE_PX = 2.8;
+const PATH_FOCUS_STROKE_PX = 4.2;
+const PATH_LINK_MIN_PX = 3.5;
 
 /** Rings sit back until you ask them a question (Greg, 2026-09-14). */
 const RING_RESTING_ALPHA = 0.34;
@@ -181,13 +193,18 @@ export function paintUnitDiscs(get: CtxGetter) {
       const centre = c.at(uid(unit.id), unit);
       const dragged = c.draggedUnitId === unit.id;
       const hovered = c.hoveredUnitId === unit.id;
+      const focused = c.focusedUnitId === unit.id;
+      const onPath = c.focusPath.has(unit.id);
+      // Whatever the zoom, a unit on the path keeps a full-strength outline.
+      const solid = dragged || hovered || onPath;
 
       // A speck held above the pixel floor shouldn't read as solidly as a
       // bubble you could point at, so the faintest ones sit back into the page.
-      ctx.setAttr("globalAlpha", dragged || hovered ? 1 : unitPresence(r * scale));
+      ctx.setAttr("globalAlpha", solid ? 1 : unitPresence(r * scale));
       ctx.setAttr("fillStyle", C.unitFill);
-      ctx.setAttr("strokeStyle", dragged ? C.accent : C.unitStroke);
-      ctx.setAttr("lineWidth", (dragged ? 3 : 1.75) * Math.min(inv, r / 6));
+      ctx.setAttr("strokeStyle", dragged ? C.accent : focused ? C.ink : onPath ? C.path : C.unitStroke);
+      const outline = dragged ? 3 : focused ? PATH_FOCUS_STROKE_PX : onPath ? PATH_STROKE_PX : 1.75;
+      ctx.setAttr("lineWidth", outline * Math.min(inv, r / 6));
       // The paper lift, but only on nodes big enough to cast one — a shadow
       // under a two-pixel dot is just a smudge, and there are four hundred
       // of them.
@@ -196,14 +213,14 @@ export function paintUnitDiscs(get: CtxGetter) {
         ctx.setAttr("shadowColor", C.ink);
         ctx.setAttr("shadowBlur", (dragged ? 26 : 14) * inv);
         ctx.setAttr("shadowOffsetY", (dragged ? 8 : 3) * inv);
-        ctx.setAttr("globalAlpha", (dragged ? 0.16 : 0.06) * (dragged || hovered ? 1 : unitPresence(r * scale)));
+        ctx.setAttr("globalAlpha", (dragged ? 0.16 : 0.06) * (solid ? 1 : unitPresence(r * scale)));
         ctx.beginPath();
         ctx.arc(centre.x, centre.y, r, 0, TAU, false);
         ctx.fill();
         ctx.setAttr("shadowColor", "transparent");
         ctx.setAttr("shadowBlur", 0);
         ctx.setAttr("shadowOffsetY", 0);
-        ctx.setAttr("globalAlpha", dragged || hovered ? 1 : unitPresence(r * scale));
+        ctx.setAttr("globalAlpha", solid ? 1 : unitPresence(r * scale));
       }
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, r, 0, TAU, false);
@@ -472,16 +489,41 @@ export function paintUnitLinks(get: CtxGetter) {
     ctx.setAttr("lineCap", "round");
     ctx.setAttr("strokeStyle", C.link);
     ctx.setAttr("globalAlpha", 0.8);
+    const width = (targetId: string) => {
+      const share = c.maxMoney > 0 ? (c.moneyByUnit.get(targetId) ?? 0) / c.maxMoney : 0;
+      return 2.5 + Math.sqrt(Math.max(0, share)) * 20;
+    };
+    const onPath = (sourceId: string, targetId: string) =>
+      c.focusPath.has(sourceId) && c.focusPath.has(targetId);
+
     for (const link of c.scene.links) {
-      if (link.kind !== "unit") continue;
+      if (link.kind !== "unit" || onPath(link.sourceId, link.targetId)) continue;
       const from = c.at(uid(link.sourceId), link.from);
       const to = c.at(uid(link.targetId), link.to);
-      const share = c.maxMoney > 0 ? (c.moneyByUnit.get(link.targetId) ?? 0) / c.maxMoney : 0;
-      ctx.setAttr("lineWidth", 2.5 + Math.sqrt(Math.max(0, share)) * 20);
+      ctx.setAttr("lineWidth", width(link.targetId));
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
       ctx.stroke();
+    }
+
+    // The path goes over everything else, heavier, and never thinner on screen
+    // than a few pixels — on a 2,500-person org, fully zoomed out, a money-
+    // weighted line is a hair and a route you can't see is no route at all.
+    if (c.focusPath.size > 1) {
+      const inv = 1 / Math.max(c.scale, 1e-6);
+      ctx.setAttr("strokeStyle", C.path);
+      ctx.setAttr("globalAlpha", 0.95);
+      for (const link of c.scene.links) {
+        if (link.kind !== "unit" || !onPath(link.sourceId, link.targetId)) continue;
+        const from = c.at(uid(link.sourceId), link.from);
+        const to = c.at(uid(link.targetId), link.to);
+        ctx.setAttr("lineWidth", Math.max(width(link.targetId) + 3, PATH_LINK_MIN_PX * inv));
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   };

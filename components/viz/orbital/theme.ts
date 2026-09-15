@@ -30,6 +30,9 @@ export const C = {
   /** Unfilled part of any progress ring. */
   track: "#e2ddcf",
   accent: "#10b981",
+  /** The route from the company to whatever you last clicked. Its own colour,
+   *  not the accent: green already means "you're dragging this". */
+  path: "#7a6cff",
   alert: "#ef4444",
   white: "#ffffff",
 
