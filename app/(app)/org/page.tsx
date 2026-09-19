@@ -1,11 +1,10 @@
-import Link from "next/link";
 import { getOrgSnapshot, getMapNodes, getOrbitalNodes, getFindingsPolicy } from "@/lib/data/queries";
 import { RadialOrg } from "@/components/viz/RadialOrg";
 import { OrgCanvasLoader } from "@/components/viz/OrgCanvasLoader";
 import { OrbitalMapLoader } from "@/components/viz/orbital/OrbitalMapLoader";
 import { OrgViewSwitcher } from "@/components/viz/OrgViewSwitcher";
-import { loadDemoOrg } from "@/lib/data/actions";
-import { OnboardingBanner } from "@/components/OnboardingBanner";
+import { StartCompany } from "@/components/onboarding/StartCompany";
+import { GetStartedGuide } from "@/components/onboarding/GetStartedGuide";
 
 export default async function OrgPage({
   searchParams,
@@ -17,49 +16,20 @@ export default async function OrgPage({
     await getOrgSnapshot();
   const isEmpty = units.length === 0;
 
-  if (isEmpty) {
-    return (
-      <div className="relative flex h-[calc(100vh-57px)] items-center justify-center bg-paper p-6 text-ink">
-        <OnboardingBanner />
-        <div className="max-w-md text-center">
-          <div className="mx-auto mb-6 h-16 w-16 rounded-full border-4 border-grow bg-surface" />
-          <h1 className="text-2xl font-semibold">Your delivery org, visualized</h1>
-          <p className="mt-2 text-ink-soft">
-            Build your organization from scratch or import it from a spreadsheet.
-            Then see it as a living map and surface what the structure hides.
-          </p>
-          <div className="mt-6 flex flex-wrap justify-center gap-3">
-            <form action={loadDemoOrg}>
-              <button
-                type="submit"
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-white hover:bg-ink-soft"
-              >
-                Load demo org
-              </button>
-            </form>
-            <Link
-              href="/teams"
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium hover:bg-paper"
-            >
-              Build from scratch
-            </Link>
-            <Link
-              href="/import"
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium hover:bg-paper"
-            >
-              Import a spreadsheet
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Nothing here yet: drop straight onto the map and name the company there,
+  // rather than presenting a menu of things to go and do first.
+  if (isEmpty) return <StartCompany vocabulary={vocabulary} />;
 
   // Every view shares one shell so the switcher is always in the same place.
   const shell = (id: string, map: React.ReactNode) => (
     <div className="relative h-[calc(100vh-57px)]">
       {map}
       <OrgViewSwitcher active={id} />
+      <GetStartedGuide
+        units={units.map((u) => ({ id: u.id, name: u.name, kind: u.kind, parentId: u.parentId }))}
+        peopleCount={people.length}
+        vocabulary={vocabulary}
+      />
     </div>
   );
 

@@ -637,3 +637,45 @@ export async function tidyUpCanvasLayout(): Promise<ActionResult> {
   revalidateAll();
   return { ok: true, data: undefined };
 }
+
+// --- getting started ------------------------------------------------------
+
+/**
+ * One person, straight onto one team. The guided start needs a single call per
+ * teammate: a name and a team is all it asks for, and asking the client to make
+ * a person and then an assignment would leave a nameless person behind if the
+ * second call failed.
+ */
+export async function addTeammate(
+  name: string,
+  teamId: string,
+): Promise<ActionResult<{ personId: string }>> {
+  const { workspace } = await requireWorkspace();
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  if (!trimmed) return fail("A name is required");
+
+  // Scoped to the workspace: a team id from elsewhere must not resolve here.
+  const team = await db.query.orgUnits.findFirst({
+    where: and(eq(orgUnits.id, teamId), eq(orgUnits.workspaceId, workspace.id)),
+    columns: { id: true },
+  });
+  if (!team) return fail("That team no longer exists");
+
+  const personId = await db.transaction(async (tx) => {
+    const [person] = await tx
+      .insert(people)
+      .values({ workspaceId: workspace.id, name: trimmed, employment: "unknown" })
+      .returning({ id: people.id });
+    await tx.insert(assignments).values({
+      workspaceId: workspace.id,
+      personId: person.id,
+      orgUnitId: team.id,
+      allocationPct: 100,
+      isOpenRole: false,
+    });
+    return person.id;
+  });
+
+  revalidateAll();
+  return { ok: true, data: { personId } };
+}

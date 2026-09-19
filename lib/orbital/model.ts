@@ -246,6 +246,11 @@ function mergeRoot(tree: OrbitalTree): void {
     if (!root || root.childIds.length !== 1) return;
     const only = tree.units.get(root.childIds[0]);
     if (!only) return;
+    // Only a *holding* node gets absorbed. A single child with nothing under
+    // it isn't passing anything through — it's the only thing the company has,
+    // and swallowing it means someone who has just added their first value
+    // stream watches it vanish (Greg, 2026-09-19, the guided start).
+    if (only.childIds.length === 0) return;
     root.childIds = only.childIds;
     root.seatIds = [...root.seatIds, ...only.seatIds];
     for (const id of only.seatIds) {

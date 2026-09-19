@@ -19,6 +19,24 @@ describe("buildOrbitalTree", () => {
     expect(tree.seats.get(root.seatIds[0])!.unitId).toBe(tree.rootId);
   });
 
+  it("keeps a lone childless child — it is the org, not a holding node", () => {
+    // The guided start builds exactly this: a company, then its first value
+    // stream. Absorbing that stream made it vanish the moment it was added
+    // (Greg, 2026-09-19). A pass-through node is one that passes something
+    // *through*; a leaf has nothing to pass.
+    const tree = buildOrbitalTree({
+      units: [
+        { id: "company", name: "Harbour Logistics", parentId: null },
+        { id: "freight", name: "Freight Ops", parentId: "company" },
+      ],
+      people: [],
+      assignments: [],
+    });
+    expect(tree.rootId).toBe("company");
+    expect(tree.units.has("freight")).toBe(true);
+    expect(tree.units.get("company")!.childIds).toEqual(["freight"]);
+  });
+
   it("leaves the root alone when it genuinely has several children", () => {
     const input = demoInput();
     input.units.push({ id: "ops", name: "Operations", parentId: "company" });
