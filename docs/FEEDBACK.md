@@ -2,7 +2,7 @@
 
 What prospects and testers say, relayed by Greg and Nate. Read this before building against a guess.
 
-**Last asked:** 2026-09-15
+**Last asked:** 2026-09-19
 
 *Every 48 hours, whichever agent is in session asks the person it's working with for new feedback, logs it below, and updates the date above. Agents have no clock between sessions, so this date is the timer — see `AGENTS.md`.*
 

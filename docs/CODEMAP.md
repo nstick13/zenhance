@@ -11,6 +11,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 |---|---|
 | **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
 | v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
+| **Blank-canvas start** (grow an org one node at a time; the team appears rather than being declared) | `app/lab/grow/page.tsx` — self-contained SVG feel study, no DB. Rules, open questions and the two bugs it surfaced: [LAB.md](LAB.md) § `grow` |
 | **Team memberships (add / edit % / remove)** | `OrgCanvas.tsx` — `Assignments` panel component; `createAssignment`/`updateAssignment`/`deleteAssignment` in `lib/data/actions.ts`; Option-drag branch in `onNodeDragEnd` |
 | **Person attributes (discipline / employment / location / timezone)** | `lib/db/schema.ts` `disciplines` + `people`; edit UI in `OrgCanvas.tsx` `PersonForm`/`PersonBody` and `components/people/PeopleManager.tsx`. Discipline find-or-create now lives *inside the import transaction* (`lib/data/importCommit.ts`), not as a standalone action |
 | **The lens — what colour/label mean on the map** | `lib/canvas/lens.ts` (pure: `personColor`, `personLabel`, `buildLegend`, `normalizeLens`) + `LensChoice`/`S.lensPanel` in `OrgCanvas.tsx`; persisted via `saveLens` in `lib/data/actions.ts` → `workspaces.lens` jsonb |
