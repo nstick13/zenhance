@@ -60,6 +60,18 @@ const SOLO_ADD_R = 150;
 const GAP = SEAT_ORBIT_GAP * 1.5;
 /** An empty team still has to be worth looking at. */
 const MIN_TEAM_R = 20;
+/** The node's outline, in screen pixels — never world units, or zooming in
+ *  fattens it until it runs through the gauges outside it. */
+const NODE_STROKE_PX = 2.2;
+/** Constant air between the outside of that outline and the first gauge. */
+const RING_CLEAR_PX = 5;
+/** A parent covers a little less than the ground its children cover — Greg,
+ *  2026-09-20: "area = (sum of children) * 0.66". */
+const AREA_SHARE = 0.66;
+/** How close two nodes must be, as a multiple of their combined radii, before
+ *  letting go would run them together. Generous, because the gauges around a
+ *  node reach much further than its outline does. */
+const MERGE_REACH = 2;
 /** How far the camera may zoom in on its own while framing a small map. */
 const MAX_FIT = 3.2;
 /** Breathing room between two neighbours on the same ring. */
@@ -208,7 +220,7 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
     if (n.kind === 'person') return (radius[id] = SEAT_RADIUS);
     const ch = kids[id] ?? [];
     const area = ch.reduce((sum, c) => sum + sizeOf(c.id) ** 2, 0);
-    return (radius[id] = Math.max(MIN_TEAM_R, Math.sqrt(area)));
+    return (radius[id] = Math.max(MIN_TEAM_R, Math.sqrt(area * AREA_SHARE)));
   };
 
   const rung = (id: string, d: number) => {
@@ -303,12 +315,14 @@ function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
  * Land nowhere near a ring and this returns null: the node has simply been
  * moved, and nothing about the org has changed.
  */
-const RING_CATCH = 46;
+const RING_CATCH_PX = 52;
+const RING_CATCH_MIN = 18;
 
 function classifyDrop(
   layout: Layout,
   draggedId: string,
   at: { x: number; y: number },
+  scale = 1,
 ): { parentId: string; distance: number } | null {
   const blocked = descendantIds(layout.kids, draggedId);
   let best: { parentId: string; distance: number } | null = null;
@@ -316,8 +330,16 @@ function classifyDrop(
     if (blocked.has(id)) continue;
     const c = layout.pos[id];
     if (!c) continue;
+    // Magnetic, and magnetic by the same amount however far you are zoomed
+    // out: the pull is a distance on screen, not in the world. Bounded by the
+    // orbit's own size, so zooming out doesn't turn a small ring into a well
+    // that swallows the whole family.
+    const catchRange = Math.max(
+      RING_CATCH_MIN,
+      Math.min(RING_CATCH_PX / Math.max(scale, 0.05), R * 0.35),
+    );
     const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
-    if (off > RING_CATCH) continue;
+    if (off > catchRange) continue;
     if (!best || off < best.distance) best = { parentId: id, distance: off };
   }
   return best;
@@ -1338,9 +1360,11 @@ export default function GrowLab({
       const bp = layout.pos[other.id];
       if (!bp) continue;
       const d = Math.hypot(ap.x - bp.x, ap.y - bp.y);
-      // Proportional to the pair, because a seat is 9.5 and a company is 165:
-      // one absolute distance cannot serve both.
-      if (d > (radiusOf(a.id) + radiusOf(other.id)) * 0.95) continue;
+      // A node's gauges reach well past its outline, so two nodes look like
+      // they are touching long before their centres are. Arming at contact
+      // meant the merge only appeared once they had already overlapped
+      // (Greg, 2026-09-20).
+      if (d > (radiusOf(a.id) + radiusOf(other.id)) * MERGE_REACH) continue;
       if (!best || d < best.d) best = { id: other.id, d };
     }
     return best ? { a: drag.id, b: best.id, kind: a.kind } : null;
@@ -1358,11 +1382,11 @@ export default function GrowLab({
     const n = byId[drag.id];
     const at = layout.pos[drag.id];
     if (!n || !at) return null;
-    const onOrbit = classifyDrop(layout, drag.id, at);
+    const onOrbit = classifyDrop(layout, drag.id, at, k);
     const parentId = onOrbit ? onOrbit.parentId : boundaryAt(layout, byId, drag.id, at);
     if (parentId === (n.parentId ?? null)) return null;
     return { parentId, viaOrbit: !!onOrbit };
-  }, [drag, armed, byId, layout]);
+  }, [drag, armed, byId, layout, k]);
 
   // Event handlers run long after the render that created them, so they read
   // the world through this instead of a stale closure.
@@ -1828,7 +1852,18 @@ export default function GrowLab({
                 { x: mb.x, y: mb.y, r: radiusOf(b.id) + 4 },
               );
               if (!d) return null;
-              return <path d={d} fill={TEAM_HUE} fillOpacity={coalescing ? 0.3 : 0.2} />;
+              // This stands in for the gauges while it is on screen, so it has
+              // to carry the same weight they did.
+              return (
+                <path
+                  d={d}
+                  fill={TEAM_HUE}
+                  fillOpacity={coalescing ? 0.5 : 0.34}
+                  stroke={TEAM_HUE}
+                  strokeWidth={2.5 / Math.max(k, 0.05)}
+                  strokeOpacity={coalescing ? 0.9 : 0.7}
+                />
+              );
             })()}
 
             {/* Reporting lines. Unit to unit is always drawn, exactly as the
@@ -2547,16 +2582,22 @@ function NodeShape({
   // node growing out through them as you zoom (Greg, 2026-09-20).
   const live = Math.max(0.001, zoom * (0.62 + 0.38 * mo.a) * visualScale);
   const screenRadius = r * live;
-  // The shipped map's figures exactly (`ringGeometry` in viz/orbital/render):
-  // a gauge is a fraction of the node it belongs to, so it gets chunkier as
-  // the node does, instead of staying a hairline on a big one.
-  const ringWidthPx = Math.min(7.5, Math.max(4.5, screenRadius * 0.13));
-  const ringGapPx = Math.max(2.4, ringWidthPx * 0.46);
-  const ringInsetPx = Math.max(3.5, ringWidthPx * 0.7);
+  // A gauge is a fraction of the node it belongs to, so it gets chunkier as
+  // the node does — at 1.5x the shipped map's figures (Greg, 2026-09-20).
+  const ringWidthPx = Math.min(11.25, Math.max(6.75, screenRadius * 0.195));
+  const ringGapPx = Math.max(3.6, ringWidthPx * 0.46);
+  // Constant air between the node's edge and its first gauge, measured from
+  // the *outside of the outline*. The outline used to be a fixed number of
+  // world units, so zooming in fattened it on screen until it ran through the
+  // rings — the clipping Greg saw.
+  const ringInsetPx = NODE_STROKE_PX / 2 + RING_CLEAR_PX;
   const ringStroke = ringWidthPx / live;
+  const px = (n: number) => n / live;
   // Three gauges around a two-pixel dot are a smudge, not three gauges.
   const ringLegible = smoothstep(5, 11, screenRadius) * unitRingReveal(depth, zoom);
-  const ringShow = progress ? ringLegible : 0;
+  // While two nodes are being pushed together the gauges get out of the way,
+  // so the thing you can actually see is the merge (Greg, 2026-09-20).
+  const ringShow = progress && !joining ? ringLegible : 0;
   const ringVisible = !!progress && ringShow > 0.01;
 
   return (
@@ -2588,11 +2629,16 @@ function NodeShape({
       // the release just opened.
       onClick={(e) => e.stopPropagation()}
     >
-      {wants && <circle className="zen-pulse" r={r + 11} fill={hue} fillOpacity={0.18} />}
-      {joining && <circle r={r + 13} fill={TEAM_HUE} fillOpacity={0.16} />}
-      {selected && <circle r={r + 8} fill="none" stroke={hue} strokeWidth={1.5} opacity={0.5} />}
-      <circle r={r} fill={SURFACE} stroke={hue} strokeWidth={isTeam ? 3 : 2.5} opacity={unnamed ? 0.55 : 1}
-        style={{ filter: 'drop-shadow(0 5px 8px rgba(86,103,179,.2))' }} />
+      {wants && <circle className="zen-pulse" r={r + px(11)} fill={hue} fillOpacity={0.18} />}
+      {selected && <circle r={r + px(8)} fill="none" stroke={hue} strokeWidth={px(1.5)} opacity={0.5} />}
+      <circle
+        r={r}
+        fill={SURFACE}
+        stroke={hue}
+        strokeWidth={px(NODE_STROKE_PX)}
+        opacity={unnamed ? 0.55 : 1}
+        style={{ filter: 'drop-shadow(0 5px 8px rgba(86,103,179,.2))' }}
+      />
       {ringVisible && (['delivery', 'sprint', 'health'] as const).map((key, index) => {
         const value = Math.max(0, Math.min(1, progress[key]));
         const radius = r + (ringInsetPx + ringWidthPx / 2 + index * (ringWidthPx + ringGapPx)) / live;
@@ -2606,13 +2652,10 @@ function NodeShape({
       })}
       {missingDetails && <circle cx={r * 0.72} cy={-r * 0.72} r={6} fill={ALERT} stroke={SURFACE} strokeWidth={2} />}
       {isTeam ? (
-        // The glyph belongs to the node, so it grows and shrinks with it
-        // rather than staying a fixed size on a circle that no longer matches.
-        <g fill={hue} opacity={unnamed ? 0.5 : 0.9} transform={`scale(${r / 48})`}>
-          <circle cx={-13} cy={4} r={6} />
-          <circle cx={13} cy={4} r={6} />
-          <circle cx={0} cy={-11} r={6} />
-        </g>
+        // Deliberately empty. The three dots that used to sit here read as a
+        // symbol nobody could name (Greg, 2026-09-20: "I don't know what that
+        // is"); the ring, the label and the headcount already say "team".
+        null
       ) : node.name && avatar ? (
         <g>
           <circle r={r - 2} fill={avatar.background} />

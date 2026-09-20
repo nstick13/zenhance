@@ -229,12 +229,12 @@ two can't drift:
   explicitly provisional: *"orbits around the central master node may later
   become about seniority too … I want to be able to do layout first."*
 - **Size is grown from the people upwards.** A person is a 9.5 seat; a node
-  that holds others covers the **sum of the areas of everything inside it**, so
-  a team of six reads as bigger than a team of two. Greg, 2026-09-20: *"Humans
-  are the base unit of a company, so they should define sizing."* ⚠️ This is
-  flatter than `/org`'s 165 · 72 · 48 — roughly 1.7× a rung rather than 2.3× —
-  so the two are **not** pixel-identical on a deep org. That is the literal
-  instruction; the tension with "look identical to /org" is Greg's to settle.
+  that holds others covers **0.66 × the summed area of everything inside it**,
+  so a team of six reads as bigger than a team of two. Greg, 2026-09-20:
+  *"Humans are the base unit of a company, so they should define sizing."*
+  ⚠️ This is flatter than `/org`'s 165 · 72 · 48, so the two are **not**
+  pixel-identical on a deep org. That is the literal instruction; the tension
+  with "look identical to /org" is Greg's to settle.
 - **The zoom ladder is `lib/orbital/lod`.** People are not drawn at overview
   scale at all; a single arc (the torus) stands in for a unit's crowd from
   ~0.95×, and gives way to real avatars with their own connection lines from
@@ -244,12 +244,20 @@ two can't drift:
 - **Connection lines are back**, unit→unit always and out to people only as the
   people themselves arrive. Width stays flat: `/org` thickens a link by the
   money flowing down it, and there is no money here to thicken it with.
-- **Data rings are the shipped map's `ringGeometry`, exactly** — width is a
-  fraction of the node's own screen size (4.5–7.5px) rather than a fixed
-  hairline, so a gauge gets chunkier as its node does, and the whole stack is
-  measured in the node's own drawn space. That last part is what stops a node
-  growing out through its own rings as you zoom. They still appear only where a
-  metric has source data, and only once the node is big enough to carry them.
+- **Data rings** are the shipped map's `ringGeometry` at 1.5× its widths —
+  6.75–11.25px, a fraction of the node's own screen size rather than a fixed
+  hairline, so a gauge gets chunkier as its node does. The whole stack is
+  measured in the node's own drawn space, which is what stops a node growing
+  out through its own rings as you zoom. They appear only where a metric has
+  source data, and only once the node is big enough to carry them.
+- ⚠️ **Every decoration on a node is a screen width, never a world width** —
+  the outline, the pulse halo, the selection ring. A world-unit outline fattens
+  on screen as you zoom in until it runs straight through the gauges outside
+  it; that was the clipping Greg reported. There is then a constant `RING_CLEAR_PX`
+  of air between the *outside of the outline* and the first gauge.
+- **Nothing sits in the middle of a team.** The three dots that used to read as
+  a symbol nobody could name are gone (Greg: *"I don't know what that is"*);
+  the ring, the label and the headcount already say "team".
 - **Avatars are drawn to fit their seat.** The illustration reaches ~12.5 units
   from its centre and was spilling out of a 9.5 circle.
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
@@ -261,12 +269,21 @@ reads two complementary things on release, in this order (Greg, 2026-09-20:
 *"we're brave enough to re-parent … We can have this alongside the existing
 drag-to-orbit behaviour, since it's complimentary"*):
 
-1. **Land on an orbit** and you have chosen that team deliberately.
+1. **Land on an orbit** and you have chosen that team deliberately. Orbits are
+   **magnetic**: the pull is a fixed distance *on screen*, so it feels the same
+   however far you are zoomed out, bounded by a third of that orbit's own
+   radius so a small ring never becomes a well that swallows its family.
 2. **Otherwise the boundary you are inside decides**, and the *innermost* one
    wins — so a node carried across a family's outer boundary and dropped into a
    nested one takes the nested one's parent, not the family's.
 3. **Inside none of them, the node is severed** and keeps exactly where it was
    let go. That is now its own place in the world.
+
+**Pushing two nodes together stands the gauges down.** They are replaced by
+the merge shape itself, which arms while the two are still visibly apart —
+their gauges reach far past their outlines, so waiting for the outlines to
+touch meant the merge only appeared once they had already overlapped. The
+gauges come back the moment the choice is resolved or abandoned.
 
 **The line under your hand is the question.** While a node is held, its
 connection line shows where it *would* land — it reappears on a new parent as
