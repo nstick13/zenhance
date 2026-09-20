@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { layoutOrbitalForest, visibleRootIds } from "../forest";
 import { buildOrbitalTree } from "../model";
 import { snapUnitOnRing } from "../snap";
-import { buildDeepOrg } from "../../db/deepOrg";
+import { buildDeepOrg } from "./fixtures/deepOrg";
 
 function forest(count: number) {
   return buildOrbitalTree({
@@ -66,7 +66,7 @@ describe("independent orbital families", () => {
       .toBeCloseTo(radius);
   });
 
-  it("lays out the retained Northwind-scale shape without a synthetic visible node", () => {
+  it("lays out a 2,500-person, eleven-rung shape without a synthetic visible node", () => {
     const org = buildDeepOrg("scale-check", { people: 2562, maxDepth: 11, seed: 20260914 });
     const tree = buildOrbitalTree({ units: org.units, people: org.people, assignments: org.assignments },
       { mergePassThroughRoot: false });

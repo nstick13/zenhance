@@ -1,5 +1,14 @@
+/**
+ * A **test fixture only**. This generated a demo company once; the company
+ * workspace is gone from the local development database (2026-09-20). What
+ * survives is the *shape* — ~2,500 people over eleven ragged rungs — because it
+ * is the only thing proving the orbital layout still holds at that size, and
+ * the performance bar in AGENTS.md depends on knowing that.
+ *
+ * Nothing seeds it, nothing ships it, and it never touches the database.
+ */
 import { randomUUID } from "crypto";
-import type { Assignment, Discipline, OrgUnit, Person } from "./schema";
+import type { Assignment, Discipline, OrgUnit, Person } from "@/lib/db/schema";
 
 /**
  * A deep, ragged org — the shape a real enterprise actually has (Greg,
@@ -100,7 +109,7 @@ export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): De
     updatedAt: now,
   });
 
-  const root = makeUnit(opts.rootName ?? "Northwind Freight & Logistics", null, "group");
+  const root = makeUnit(opts.rootName ?? "a deep enterprise shape", null, "group");
   units.push(root);
 
   let peopleBudget = targetPeople;

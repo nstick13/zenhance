@@ -3,27 +3,25 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
-import { buildDeepOrg } from "./deepOrg";
 import { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
 
 /**
- * Two more companies for the dev user, so the map can be judged at sizes the
- * 45-person demo org can't show (Greg, 2026-09-14):
+ * A small invented company for the dev user, alongside the 45-person default:
  *
  *   - **Sparrow Jam Manufacturing, OH** — ten people, two lines and an
  *     oversight group. Small enough that every person, every ring and every
  *     work item is on screen at once.
- *   - **Northwind Freight & Logistics** — ~2,400 people over eleven rungs,
- *     with delivery teams surfacing at every depth from CEO+2 to CEO+11
- *     (lib/db/deepOrg.ts). Invented name and synthetic people, but a real
- *     enterprise *shape*: ragged depth, cross-cutting supporters, and formal
- *     reporting lines that diverge from the delivery structure.
  *
- * Both are seeded as workspaces the dev user is a member of, which is what
- * makes them appear in the header's company switcher. The demo org is left
- * exactly as it is and stays the default.
+ * A ~2,400-person enterprise shape used to sit alongside it. It was removed on
+ * 2026-09-20 (Greg: "kill off Northwind entirely") — its generator survives
+ * only as a test fixture, `lib/orbital/__tests__/fixtures/deepOrg.ts`, because
+ * it is the one thing proving the layout still holds at that size.
  *
- * Idempotent: re-running clears and rebuilds only these two workspaces.
+ * It is seeded as a workspace the dev user is a member of, which is what
+ * makes it appear in the header's company switcher. The existing Digital
+ * Tailoring demo org is left exactly as it is and stays the default.
+ *
+ * Idempotent: re-running clears and rebuilds only Sparrow Jam.
  * CLI: `npm run db:companies`.
  */
 
@@ -32,23 +30,8 @@ const OWNER = "dev-user";
 export { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
 
 export const SPARROW_WORKSPACE = DEMO_COMPANIES.small.name;
-export const LARGE_WORKSPACE = DEMO_COMPANIES.large.name;
 
 type Db = PostgresJsDatabase<typeof schema>;
-
-async function insertInChunks<T>(
-  db: Db,
-  table: unknown,
-  rows: T[],
-  chunkSize = 500,
-): Promise<void> {
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize);
-    if (chunk.length === 0) continue;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await db.insert(table as any).values(chunk as any);
-  }
-}
 
 /** Find or create a workspace by name, owned by `owner`, with membership. */
 async function workspaceNamed(db: Db, name: string, owner: string = OWNER): Promise<string> {
@@ -197,54 +180,6 @@ export async function seedSparrowJam(db: Db, wid: string): Promise<{ people: num
   return { people: JAM_PEOPLE.length, units: JAM_UNITS.length };
 }
 
-// --- the large one ----------------------------------------------------------
-
-export async function seedLarge(db: Db, wid: string): Promise<{ people: number; units: number; teams: number; depth: number }> {
-  const { people, orgUnits, assignments, disciplines } = schema;
-  await clearOrg(db, wid);
-
-  const org = buildDeepOrg(wid, {
-    people: 2400,
-    maxDepth: 11,
-    seed: 20260914,
-    rootName: LARGE_WORKSPACE,
-  });
-
-  await insertInChunks(db, disciplines, org.disciplines);
-  // People before units: org_units.leadPersonId references people.id. And
-  // managers are wired afterwards: a person's manager can land in a later
-  // chunk, and Postgres checks the self-reference at end of *statement*, not
-  // end of transaction.
-  const managers = org.people
-    .filter((p) => p.managerId)
-    .map((p) => ({ id: p.id, managerId: p.managerId! }));
-  await insertInChunks(db, people, org.people.map((p) => ({ ...p, managerId: null })));
-  // Units are generated parents-first, which the FKs require.
-  await insertInChunks(db, orgUnits, org.units);
-  await insertInChunks(db, assignments, org.assignments);
-
-  for (const m of managers) {
-    await db.update(people).set({ managerId: m.managerId }).where(eq(people.id, m.id));
-  }
-
-  const byId = new Map(org.units.map((u) => [u.id, u]));
-  const depthOf = (u: (typeof org.units)[number]) => {
-    let d = 0;
-    let cursor = u.parentId;
-    while (cursor && d < 25) {
-      d += 1;
-      cursor = byId.get(cursor)?.parentId ?? null;
-    }
-    return d;
-  };
-  return {
-    people: org.people.length,
-    units: org.units.length,
-    teams: org.units.filter((u) => u.kind === "team").length,
-    depth: Math.max(...org.units.map(depthOf)),
-  };
-}
-
 /**
  * Fill an existing, empty workspace with one of the demo companies. The caller
  * owns creating the workspace and its membership, which is what lets the same
@@ -256,7 +191,8 @@ export async function seedDemoCompanyInto(
   wid: string,
   kind: DemoCompanyKind,
 ): Promise<{ people: number; units: number }> {
-  return kind === "small" ? seedSparrowJam(db, wid) : seedLarge(db, wid);
+  if (kind !== "small") throw new Error("Unknown demo company kind.");
+  return seedSparrowJam(db, wid);
 }
 
 async function main() {
@@ -273,10 +209,7 @@ async function main() {
   const jam = await seedSparrowJam(db, await workspaceNamed(db, SPARROW_WORKSPACE));
   console.log(`Seeded "${SPARROW_WORKSPACE}":`, jam);
 
-  const large = await seedLarge(db, await workspaceNamed(db, LARGE_WORKSPACE));
-  console.log(`Seeded "${LARGE_WORKSPACE}":`, large);
-
-  console.log("\nBoth are now in the header's company switcher for dev-user.");
+  console.log(`"${SPARROW_WORKSPACE}" is now in the header's company switcher for dev-user.`);
   await sql.end();
 }
 

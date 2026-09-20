@@ -41,7 +41,7 @@ Speed comes first (rule 2), but never across these.
 - **It must run well on an entry-level iPad from five years ago, and on a Lenovo laptop IT hasn't upgraded in ten.** Rich visuals and interactions are the enhancement, never the requirement.
 - **Graceful fallback.** The core experience works with effects turned down or off; richer effects arrive only where the device can carry them. Respect `prefers-reduced-motion`.
 - **Touch is a first-class input.** Anything you can reach by hovering must also be reachable by tapping.
-- **Check every change to the map on all three companies** — Sparrow Jam (10 people), Digital Tailoring (45), Northwind (2,562). A fix for one has broken another more than once.
+- **Check every change to the map on both companies** — Sparrow Jam (10 people) and Digital Tailoring (45). A fix for one has broken the other more than once. *(The 2,562-person Northwind demo workspace was deleted from the local development database on 2026-09-20. Scale is now checked by a pure test over the same shape — `lib/orbital/__tests__/fixtures/deepOrg.ts` — not by looking at it, so a change that only a big org would expose will not be caught by eye.)*
 
 ## Work with the least context needed
 This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. **Don't read whole files or scan the tree by default.**
@@ -62,7 +62,7 @@ This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. *
 - **Branch per story** (`<feature>-<slug>`), squash-merge to `main`. Patch-bump `package.json` per merge; minor bump when a Feature completes.
 - **Make every commit on `main` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
 - **Delete a branch once it's merged or abandoned** — locally and on the remote. Don't delete a branch you didn't create unless it's merged, or its owner has said it's finished.
-- **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser, on all three companies. Cheap checks (`npx tsc --noEmit`, tests) still come first.
+- **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser on Sparrow Jam and Digital Tailoring, plus running the large-org layout fixture where relevant. Cheap checks (`npx tsc --noEmit`, tests) still come first.
 - Commit/push only when asked.
 
 <!-- BEGIN:nextjs-agent-rules -->

@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_COMPANIES, isRetiredScaleDemoWorkspace, isSampleWorkFixtureName } from "./demoCompanies";
-
-describe("interactive demo selection", () => {
-  it("retires both generations of the large fixture without hiding the small demos", () => {
-    expect(isRetiredScaleDemoWorkspace("Northwind Freight & Logistics")).toBe(true);
-    expect(isRetiredScaleDemoWorkspace(DEMO_COMPANIES.large.name)).toBe(true);
-    expect(isRetiredScaleDemoWorkspace("Sparrow Jam Manufacturing, OH")).toBe(false);
-    expect(isRetiredScaleDemoWorkspace("Digital Tailoring Supplies")).toBe(false);
-  });
-});
+import { DEMO_COMPANIES, isSampleWorkFixtureName } from "./demoCompanies";
 
 describe("sample-work fixtures", () => {
+  it("offers only the small invented company as a seedable demo", () => {
+    expect(Object.keys(DEMO_COMPANIES)).toEqual(["small"]);
+    expect(Object.values(DEMO_COMPANIES).some((company) =>
+      company.name.includes("Northwind") || company.name.includes("Big Organization"),
+    )).toBe(false);
+  });
+
   it("limits invented work to named fixtures", () => {
     expect(isSampleWorkFixtureName("Digital Tailoring Supplies")).toBe(true);
     expect(isSampleWorkFixtureName("Sparrow Jam Manufacturing, OH")).toBe(true);

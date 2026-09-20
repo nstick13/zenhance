@@ -1,6 +1,6 @@
 # Orbital map — interaction brief
 
-**Status:** historical interaction brief from 2026-09-15. On 2026-09-19 Greg paused the large-company interactive demo: its visual direction is not agreed. The Northwind fixture and these notes remain intact for later scale work, while visual exploration returns to Sparrow Jam (10) and Digital Tailoring (45). Points below record the prior direction; they are not a mandate to keep extending the enterprise treatment.
+**Status:** historical interaction brief from 2026-09-15. On 2026-09-19 Greg paused the large-company interactive demo: its visual direction is not agreed. On 2026-09-20 the Northwind demo workspace was deleted from the local development database; only its shape-generator survives, as a test fixture. Visual exploration lives on Sparrow Jam (10) and Digital Tailoring (45). Points below record the prior direction; they are not a mandate to keep extending the enterprise treatment.
 
 ## Current small-company decision (2026-09-19)
 
@@ -106,6 +106,6 @@ Create (how a new unit is added is undecided); a Miro-style connection-line tool
 
 - Runs well on a five-year-old entry-level iPad and a ten-year-old Lenovo. Smooth motion is the enhancement; fall back gracefully and respect reduced-motion settings.
 - Touch is first-class: focus by double-tap and by button; drag by touch.
-- Check every change on all three real companies: Sparrow Jam (10 people), Digital Tailoring (45), Northwind (2,562).
+- Check every change on both interactive demo companies: Sparrow Jam (10 people) and Digital Tailoring (45). The local Northwind demo was deleted on 2026-09-20; its scale shape remains in a pure test.
 - Nodes don't overlap after a snap. Double-clicking doesn't select text.
 - Commit messages say why, not just what.

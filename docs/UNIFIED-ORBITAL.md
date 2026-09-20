@@ -94,10 +94,11 @@ the index-only synthetic root or a false link. It shows an outer boundary per
 family, inner guides on focus, and limits invented work/rings to named dev demo
 fixtures. The ring model distinguishes measured zero from missing data. Unit
 snapping inside a forest is local to that unit's family. Sparrow and Digital
-were browser-checked. A pure Northwind-shaped test checked a >2,500-person,
-11-rung layout without touching the database; the retired Northwind workspace
-remains hidden from the interactive switcher, so large-scale visual QA is
-still outstanding.
+were browser-checked. A pure test still checks a >2,500-person, 11-rung layout
+without touching the database. The Northwind demo workspace was **deleted from
+the local development database on 2026-09-20**, so large-scale QA is now arithmetic only — nobody can look at a
+big org any more, and a regression that only shows at scale will not be caught
+by eye.
 
 **Not integrated yet:** the grow interaction and draft persistence on `/org`,
 branch splits/structural merge persistence in the real schema, an in-map
@@ -109,7 +110,8 @@ actions, not the existing `orbital_nodes` arrangement overrides.
 
 ## Follow-on scale study (2026-09-20)
 
-The shared `GrowLab` now has wheel/pinch zoom, pan, slider and Fit. Its
+On `merge/grow-looks-like-org` (not this integration branch), the shared
+`GrowLab` has wheel/pinch zoom, pan, slider and Fit. Its
 `/grow-established` review route uses an invented 45-person, 12-team Digital
 Tailoring-shaped fixture, with the orbital palette, small illustrated people
 and explicit sample data rings. The visual map and creation choices coexist

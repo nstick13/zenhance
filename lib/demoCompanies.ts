@@ -1,5 +1,5 @@
 /**
- * The two demo companies, as plain data with **no database imports** — this
+ * The demo company, as plain data with **no database imports** — this
  * module is pulled into the client bundle by the import page's cards, so it
  * must stay free of `postgres`/drizzle. The seeding itself lives in
  * `lib/db/companies.ts`, which imports this.
@@ -16,22 +16,9 @@ export const DEMO_COMPANIES = {
     label: "Small organization",
     blurb: "10 people, two lines and an oversight group — everything on screen at once.",
   },
-  large: {
-    name: "Nate's Big Organization",
-    label: "Large organization",
-    blurb: "~2,400 people over 12 rungs — a real enterprise shape, ragged depth and all.",
-  },
 } as const;
 
 export type DemoCompanyKind = keyof typeof DEMO_COMPANIES;
-
-/** The scale fixture is retained for benchmarks and historical design work,
- * but is no longer part of the interactive local demo while we settle the
- * small-company visual language. Include the earlier seeded name so existing
- * workspaces disappear from the switcher without deleting their data. */
-export function isRetiredScaleDemoWorkspace(name: string): boolean {
-  return name === DEMO_COMPANIES.large.name || name === "Northwind Freight & Logistics";
-}
 
 /** Only these invented, dev-account fixtures may display synthetic work.
  * The caller must also verify dev auth; a customer workspace with the same
@@ -39,6 +26,5 @@ export function isRetiredScaleDemoWorkspace(name: string): boolean {
 export function isSampleWorkFixtureName(name: string): boolean {
   return name === "Digital Tailoring Supplies" ||
     name === "Sparrow Jam Manufacturing, OH" ||
-    name === DEMO_COMPANIES.small.name ||
-    isRetiredScaleDemoWorkspace(name);
+    name === DEMO_COMPANIES.small.name;
 }
