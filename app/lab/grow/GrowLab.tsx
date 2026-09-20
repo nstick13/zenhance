@@ -54,10 +54,9 @@ const PERSON_R = SEAT_RADIUS;
 const SEED_R = 50;
 const SOLO_ADD_R = 150;
 /** Clear air between a node and the subtree standing on its ring. */
-/** Clear air between a node and the subtree on its orbit. Half again on the
- *  engine's figure — Greg, 2026-09-20: "spacing between nodes … increase by
- *  50%". */
-const GAP = SEAT_ORBIT_GAP * 1.5;
+/** Clear air between a node and the subtree on its orbit. Three times the
+ *  engine's figure: +50%, then doubled again (Greg, 2026-09-20). */
+const GAP = SEAT_ORBIT_GAP * 3;
 /** An empty team still has to be worth looking at. */
 const MIN_TEAM_R = 20;
 /** The node's outline, in screen pixels — never world units, or zooming in
@@ -75,7 +74,7 @@ const MERGE_REACH = 2;
 /** How far the camera may zoom in on its own while framing a small map. */
 const MAX_FIT = 3.2;
 /** Breathing room between two neighbours on the same ring. */
-const PAD = 45;
+const PAD = 90;
 /** Gap between two islands when they're tidied into a row. */
 const ISLAND_GAP = 110;
 /** Width of the invisible band around a ring that answers the pointer. */
@@ -315,14 +314,17 @@ function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
  * Land nowhere near a ring and this returns null: the node has simply been
  * moved, and nothing about the org has changed.
  */
-const RING_CATCH_PX = 52;
-const RING_CATCH_MIN = 18;
+/**
+ * The pull of an orbit is a band around it — equidistant inside and out, and
+ * as wide as 15% of that orbit's diameter, so a big ring pulls from further
+ * away than a small one (Greg, 2026-09-20). Half that figure either side.
+ */
+const RING_CATCH_SHARE = 0.15;
 
 function classifyDrop(
   layout: Layout,
   draggedId: string,
   at: { x: number; y: number },
-  scale = 1,
 ): { parentId: string; distance: number } | null {
   const blocked = descendantIds(layout.kids, draggedId);
   let best: { parentId: string; distance: number } | null = null;
@@ -330,14 +332,7 @@ function classifyDrop(
     if (blocked.has(id)) continue;
     const c = layout.pos[id];
     if (!c) continue;
-    // Magnetic, and magnetic by the same amount however far you are zoomed
-    // out: the pull is a distance on screen, not in the world. Bounded by the
-    // orbit's own size, so zooming out doesn't turn a small ring into a well
-    // that swallows the whole family.
-    const catchRange = Math.max(
-      RING_CATCH_MIN,
-      Math.min(RING_CATCH_PX / Math.max(scale, 0.05), R * 0.35),
-    );
+    const catchRange = R * RING_CATCH_SHARE;
     const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
     if (off > catchRange) continue;
     if (!best || off < best.distance) best = { parentId: id, distance: off };
@@ -1382,11 +1377,11 @@ export default function GrowLab({
     const n = byId[drag.id];
     const at = layout.pos[drag.id];
     if (!n || !at) return null;
-    const onOrbit = classifyDrop(layout, drag.id, at, k);
+    const onOrbit = classifyDrop(layout, drag.id, at);
     const parentId = onOrbit ? onOrbit.parentId : boundaryAt(layout, byId, drag.id, at);
     if (parentId === (n.parentId ?? null)) return null;
     return { parentId, viaOrbit: !!onOrbit };
-  }, [drag, armed, byId, layout, k]);
+  }, [drag, armed, byId, layout]);
 
   // Event handlers run long after the render that created them, so they read
   // the world through this instead of a stale closure.
@@ -1633,7 +1628,10 @@ export default function GrowLab({
   const labelItems = nodes
     .map((n) => {
       if (n.kind === 'person' && hoveredNodeId !== n.id && openId !== n.id) return null;
-      if (n.kind === 'team' && k < 0.7 && hoveredNodeId !== n.id && openId !== n.id) return null;
+      // Names are a hover state for the moment — Greg, 2026-09-20: "nodes
+      // don't have labels unless you hover on them (we're going to change this
+      // later)". The map reads as shape and colour until you ask.
+      if (n.kind === 'team' && hoveredNodeId !== n.id && openId !== n.id) return null;
       const mo = m(n.id);
       if (mo.a < 0.05) return null;
       const s2 = worldToScreen(mo);
@@ -1916,9 +1914,11 @@ export default function GrowLab({
                     cy={mo.y}
                     r={R}
                     fill="none"
-                    stroke={C.seat}
+                    // A stand-in should sit back, not compete with the people
+                    // it is standing in for (Greg, 2026-09-20).
+                    stroke="#d6def0"
                     strokeWidth={SEAT_RADIUS * 2}
-                    opacity={reveal.torus * 0.3 * mo.a}
+                    opacity={reveal.torus * 0.85 * mo.a}
                   />
                 );
               })}
@@ -2657,16 +2657,32 @@ function NodeShape({
         // is"); the ring, the label and the headcount already say "team".
         null
       ) : node.name && avatar ? (
+        // A portrait, not a sticker: the drawing is *cropped* to the seat
+        // rather than shrunk to fit inside it, and a white band between it and
+        // the coloured outline keeps the two from touching.
         <g>
-          <circle r={r - 2} fill={avatar.background} />
-          {/* The drawing reaches ~12.5 units from its centre, so it has to be
-              brought in to sit inside a 9.5 seat rather than spill over it. */}
-          {reveal.people > 0.4 && <g transform={`scale(${(r / SEAT_RADIUS) * 0.74})`}>
-            <ellipse cx={0} cy={7} rx={8} ry={5.5} fill={avatar.shirt} />
-            <circle cx={0} cy={-2.3} r={4.7} fill={avatar.hair} />
-            <ellipse cx={0} cy={-1} rx={3.8} ry={4.4} fill={avatar.skin} />
-            <ellipse cx={0} cy={-5} rx={4} ry={2.1} fill={avatar.hair} />
-          </g>}
+          <defs>
+            <clipPath id={`seat-${node.id}`}>
+              <circle r={r - px(NODE_STROKE_PX)} />
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#seat-${node.id})`}>
+            <circle r={r} fill={avatar.background} />
+            {reveal.people > 0.4 && (
+              <g transform={`translate(0 ${r * 0.08}) scale(${r / SEAT_RADIUS})`}>
+                <ellipse cx={0} cy={7} rx={8} ry={5.5} fill={avatar.shirt} />
+                <circle cx={0} cy={-2.3} r={4.7} fill={avatar.hair} />
+                <ellipse cx={0} cy={-1} rx={3.8} ry={4.4} fill={avatar.skin} />
+                <ellipse cx={0} cy={-5} rx={4} ry={2.1} fill={avatar.hair} />
+              </g>
+            )}
+          </g>
+          <circle
+            r={r - px(NODE_STROKE_PX) / 2}
+            fill="none"
+            stroke={SURFACE}
+            strokeWidth={px(NODE_STROKE_PX)}
+          />
         </g>
       ) : (
         <text textAnchor="middle" dy={7} fontSize={20} fontWeight={500} fill={hue} opacity={0.7}>

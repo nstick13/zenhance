@@ -258,6 +258,15 @@ two can't drift:
 - **Nothing sits in the middle of a team.** The three dots that used to read as
   a symbol nobody could name are gone (Greg: *"I don't know what that is"*);
   the ring, the label and the headcount already say "team".
+- **A person is a portrait, not a sticker.** The avatar is *cropped* to its seat
+  with a `clipPath` rather than shrunk to fit inside it, and a white band sits
+  between the picture and the coloured outline. Shrinking it left the drawing
+  floating in the circle and still breaching it on the crop.
+- **A name is a hover state**, on teams as well as people — provisional, and
+  Greg expects to revisit it. Until then the map reads as shape and colour
+  until you ask.
+- **The crowd stand-in is a pale blue-grey**, not the seat colour. It stands in
+  for people; it should not out-shout them.
 - **Avatars are drawn to fit their seat.** The illustration reaches ~12.5 units
   from its centre and was spilling out of a 9.5 circle.
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
@@ -270,9 +279,10 @@ reads two complementary things on release, in this order (Greg, 2026-09-20:
 drag-to-orbit behaviour, since it's complimentary"*):
 
 1. **Land on an orbit** and you have chosen that team deliberately. Orbits are
-   **magnetic**: the pull is a fixed distance *on screen*, so it feels the same
-   however far you are zoomed out, bounded by a third of that orbit's own
-   radius so a small ring never becomes a well that swallows its family.
+   **magnetic**: the pull is an invisible band around the ring, equidistant
+   inside and out, as wide as **15% of that orbit's diameter** — so a big ring
+   reaches further than a small one, and the feel is the same at any zoom
+   (Greg, 2026-09-20).
 2. **Otherwise the boundary you are inside decides**, and the *innermost* one
    wins — so a node carried across a family's outer boundary and dropped into a
    nested one takes the nested one's parent, not the family's.
