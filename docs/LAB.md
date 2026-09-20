@@ -231,9 +231,19 @@ a half-done size floor makes nodes overlap, which is worse than small.
    the manual ordering Greg wants will need a real answer.
 5. 🔶 **Two *teams* merged into one still keep the target's place** — drag A
    onto B and the survivor sits where B sat, silently, even when A and B had
-   different parents. People now get asked that question; teams do not. The
-   inconsistency is deliberate for the moment (Greg scoped the fix to people)
-   but it is a one-step change if the same answer should apply.
+   different parents. People now get asked that question; teams do not. Greg
+   has seen this and parked it (2026-09-20): *"good enough for now."* It is a
+   one-step change, reusing the same panel, if the same answer should apply.
+6. 🔶 **How opinionated should placement be at all?** Greg, 2026-09-20: *"I
+   don't know how opinionated geographic placement of nodes should be."* This
+   is the question sitting underneath several of the others — where a new
+   parent appears, whether islands may overlap, whether the map should ever
+   move something you didn't move yourself. Right now the lab is barely
+   opinionated: things land where the action happened, overlaps are allowed,
+   and **Tidy up** is the only thing that rearranges anything. Nobody has
+   decided whether that is the answer or just the absence of one. **Don't
+   quietly make the map more opinionated** — it would be answering this by
+   stealth.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
