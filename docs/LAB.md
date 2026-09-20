@@ -18,13 +18,19 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
-| `grow` / `grow-established` | **active** | The blank-canvas start and a 45-person invented established-company variant now share `GrowLab.tsx`. Both support wheel/pinch zoom, pan and Fit. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
+| `grow` / `grow-established` | **active, on a branch** | The blank-canvas start and a 45-person invented established-company variant now share `GrowLab.tsx`. Both support wheel/pinch zoom, pan and Fit. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
 | `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Value streams→Teams→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
 | `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
 | `orbital-focus` | **archived** | Graduated to the production `OrbitalMap` (2026-09-15). Carried forward: focus-relative fixed rings; double-click/double-tap and card focus; progressive whole-company marks; dimmed context with a violet route home; nested focus; and focus-aware dragging with meaningful snap modes. The lab's aggregate summaries were deliberately dropped because every real unit remains visible. |
 
 
 ## `grow` — the first team *(active, 2026-09-19)*
+
+> 🔶 **These routes are not on `main`.** Greg, 2026-09-20: the refined `/org` is
+> what ships; both grow studies stay on the `grow-studies` branch until the
+> creation model is ready to be part of the product. Everything they taught is
+> recorded here so it survives whether or not the branch does — check out that
+> branch to run them.
 
 `/lab/grow` — a thin page around the self-contained `GrowLab.tsx` study, SVG not Konva (three to a dozen nodes don't
 need a canvas, and SVG gives crisp text at any camera scale for free). No DB, no
