@@ -16,22 +16,26 @@
  * how they relate. A parent is something you add when you're ready, never a
  * thing the map demands.
  *
- * Rendered as SVG, not Konva. Three to a dozen nodes don't need a canvas.
+ * Rendered as SVG, not Konva. The study can trade some scale for direct,
+ * inspectable interaction while it tests the visual grammar.
  * Shapes live in the scaled camera layer; labels are drawn in screen space on
  * top, so text stays the same size however far the map has zoomed out.
  * ------------------------------------------------------------------------ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { avatarPalette } from '@/lib/orbital/avatar';
-import { SEAT_ORBIT_GAP, SEAT_RADIUS, unitRadius } from '@/lib/orbital/geometry';
+import { SEAT_ORBIT_GAP, SEAT_RADIUS, WORK_RADIUS, unitRadius, workGridPoints } from '@/lib/orbital/geometry';
 import {
   drawnUnitRadius,
   revealAt,
   smoothstep,
-  unitRingReveal,
   type Reveal,
 } from '@/lib/orbital/lod';
-import { C, healthColor } from '@/components/viz/orbital/theme';
+import { C, WORK_STATUS_FILL } from '@/components/viz/orbital/theme';
+import {
+  personOrbitRadius, studyRingColor, studyRingReveal,
+  type StudyRingKey, type StudyRingProgress,
+} from './visualRules';
 
 /* --- unified orbital palette -------------------------------------------- */
 const PAPER = '#fefefe';
@@ -53,17 +57,9 @@ const ALERT = '#e95677';
 const PERSON_R = SEAT_RADIUS;
 const SEED_R = 50;
 const SOLO_ADD_R = 150;
-/** Clear air between a node and the subtree standing on its ring. */
 /** Clear air between a node and the subtree on its orbit. Three times the
  *  engine's figure: +50%, then doubled again (Greg, 2026-09-20). */
 const GAP = SEAT_ORBIT_GAP * 3;
-/**
- * People are the exception. A ring carrying nothing but humans sits at half
- * that distance and packs them half as loosely — Greg, 2026-09-20: "humans now
- * can be drawn at half the distance from their parent node … that should
- * tighten things up a bit at that level". Rings carrying teams are untouched.
- */
-const SEAT_GAP_SHARE = 0.5;
 /** An empty team still has to be worth looking at. */
 const MIN_TEAM_R = 20;
 /** The node's outline, in screen pixels — never world units, or zooming in
@@ -139,6 +135,22 @@ export type Node = {
   purpose: string | null; // team
 };
 
+export type SampleWorkItem = {
+  id: string;
+  title: string;
+  status: 'backlog' | 'in_progress' | 'review' | 'done';
+};
+const WORK_ORDER: SampleWorkItem['status'][] = ['done', 'review', 'in_progress', 'backlog'];
+const RING_ORDER: StudyRingKey[] = ['delivery', 'sprint', 'health'];
+const RING_LABEL: Record<StudyRingKey, string> = {
+  delivery: 'Delivery progress', sprint: 'Sprint progress', health: 'Team health',
+};
+const RING_DESCRIPTION: Record<StudyRingKey, string> = {
+  delivery: 'Share of planned delivery completed.',
+  sprint: 'Share of current sprint work completed.',
+  health: 'Current team health score.',
+};
+
 /** Where a node is drawn, and how far it has arrived (0→1). */
 type Motion = { x: number; y: number; a: number };
 type Target = Motion;
@@ -175,8 +187,10 @@ function missingLabel(n: Node): string | null {
 
 type Layout = {
   pos: Record<string, { x: number; y: number }>;
-  /** Radius of the ring a node's children stand on. Teams always have one. */
+  /** Structural child orbit; for a seat-only family this is the human orbit. */
   ring: Record<string, number>;
+  /** Humans always use the closer orbit, including when child teams coexist. */
+  personRing: Record<string, number>;
   /** How far a node's whole subtree reaches from its centre. This is also the
    *  node's **boundary**: cross it and the relationship changes. */
   reach: Record<string, number>;
@@ -205,6 +219,7 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
   }
 
   const ring: Record<string, number> = {};
+  const personRing: Record<string, number> = {};
   const reach: Record<string, number> = {};
   const depth: Record<string, number> = {};
   const radius: Record<string, number> = {};
@@ -245,23 +260,27 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
       // you add to it, so it has to exist before there's anything on it. It is
       // waiting for people, so it waits at the people distance.
       if (n.kind === 'team') {
-        ring[id] = r + SEAT_RADIUS + GAP * SEAT_GAP_SHARE;
+        ring[id] = personRing[id] = personOrbitRadius(r, 0, GAP);
         return (reach[id] = ring[id]!);
       }
       return (reach[id] = r);
     }
 
-    const childReach = ch.map((c) => measure(c.id));
-    const widest = Math.max(...childReach);
-    // A ring of nothing but people draws in close; the moment a team stands on
-    // it, it is a structural rung again and takes the full distance.
-    const share = ch.every((c) => c.kind === 'person') ? SEAT_GAP_SHARE : 1;
-    // Clear this node and the deepest child...
-    const clearance = r + widest + GAP * share;
-    // ...and be long enough round for every child to stand side by side.
-    const circumference = ch.length * (2 * widest + PAD * share);
+    const teamChildren = ch.filter((c) => c.kind === 'team');
+    const personCount = ch.length - teamChildren.length;
+    const measured = new Map(ch.map((c) => [c.id, measure(c.id)]));
+    const near = personRing[id] = personOrbitRadius(r, personCount, GAP);
+    if (teamChildren.length === 0) {
+      ring[id] = near;
+      return (reach[id] = near + SEAT_RADIUS);
+    }
+    const widestTeam = Math.max(...teamChildren.map((c) => measured.get(c.id)!));
+    // Child teams still occupy the roomy structural orbit. A lead/person at
+    // the same level no longer forces their own seat out onto that orbit.
+    const clearance = r + widestTeam + GAP;
+    const circumference = teamChildren.length * (2 * widestTeam + PAD);
     ring[id] = Math.max(clearance, circumference / (2 * Math.PI));
-    return (reach[id] = ring[id]! + widest);
+    return (reach[id] = Math.max(ring[id]! + widestTeam, near + SEAT_RADIUS));
   };
 
   const pos: Record<string, { x: number; y: number }> = {};
@@ -280,10 +299,10 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
     pos[id] = { x: px, y: py };
     const ch = kids[id] ?? [];
     if (!ch.length) return;
-    const R = ring[id]!;
     const spread = (2 * Math.PI) / ch.length;
     ch.forEach((c, i) => {
       const a = facing + (i - (ch.length - 1) / 2) * spread;
+      const R = c.kind === 'person' ? personRing[id]! : ring[id]!;
       place(c.id, px + Math.cos(a) * R, py + Math.sin(a) * R, a);
     });
   };
@@ -296,7 +315,7 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
     place(root.id, 0, 0, -Math.PI / 2);
   }
 
-  return { pos, ring, reach, depth, radius, roots, kids };
+  return { pos, ring, personRing, reach, depth, radius, roots, kids };
 }
 
 /** Every node at or below `id`. Nothing may be dropped inside its own subtree
@@ -339,14 +358,19 @@ function classifyDrop(
 ): { parentId: string; distance: number } | null {
   const blocked = descendantIds(layout.kids, draggedId);
   let best: { parentId: string; distance: number } | null = null;
-  for (const [id, R] of Object.entries(layout.ring)) {
+  for (const [id, outer] of Object.entries(layout.ring)) {
     if (blocked.has(id)) continue;
     const c = layout.pos[id];
     if (!c) continue;
-    const catchRange = R * RING_CATCH_SHARE;
-    const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
-    if (off > catchRange) continue;
-    if (!best || off < best.distance) best = { parentId: id, distance: off };
+    // A mixed parent has an inner human orbit as well as the structural one.
+    // Either is a valid drop target for a relationship question.
+    const inner = layout.personRing[id];
+    for (const R of inner && Math.abs(inner - outer) > 1 ? [outer, inner] : [outer]) {
+      const catchRange = R * RING_CATCH_SHARE;
+      const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
+      if (off > catchRange) continue;
+      if (!best || off < best.distance) best = { parentId: id, distance: off };
+    }
   }
   return best;
 }
@@ -440,6 +464,14 @@ function metaballPath(
     `A ${a.r} ${a.r} 0 0 0 ${p1.x} ${p1.y}`,
     'Z',
   ].join(' ');
+}
+
+/** The work-facing half of a circle. Its open side faces the parent, and the
+ * centreline never sweeps more than 180 degrees. */
+function workArcPath(x: number, y: number, radius: number, start: number, end: number): string {
+  const from = { x: x + Math.cos(start) * radius, y: y + Math.sin(start) * radius };
+  const to = { x: x + Math.cos(end) * radius, y: y + Math.sin(end) * radius };
+  return `M ${from.x} ${from.y} A ${radius} ${radius} 0 ${end - start > Math.PI ? 1 : 0} 1 ${to.x} ${to.y}`;
 }
 
 /** A copy of the pin map with these ids dropped — they go back on their ring. */
@@ -626,10 +658,12 @@ type MergeState = {
 export default function GrowLab({
   initialNodes = [],
   sampleRings = {},
+  sampleWork = {},
   studyTitle = 'The first team',
 }: {
   initialNodes?: Node[];
-  sampleRings?: Record<string, { delivery: number; sprint: number; health: number }>;
+  sampleRings?: Record<string, StudyRingProgress>;
+  sampleWork?: Record<string, SampleWorkItem[]>;
   studyTitle?: string;
 }) {
   const [nodes, setNodes] = useState<Node[]>(() => initialNodes.map((node) => ({ ...node })));
@@ -645,6 +679,10 @@ export default function GrowLab({
   /** Where the pointer is on a ring, and whether the menu has been opened there. */
   const [hover, setHover] = useState<{ parentId: string; angle: number } | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoveredRing, setHoveredRing] = useState<{ nodeId: string; key: StudyRingKey; x: number; y: number } | null>(null);
+  const [selectedRing, setSelectedRing] = useState<{ nodeId: string; key: StudyRingKey; x: number; y: number } | null>(null);
+  const [hoveredWorkId, setHoveredWorkId] = useState<string | null>(null);
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ parentId: string; angle: number } | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [merge, setMerge] = useState<MergeState | null>(null);
@@ -948,11 +986,32 @@ export default function GrowLab({
   const ty = frame.ty || camTy;
   const toScreen = (id: string) => ({ x: m(id).x * k + tx, y: m(id).y * k + ty });
   const worldToScreen = (p: { x: number; y: number }) => ({ x: p.x * k + tx, y: p.y * k + ty });
+  const workMarks = people.flatMap((person) => {
+    const items = sampleWork[person.id] ?? [];
+    if (!items.length) return [];
+    const seat = m(person.id);
+    const parent = person.parentId ? m(person.parentId) : null;
+    const axis = parent ? Math.atan2(seat.y - parent.y, seat.x - parent.x) : -Math.PI / 2;
+    const points = workGridPoints(items.length, seat, axis);
+    return items.map((item, index) => ({ person, item, axis, seat, point: points[index]! }));
+  });
+  const workDetail = workMarks.find((mark) => mark.item.id === (hoveredWorkId ?? selectedWorkId));
+  const activeRing = hoveredRing ?? selectedRing;
+  const ringNode = activeRing ? byId[activeRing.nodeId] : null;
+  const ringProgress = activeRing ? sampleRings[activeRing.nodeId] : null;
+  const summaryNode = hoveredNodeId ? byId[hoveredNodeId] : null;
+  const summaryProgress = summaryNode?.kind === 'team' && summaryNode.parentId === null
+    ? sampleRings[summaryNode.id] : null;
+  const ringTipPoint = activeRing
+    ? { x: activeRing.x, y: activeRing.y }
+    : summaryNode ? toScreen(summaryNode.id) : null;
 
   const commitCamera = useCallback((next: Camera) => {
     manualCameraRef.current = next;
     setManualCamera(next);
     setDraftFocusId(null);
+    setHoveredRing(null);
+    setSelectedRing(null);
   }, []);
 
   const zoomAt = useCallback((scale: number, x: number, y: number) => {
@@ -997,6 +1056,8 @@ export default function GrowLab({
     setMenu(null);
     setMoveAsk(null);
     setSplitAsk(null);
+    setSelectedWorkId(null);
+    setSelectedRing(null);
   }, []);
 
   const startFirstPerson = useCallback(() => {
@@ -1796,12 +1857,18 @@ export default function GrowLab({
             {/* orbits — every team has one, and it's how you add to it */}
             {teams.map((t) => {
               const R = layout.ring[t.id];
+              const humanR = layout.personRing[t.id];
               const mo = m(t.id);
               if (!R || mo.a < 0.05) return null;
               const live =
                 hover?.parentId === t.id || menu?.parentId === t.id || landing?.parentId === t.id;
               return (
                 <g key={`ring-${t.id}`}>
+                  {humanR && humanR < R - 1 && (layout.kids[t.id] ?? []).some((c) => c.kind === 'person') && (
+                    <circle r={humanR} cx={mo.x} cy={mo.y} fill="none" stroke={C.seatLink}
+                      strokeWidth={1.2 / k} strokeDasharray={`${3 / k} ${10 / k}`}
+                      opacity={mo.a * reveal.people * 0.52} style={{ pointerEvents: 'none' }} />
+                  )}
                   <circle
                     r={R}
                     cx={mo.x}
@@ -1915,7 +1982,7 @@ export default function GrowLab({
             {reveal.torus > 0.01 &&
               teams.map((t) => {
                 const crowd = (layout.kids[t.id] ?? []).filter((c) => c.kind === 'person');
-                const R = layout.ring[t.id];
+                const R = layout.personRing[t.id];
                 if (!crowd.length || !R) return null;
                 const mo = m(t.id);
                 return (
@@ -1933,6 +2000,35 @@ export default function GrowLab({
                   />
                 );
               })}
+
+            {/* Work is a half-torus facing away from the parent, never more
+                than 180 degrees. It resolves into the shipped two-column dot
+                grid as the camera approaches the person. */}
+            {reveal.workCapsule > 0.01 && people.map((person) => {
+              const items = sampleWork[person.id] ?? [];
+              if (!items.length) return null;
+              const seat = m(person.id);
+              const parent = person.parentId ? m(person.parentId) : null;
+              const axis = parent ? Math.atan2(seat.y - parent.y, seat.x - parent.x) : -Math.PI / 2;
+              const radius = PERSON_R + 11.5;
+              const start = axis - Math.PI / 2;
+              const end = axis + Math.PI / 2;
+              let cursor = start;
+              return <g key={`work-arc-${person.id}`} fill="none" strokeLinecap="round"
+                opacity={reveal.workCapsule * seat.a} style={{ pointerEvents: 'none' }}>
+                <path d={workArcPath(seat.x, seat.y, radius, start, end)} stroke={C.track} strokeWidth={5.6} />
+                {WORK_ORDER.map((status) => {
+                  const count = items.filter((item) => item.status === status).length;
+                  if (!count) return null;
+                  const sweep = Math.PI * count / items.length;
+                  const from = cursor + 0.035;
+                  const to = cursor + sweep - 0.035;
+                  cursor += sweep;
+                  return <path key={status} d={workArcPath(seat.x, seat.y, radius, from, to)}
+                    stroke={WORK_STATUS_FILL[status]} strokeWidth={5.6} />;
+                })}
+              </g>;
+            })}
 
             {nodes.map((n) => {
               const mo = m(n.id);
@@ -1955,9 +2051,36 @@ export default function GrowLab({
                   reveal={reveal}
                   progress={sampleRings[n.id]}
                   onHover={(active) => setHoveredNodeId(active ? n.id : null)}
+                  onRingHover={(key, x, y) => setHoveredRing(key ? { nodeId: n.id, key, x, y } : null)}
+                  onRingSelect={(key, x, y) => setSelectedRing((current) =>
+                    current?.nodeId === n.id && current.key === key ? null : { nodeId: n.id, key, x, y })}
                   onGrab={(cx, cy) => beginDrag(n.id, cx, cy)}
                 />
               );
+            })}
+
+            {reveal.workDots > 0.01 && workMarks.map(({ person, item, seat, point }) => {
+              const active = hoveredWorkId === item.id || selectedWorkId === item.id;
+              return <circle key={item.id} cx={point.x} cy={point.y}
+                r={WORK_RADIUS * (active ? 1.55 : 1)} fill={WORK_STATUS_FILL[item.status]}
+                stroke={SURFACE} strokeWidth={active ? 1.1 : 0.55}
+                opacity={reveal.workDots * seat.a}
+                role="button" tabIndex={reveal.workDots > 0.4 ? 0 : -1}
+                aria-label={`${item.title}, ${item.status.replace('_', ' ')}, ${person.name ?? 'person'}`}
+                style={{ cursor: 'pointer', pointerEvents: reveal.workDots > 0.4 ? 'auto' : 'none' }}
+                onMouseEnter={() => setHoveredWorkId(item.id)}
+                onMouseLeave={() => setHoveredWorkId(null)}
+                onFocus={() => setHoveredWorkId(item.id)}
+                onBlur={() => setHoveredWorkId(null)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedWorkId((id) => id === item.id ? null : item.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  setSelectedWorkId((id) => id === item.id ? null : item.id);
+                }} />;
             })}
 
             {frame.pos.__solo && (
@@ -2451,6 +2574,44 @@ export default function GrowLab({
         </div>
       )}
 
+      {!openNodeObj && ringTipPoint && ((activeRing && ringNode && ringProgress) || (!activeRing && summaryNode && summaryProgress)) && (
+        <div role="status" style={{ position: 'absolute',
+          left: Math.max(12, Math.min(size.w - 258, ringTipPoint.x + 18)),
+          top: Math.max(96, Math.min(size.h - 142, ringTipPoint.y + 18)),
+          width: 236, padding: '11px 13px', borderRadius: 13,
+          background: SURFACE, border: `1px solid ${LINE}`, pointerEvents: 'none',
+          boxShadow: '0 8px 24px rgba(86,103,179,.16)', fontSize: 12, color: INK_SOFT }}>
+          {activeRing && ringNode && ringProgress ? <>
+            <div style={{ color: INK, fontWeight: 700, fontSize: 13 }}>
+              {RING_LABEL[activeRing.key]} · {Math.round(ringProgress[activeRing.key] * 100)}%
+            </div>
+            <div style={{ marginTop: 3 }}>{ringNode.name ?? 'This team'}</div>
+            <div style={{ marginTop: 5 }}>
+              {ringProgress.alerts?.[activeRing.key]?.description ?? RING_DESCRIPTION[activeRing.key]}
+            </div>
+          </> : summaryNode && summaryProgress ? <>
+            <div style={{ color: INK, fontWeight: 700, fontSize: 13 }}>
+              {summaryNode.name ?? 'This company'} · ring summary
+            </div>
+            {RING_ORDER.map((key) => <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%',
+                background: studyRingColor(key, summaryProgress[key], summaryProgress.alerts?.[key]) }} />
+              <span style={{ flex: 1 }}>{RING_LABEL[key]}</span>
+              <span style={{ color: INK, fontWeight: 650 }}>{Math.round(summaryProgress[key] * 100)}%</span>
+            </div>)}
+          </> : null}
+        </div>
+      )}
+
+      {workDetail && reveal.workDots > 0.4 && (
+        <div aria-live="polite" style={{ position: 'absolute', bottom: 98, right: 20, maxWidth: 270,
+          padding: '10px 14px', borderRadius: 14, background: SURFACE, border: `1px solid ${LINE}`,
+          boxShadow: '0 8px 24px rgba(86,103,179,.16)', fontSize: 12, color: INK_SOFT }}>
+          <div style={{ color: INK, fontWeight: 650, fontSize: 13 }}>{workDetail.item.title}</div>
+          <div style={{ marginTop: 3 }}>{workDetail.person.name} · {workDetail.item.status.replace('_', ' ')}</div>
+        </div>
+      )}
+
       <div
         style={{
           position: 'absolute',
@@ -2555,6 +2716,8 @@ function NodeShape({
   reveal,
   progress,
   onHover,
+  onRingHover,
+  onRingSelect,
   onGrab,
 }: {
   node: Node;
@@ -2569,8 +2732,10 @@ function NodeShape({
   radius: number;
   zoom: number;
   reveal: Reveal;
-  progress?: { delivery: number; sprint: number; health: number };
+  progress?: StudyRingProgress;
   onHover: (active: boolean) => void;
+  onRingHover: (key: StudyRingKey | null, x: number, y: number) => void;
+  onRingSelect: (key: StudyRingKey, x: number, y: number) => void;
   onGrab: (clientX: number, clientY: number) => void;
 }) {
   const isTeam = node.kind === 'team';
@@ -2605,7 +2770,7 @@ function NodeShape({
   const ringStroke = ringWidthPx / live;
   const px = (n: number) => n / live;
   // Three gauges around a two-pixel dot are a smudge, not three gauges.
-  const ringLegible = smoothstep(5, 11, screenRadius) * unitRingReveal(depth, zoom);
+  const ringLegible = smoothstep(5, 11, screenRadius) * studyRingReveal(depth, zoom);
   // While two nodes are being pushed together the gauges get out of the way,
   // so the thing you can actually see is the merge (Greg, 2026-09-20).
   const ringShow = progress && !joining ? ringLegible : 0;
@@ -2650,15 +2815,40 @@ function NodeShape({
         opacity={unnamed ? 0.55 : 1}
         style={{ filter: 'drop-shadow(0 5px 8px rgba(86,103,179,.2))' }}
       />
-      {ringVisible && (['delivery', 'sprint', 'health'] as const).map((key, index) => {
+      {ringVisible && RING_ORDER.map((key, index) => {
         const value = Math.max(0, Math.min(1, progress[key]));
         const radius = r + (ringInsetPx + ringWidthPx / 2 + index * (ringWidthPx + ringGapPx)) / live;
         const circumference = 2 * Math.PI * radius;
-        const colour = key === 'delivery' ? C.delivery : key === 'sprint' ? C.sprint : healthColor(value);
+        const alert = progress.alerts?.[key];
+        const colour = studyRingColor(key, value, alert);
         return <g key={key} transform="rotate(-90)" opacity={ringShow}>
           <circle r={radius} fill="none" stroke={C.track} strokeWidth={ringStroke} opacity={0.7} />
           <circle r={radius} fill="none" stroke={colour} strokeWidth={ringStroke} strokeLinecap="round"
             strokeDasharray={`${circumference * value} ${circumference}`} opacity={0.93} />
+          <circle r={radius} fill="none" stroke="transparent" strokeWidth={ringStroke + px(8)}
+            pointerEvents={ringShow > 0.5 ? 'stroke' : 'none'}
+            role="button" tabIndex={ringShow > 0.5 ? 0 : -1}
+            aria-label={`${RING_LABEL[key]}, ${Math.round(value * 100)}%${alert ? `, ${alert.description}` : ''}`}
+            style={{ cursor: 'help' }}
+            onMouseEnter={(event) => onRingHover(key, event.clientX, event.clientY)}
+            onMouseLeave={() => onRingHover(null, 0, 0)}
+            onFocus={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              onRingHover(key, box.left + box.width / 2, box.top + box.height / 2);
+            }}
+            onBlur={() => onRingHover(null, 0, 0)}
+            onMouseDown={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRingSelect(key, event.clientX, event.clientY);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              const box = event.currentTarget.getBoundingClientRect();
+              onRingSelect(key, box.left + box.width / 2, box.top + box.height / 2);
+            }} />
         </g>;
       })}
       {missingDetails && <circle cx={r * 0.72} cy={-r * 0.72} r={6} fill={ALERT} stroke={SURFACE} strokeWidth={2} />}

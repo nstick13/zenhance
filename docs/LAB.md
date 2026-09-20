@@ -249,7 +249,10 @@ two can't drift:
   hairline, so a gauge gets chunkier as its node does. The whole stack is
   measured in the node's own drawn space, which is what stops a node growing
   out through its own rings as you zoom. They appear only where a metric has
-  source data, and only once the node is big enough to carry them.
+  source data, and only once the node is big enough to carry them. The study's
+  depth cadence is intentionally independent of `/org`: child-level gauges
+  centre around 0.4×, the next level around 0.6×, then 0.8×. This leaves a
+  perceptible interval between each reveal without moving the human zoom bands.
 - ⚠️ **Every decoration on a node is a screen width, never a world width** —
   the outline, the pulse halo, the selection ring. A world-unit outline fattens
   on screen as you zoom in until it runs straight through the gauges outside
@@ -267,13 +270,24 @@ two can't drift:
   until you ask.
 - **The crowd stand-in is a pale blue-grey**, not the seat colour. It stands in
   for people; it should not out-shout them.
-- **People are the exception to the spacing.** A ring carrying nothing but
-  humans sits at *half* the distance and packs them half as loosely; the moment
-  a team stands on that ring it is a structural rung again and takes the full
-  distance. Greg, 2026-09-20: *"humans now can be drawn at half the distance
-  from their parent node … that should tighten things up a bit at that level."*
-  It also brings the whole map in enough that the default view clears the
-  gauges' legibility threshold, which the doubled spacing had pushed it below.
+- **People are the exception to the spacing.** They use their own orbit even
+  when their parent also has child teams on a wider structural orbit. The
+  first close-orbit pass let avatars clash with team data rings, so Greg asked
+  for another 50% distance from the parent. The structural orbit stays wider.
+- **Work follows people, not empty seats.** The established fixture supplies
+  invented work for its invented people; a newly created person has none until
+  work is actually added. Between ~1.75× and ~3.5×, a status-coloured
+  **half-torus** faces away from the parent, its arc capped at 180°. Greg
+  preferred this study shape over `/org`'s long board capsule. At ~3.4–4× it resolves into
+  the same two-column radial dot grid; clicking or tapping a dot shows its
+  title and status. The blank growth study never manufactures work.
+- **The three data rings have distinct roles:** inner delivery blue, middle
+  sprint magenta, outer team health cyan. Each healthy hue smoothly deepens
+  from 50% strength at zero to full strength at 100%. Orange and bright red
+  are reserved for explicit near-due/issue and major-problem states, never
+  inferred from percentage. The established fixture includes invented examples
+  on Sales, Fulfilment and Service Operations. Hover or tap a ring for its
+  metric and short explanation; hovering a family root summarises all three.
 - **Avatars are drawn to fit their seat.** The illustration reaches ~12.5 units
   from its centre and was spilling out of a 9.5 circle.
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
