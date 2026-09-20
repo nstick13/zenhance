@@ -18,7 +18,7 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
-| `grow` / `grow-established` | **active** | The blank-canvas start and a 45-person invented established-company variant now share `GrowLab.tsx`. Both support wheel/pinch zoom, pan and Fit. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
+| `grow` / `grow-established` / `grow-large` | **active** | The blank-canvas start, 45-person company, and 1,000-person stress fixture share `GrowLab.tsx`. All support wheel/pinch zoom, pan and Fit; the large study also has branch jumps. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
 | `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Value streams→Teams→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
 | `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
 | `orbital-focus` | **archived** | Graduated to the production `OrbitalMap` (2026-09-15). Carried forward: focus-relative fixed rings; double-click/double-tap and card focus; progressive whole-company marks; dimmed context with a violet route home; nested focus; and focus-aware dragging with meaningful snap modes. The lab's aggregate summaries were deliberately dropped because every real unit remains visible. |
@@ -53,6 +53,35 @@ but paints human avatars and explicit sample progress rings. New nodes never
 receive invented metrics. Wheel/pinch zoom, background pan, a slider and Fit
 let the creation study be inspected as a whole map. This does not make the
 study persistent or grant `/org` the same creation controls yet.
+
+**Large-scale stress study, 2026-09-20:** `/lab/grow-large` (also `/grow-large`)
+uses 1,000 invented colleagues in 140 teams. One connected branch is 30
+reporting levels deep, six others have uneven shorter depths and side teams,
+and a separate ten-level chain is not connected to the main centre. Some teams
+have deliberately missing purposes; only a subset has invented progress rings
+or work items. The Explore selector jumps to representative branches at useful
+zoom levels, while Fit shows the whole forest. No data is saved.
+
+The fixture found two layout failures that were invisible at 45 people: using
+the *entire descendant envelope* to position the next child orbit doubled the
+world-space reach on every nested level (roughly a trillion units at 30
+levels), and multiple unpinned roots all started at the same datum. Child
+orbits now clear the child's immediate disc while the family boundary still
+measures the placed descendants. Unpinned independent families start apart.
+The first spacing fix crowded the 45-person study. Structural child orbits now
+have 48% more room in the normal grow studies and 65% more in the large study;
+drawn node circles are 20% smaller without moving their orbit positions. The
+large Fit view suppresses circles, guides, abstractions and gauges into a
+dot-and-link spider web, then reveals them smoothly as zoom increases.
+
+In both established studies, progress gauges belong to the current reporting
+level and its immediate neighbours. Selecting a node or Explore stop makes
+that a *local* parent/node/children neighbourhood. Missing sample data still
+produces no gauge. Large-study focus fades unrelated branches and people
+abstractions while retaining a violet route back toward the centre; clicking
+the paper releases focus without moving the camera. Deep nesting can still
+wind the ancestry path through other geometry: this is not yet a branch-local
+projection or a solved large-company layout.
 
 ### The idea being tested
 Greg's framing: *"the user starts with almost nothing."* One breathing `+` in the

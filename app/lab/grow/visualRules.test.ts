@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { personOrbitRadius, studyRingColor, studyRingReveal, STUDY_RING_HUES } from './visualRules';
+import { focusedStudyRingReveal, personOrbitRadius, studyFocusDepth, studyRingColor,
+  studyRingReveal, STUDY_RING_HUES } from './visualRules';
 
 describe('grow study visual cadence', () => {
   it('stages successive team gauges around .4x, .6x and .8x', () => {
@@ -7,6 +8,16 @@ describe('grow study visual cadence', () => {
     expect(studyRingReveal(2, 0.5)).toBe(0);
     expect(studyRingReveal(2, 0.59)).toBeGreaterThan(0.4);
     expect(studyRingReveal(3, 0.8)).toBeGreaterThan(0.4);
+  });
+
+  it('shows gauges only at the focused level and its neighbours, even thirty levels down', () => {
+    expect(focusedStudyRingReveal(15, 15, 1.5, true)).toBe(1);
+    expect(focusedStudyRingReveal(14, 15, 1.5, true)).toBeCloseTo(0.72);
+    expect(focusedStudyRingReveal(16, 15, 1.5, true)).toBeCloseTo(0.72);
+    expect(focusedStudyRingReveal(13, 15, 1.5, true)).toBe(0);
+    expect(focusedStudyRingReveal(0, 0, 0.3, true)).toBe(0);
+    expect(studyFocusDepth(0.7)).toBe(0);
+    expect(studyFocusDepth(1.3)).toBe(1);
   });
 
   it('adds 50% breathing room to the close seat orbit without losing crowd packing', () => {

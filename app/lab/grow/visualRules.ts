@@ -39,6 +39,26 @@ export function studyRingReveal(depth: number, zoom: number): number {
   return smoothstep(start, start + 0.18, zoom);
 }
 
+/** In an established map, a gauge belongs to the level being inspected and
+ * its immediate neighbours. Absolute depth must not postpone a level-30
+ * gauge until an impossible zoom value. */
+export function focusedStudyRingReveal(
+  depth: number, focusDepth: number, zoom: number, large: boolean,
+): number {
+  const distance = Math.abs(depth - focusDepth);
+  if (distance > 1) return 0;
+  const reveal = large ? smoothstep(0.48, 0.78, zoom) : smoothstep(0.32, 0.6, zoom);
+  return reveal * (distance === 0 ? 1 : 0.72);
+}
+
+/** Without a selected node, zoom shifts attention through the first few
+ * reporting levels. Deeper levels are reached by focusing a branch. */
+export function studyFocusDepth(zoom: number): number {
+  if (zoom < 1.05) return 0;
+  if (zoom < 1.65) return 1;
+  return 2 + Math.floor(Math.max(0, zoom - 1.65) / 0.65);
+}
+
 /** People use a nearer orbit even when their parent also has child teams.
  * Pull back 50% from the last study's close orbit to clear the data rings. */
 export function personOrbitRadius(parentRadius: number, count: number, gap: number): number {

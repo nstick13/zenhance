@@ -33,7 +33,7 @@ import {
 } from '@/lib/orbital/lod';
 import { C, WORK_STATUS_FILL } from '@/components/viz/orbital/theme';
 import {
-  personOrbitRadius, studyRingColor, studyRingReveal,
+  focusedStudyRingReveal, personOrbitRadius, studyFocusDepth, studyRingColor, studyRingReveal,
   type StudyRingKey, type StudyRingProgress,
 } from './visualRules';
 
@@ -82,6 +82,10 @@ const PAD = 90;
 const ISLAND_GAP = 110;
 /** Width of the invisible band around a ring that answers the pointer. */
 const RING_BAND = 30;
+/** Circles are a fifth smaller than their layout footprints. Their orbit and
+ * hit geometry remain stable, so this creates air without moving a child. */
+const NODE_VISUAL_SCALE = 0.8;
+type StudyScale = 'standard' | 'large';
 
 /* --- sample data (invented — house rule: no real people in fixtures) ----- */
 const SAMPLE_NAMES = ['Ana Whitfield', 'Marcus Reyn', 'Priya Solanki', 'Tom Okafor', 'Lena Brandt', 'Sam Ellery'];
@@ -212,6 +216,7 @@ export function buildLayout(
   nodes: Node[],
   pinned: Record<string, { x: number; y: number }>,
   angleHints: Record<string, number> = {},
+  scaleMode: StudyScale = 'standard',
 ): Layout {
   const byId: Record<string, Node> = {};
   const kids: Record<string, Node[]> = {};
@@ -278,13 +283,19 @@ export function buildLayout(
       ring[id] = near;
       return (reach[id] = near + SEAT_RADIUS);
     }
-    const widestTeam = Math.max(...teamChildren.map((c) => measured.get(c.id)!));
-    // Child teams still occupy the roomy structural orbit. A lead/person at
-    // the same level no longer forces their own seat out onto that orbit.
+    const widestTeam = Math.max(...teamChildren.map((c) => radius[c.id]!));
+    // A child stands on this orbit with its own disc, not with the circular
+    // envelope of all its descendants. Using that envelope doubles the reach
+    // at every nested level: a 30-level chain grew to nearly a trillion world
+    // units, despite adjacent reporting levels only needing a local gap.
     const clearance = r + widestTeam + GAP;
-    const circumference = teamChildren.length * (2 * widestTeam + PAD);
-    ring[id] = Math.max(clearance, circumference / (2 * Math.PI));
-    return (reach[id] = Math.max(ring[id]! + widestTeam, near + SEAT_RADIUS));
+    const circumference = teamChildren.reduce((sum, c) => sum + 2 * radius[c.id]! + PAD, 0);
+    // The smaller studies need generous local space too. The large fixture
+    // gets more, but never returns to descendant-envelope multiplication.
+    const orbitScale = scaleMode === 'large' ? 1.65 : 1.48;
+    ring[id] = Math.max(clearance, circumference / (2 * Math.PI)) * orbitScale;
+    const furthestDescendant = Math.max(...teamChildren.map((c) => measured.get(c.id)!));
+    return (reach[id] = Math.max(ring[id]! + furthestDescendant, near + SEAT_RADIUS));
   };
 
   const pos: Record<string, { x: number; y: number }> = {};
@@ -327,9 +338,40 @@ export function buildLayout(
   for (const root of roots) {
     rung(root.id, 0);
     measure(root.id);
+  }
+  // A supplied forest must not paint all its centres at the datum. Fresh
+  // islands created through the UI are pinned already; this gives fixture
+  // roots (and imported forests later) the same initial breathing room.
+  for (const root of roots) {
     // Facing "up" means the first two children land left and right of the
     // centre — the "alongside" reading the first team is built around.
     place(root.id, 0, 0, -Math.PI / 2);
+  }
+  // The recursive reach above is a safe circular envelope, but on a ragged
+  // 30-level branch it is much larger than the *placed* family. Measure its
+  // actual occupied extent before arranging independent centres. This also
+  // gives the visible boundary a useful size instead of a giant empty halo.
+  const familyIds = (id: string): string[] => [id, ...(kids[id] ?? []).flatMap((child) => familyIds(child.id))];
+  const families = roots.map((root) => {
+    const ids = familyIds(root.id);
+    const centre = pos[root.id]!;
+    const actualReach = Math.max(...ids.map((id) => {
+      const point = pos[id]!;
+      return Math.hypot(point.x - centre.x, point.y - centre.y) +
+        Math.max(radius[id] ?? 0, ring[id] ?? 0);
+    }));
+    reach[root.id] = actualReach;
+    return { root, ids, actualReach };
+  });
+  if (families.length > 1 && families.every(({ root }) => !pinned[root.id])) {
+    const totalWidth = families.reduce((sum, family) => sum + 2 * family.actualReach, 0) +
+      (families.length - 1) * ISLAND_GAP;
+    let left = -totalWidth / 2;
+    for (const family of families) {
+      const offset = left + family.actualReach;
+      for (const id of family.ids) pos[id] = { x: pos[id]!.x + offset, y: pos[id]!.y };
+      left += 2 * family.actualReach + ISLAND_GAP;
+    }
   }
 
   return { pos, ring, personRing, reach, depth, radius, roots, kids };
@@ -690,11 +732,17 @@ export default function GrowLab({
   sampleRings = {},
   sampleWork = {},
   studyTitle = 'The first team',
+  focusStops = [],
+  scaleMode = 'standard',
+  focusedRings = false,
 }: {
   initialNodes?: Node[];
   sampleRings?: Record<string, StudyRingProgress>;
   sampleWork?: Record<string, SampleWorkItem[]>;
   studyTitle?: string;
+  focusStops?: { id: string; label: string; zoom: number }[];
+  scaleMode?: StudyScale;
+  focusedRings?: boolean;
 }) {
   const [nodes, setNodes] = useState<Node[]>(() => initialNodes.map((node) => ({ ...node })));
   const [pinned, setPinned] = useState<Record<string, { x: number; y: number }>>({});
@@ -705,6 +753,7 @@ export default function GrowLab({
   const [stepIx, setStepIx] = useState(0);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [manualCamera, setManualCamera] = useState<Camera | null>(null);
+  const [selectedStudyStop, setSelectedStudyStop] = useState<string | null>(null);
   const [reduced, setReduced] = useState(false);
 
   /** Where the pointer is on a ring, and whether the menu has been opened there. */
@@ -765,7 +814,8 @@ export default function GrowLab({
   }, []);
 
   /* --- derived ----------------------------------------------------------- */
-  const layout = useMemo(() => buildLayout(nodes, pinned, angleHints), [nodes, pinned, angleHints]);
+  const layout = useMemo(() => buildLayout(nodes, pinned, angleHints, scaleMode),
+    [nodes, pinned, angleHints, scaleMode]);
 
   /** How big a node really is — its depth decides it (Greg, 2026-09-20). */
   const radiusOf = useCallback(
@@ -789,6 +839,34 @@ export default function GrowLab({
     return out;
   }, [layout]);
   const byId = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
+  const activeFocusId = openId ?? selectedStudyStop;
+  const focusDistances = useMemo(() => {
+    if (!activeFocusId) return {} as Record<string, number>;
+    const distances: Record<string, number> = { [activeFocusId]: 0 };
+    let frontier = [activeFocusId];
+    for (let distance = 1; distance <= 2; distance++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        const neighbours = [byId[id]?.parentId, ...(layout.kids[id] ?? []).map((child) => child.id)];
+        for (const neighbour of neighbours) {
+          if (!neighbour || distances[neighbour] !== undefined) continue;
+          distances[neighbour] = distance;
+          next.push(neighbour);
+        }
+      }
+      frontier = next;
+    }
+    return distances;
+  }, [activeFocusId, byId, layout]);
+  const focusPath = useMemo(() => {
+    const path = new Set<string>();
+    let current = activeFocusId ? byId[activeFocusId] : null;
+    while (current && !path.has(current.id)) {
+      path.add(current.id);
+      current = current.parentId ? byId[current.parentId] : null;
+    }
+    return path;
+  }, [activeFocusId, byId]);
   const rootOf = useCallback((id: string): string | null => {
     let current = byId[id];
     const seen = new Set<string>();
@@ -1013,10 +1091,30 @@ export default function GrowLab({
 
   const m = (id: string) => frame.pos[id] ?? { x: 0, y: 0, a: 0 };
   const k = frame.k || camera.k;
+  const overviewDetail = scaleMode === 'large' ? smoothstep(0.35, 0.72, k) : 1;
+  const focusDepth = activeFocusId ? depthOf[activeFocusId] ?? 0 : studyFocusDepth(k);
+  const focusDim = (id: string) => {
+    if (scaleMode !== 'large' || !activeFocusId) return 1;
+    const distance = focusDistances[id];
+    if (distance === 0 || distance === 1) return 1;
+    if (distance === 2) return 0.38;
+    return focusPath.has(id) ? 0.48 : 0.12;
+  };
+  const ringRevealFor = (node: Node) => {
+    const depth = depthOf[node.id] ?? 0;
+    if (!focusedRings) return studyRingReveal(depth, k);
+    if (activeFocusId && (focusDistances[node.id] === undefined || focusDistances[node.id] > 1)) return 0;
+    return focusedStudyRingReveal(depth, focusDepth, k, scaleMode === 'large');
+  };
   const tx = frame.tx || camera.tx;
   const ty = frame.ty || camTy;
   const toScreen = (id: string) => ({ x: m(id).x * k + tx, y: m(id).y * k + ty });
   const worldToScreen = (p: { x: number; y: number }) => ({ x: p.x * k + tx, y: p.y * k + ty });
+  const onScreen = (point: { x: number; y: number }, margin = 120) => {
+    const x = point.x * k + tx;
+    const y = point.y * k + ty;
+    return x >= -margin && x <= size.w + margin && y >= -margin && y <= size.h + margin;
+  };
   const workMarks = people.flatMap((person) => {
     const items = sampleWork[person.id] ?? [];
     if (!items.length) return [];
@@ -1056,7 +1154,18 @@ export default function GrowLab({
     manualCameraRef.current = null;
     setManualCamera(null);
     setDraftFocusId(null);
+    setSelectedStudyStop(null);
   }, []);
+
+  const focusStudyStop = useCallback((id: string) => {
+    const stop = focusStops.find((item) => item.id === id);
+    const point = layout.pos[id];
+    if (!stop || !point) return;
+    const zoom = Math.max(minZoom, Math.min(4, stop.zoom));
+    commitCamera({ k: zoom, tx: size.w / 2 - point.x * zoom,
+      ty: size.h / 2 - point.y * zoom });
+    setSelectedStudyStop(id);
+  }, [focusStops, layout, minZoom, size, commitCamera]);
 
   const beginPaperPan = useCallback((x: number, y: number) => {
     const start = { x, y, cam: { ...(manualCameraRef.current ?? cam.current) } };
@@ -1089,6 +1198,7 @@ export default function GrowLab({
     setSplitAsk(null);
     setSelectedWorkId(null);
     setSelectedRing(null);
+    setSelectedStudyStop(null);
   }, []);
 
   const startFirstPerson = useCallback(() => {
@@ -1262,6 +1372,7 @@ export default function GrowLab({
     setDraftFocusId(null);
     manualCameraRef.current = null;
     setManualCamera(null);
+    setSelectedStudyStop(null);
     setMenu(null);
     setHover(null);
     setDrag(null);
@@ -1803,9 +1914,11 @@ export default function GrowLab({
       const missing = missingLabel(n);
       const count = headcount[n.id] ?? 0;
       const minimumScreenRadius = n.kind === 'team' ? ((depthOf[n.id] ?? 0) === 0 ? 20 : (depthOf[n.id] ?? 0) === 1 ? 14 : 9) : 3;
-      const screenRadius = Math.max(radiusOf(n.id) * k, minimumScreenRadius);
+      const screenRadius = n.kind === 'team' && overviewDetail < 0.02
+        ? ((depthOf[n.id] ?? 0) === 0 ? 5 : 3.2)
+        : Math.max(radiusOf(n.id) * k, minimumScreenRadius) * NODE_VISUAL_SCALE;
       const hasVisibleRings = n.kind === 'team' && sampleRings[n.id] &&
-        ((depthOf[n.id] ?? 0) === 0 || k > ((depthOf[n.id] ?? 0) === 1 ? 0.12 : 0.28));
+        ringRevealFor(n) * overviewDetail > 0.2;
       return {
         id: n.id,
         node: n,
@@ -1928,7 +2041,8 @@ export default function GrowLab({
                       stroke={landingHere ? TEAM_HUE : '#9aa9de'}
                       strokeWidth={(landingHere ? 2.6 : 1.7) / k}
                       strokeDasharray={`${4 / k} ${9 / k}`}
-                      opacity={landingHere ? 0.9 : 0.75}
+                      opacity={(landingHere ? 0.9 : 0.75) * overviewDetail *
+                        (activeFocusId && scaleMode === 'large' ? 0.28 : 1)}
                     />
                     {helperRootId === root.id && [0.25, 0.5, 0.75].map((fraction) => (
                       <circle
@@ -1940,7 +2054,7 @@ export default function GrowLab({
                         stroke="#aebcef"
                         strokeWidth={1 / k}
                         strokeDasharray={`${3 / k} ${11 / k}`}
-                        opacity={0.5}
+                        opacity={0.5 * overviewDetail * (activeFocusId && scaleMode === 'large' ? 0.28 : 1)}
                       />
                     ))}
                   </g>
@@ -1969,11 +2083,11 @@ export default function GrowLab({
                     <circle r={humanR} cx={mo.x} cy={mo.y} fill="none"
                       stroke={innerLive ? TEAM_HUE : C.seatLink}
                       strokeWidth={(innerLive ? 2.2 : 1.2) / k} strokeDasharray={`${3 / k} ${10 / k}`}
-                      opacity={mo.a * reveal.people * (innerLive ? 0.92 : 0.55)}
+                      opacity={mo.a * reveal.people * (innerLive ? 0.92 : 0.55) * overviewDetail * focusDim(t.id)}
                       style={{ pointerEvents: 'none' }} />
                     <circle r={humanR} cx={mo.x} cy={mo.y} fill="none" stroke="transparent"
                       strokeWidth={RING_BAND / k}
-                      style={{ cursor: 'pointer', pointerEvents: reveal.people > 0.35 ? 'stroke' : 'none' }}
+                      style={{ cursor: 'pointer', pointerEvents: overviewDetail > 0.35 && reveal.people > 0.35 ? 'stroke' : 'none' }}
                       onMouseMove={(e) => { if (!menu && !drag) setHover(targetOn('people', e)); }}
                       onMouseLeave={() => { if (!menu) setHover((current) =>
                         current?.parentId === t.id && current.orbit === 'people' ? null : current); }}
@@ -1993,7 +2107,7 @@ export default function GrowLab({
                     stroke={outerLive ? TEAM_HUE : LINE}
                     strokeWidth={(outerLive ? 2 : 1.5) / k}
                     strokeDasharray={`${4 / k} ${9 / k}`}
-                    opacity={mo.a * (outerLive ? 0.75 : 0.9)}
+                    opacity={mo.a * (outerLive ? 0.75 : 0.9) * overviewDetail * focusDim(t.id)}
                     style={{ transition: 'stroke 160ms ease' }}
                   />
                   {/* the band that answers the pointer — invisible, generous */}
@@ -2004,7 +2118,7 @@ export default function GrowLab({
                     fill="none"
                     stroke="transparent"
                     strokeWidth={RING_BAND / k}
-                    style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
+                    style={{ cursor: 'pointer', pointerEvents: overviewDetail > 0.35 ? 'stroke' : 'none' }}
                     // Mouse events, not pointer events: they fire everywhere,
                     // including the older browsers this has to run on.
                     onMouseMove={(e) => {
@@ -2078,6 +2192,8 @@ export default function GrowLab({
               const alpha = Math.min(m(n.id).a, m(parentId).a) * (toPerson ? reveal.people : 0.85);
               if (alpha < 0.02) return null;
               const proposed = held && !!landing;
+              const onPath = !!activeFocusId && focusPath.has(n.id) && focusPath.has(parentId);
+              const nearFocusPath = onPath && (focusDistances[n.id] ?? Infinity) <= 2;
               return (
                 <line
                   key={`link-${n.id}`}
@@ -2085,11 +2201,13 @@ export default function GrowLab({
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke={proposed ? TEAM_HUE : C.link}
-                  strokeWidth={(proposed ? 3 : toPerson ? 1.4 : 2.5) / Math.max(k, 0.05)}
+                  stroke={proposed || onPath ? TEAM_HUE : C.link}
+                  strokeWidth={(proposed ? 3 : nearFocusPath ? 2.4 : onPath ? 1.1 :
+                    toPerson ? 1.4 : 1.1 + 1.4 * overviewDetail) / Math.max(k, 0.05)}
                   strokeLinecap="round"
                   strokeDasharray={proposed ? `${7 / k} ${6 / k}` : undefined}
-                  opacity={proposed ? 0.9 : alpha}
+                  opacity={proposed ? 0.9 : nearFocusPath ? alpha * 0.78 : onPath ? alpha * 0.22 :
+                    alpha * (0.52 + 0.48 * overviewDetail) * focusDim(n.id)}
                 />
               );
             })}
@@ -2100,7 +2218,8 @@ export default function GrowLab({
               teams.map((t) => {
                 const crowd = (layout.kids[t.id] ?? []).filter((c) => c.kind === 'person');
                 const R = layout.personRing[t.id];
-                if (!crowd.length || !R) return null;
+                if (!crowd.length || !R || (scaleMode === 'large' && activeFocusId &&
+                  (focusDistances[t.id] === undefined || focusDistances[t.id] > 1))) return null;
                 const mo = m(t.id);
                 return (
                   <circle
@@ -2112,8 +2231,9 @@ export default function GrowLab({
                     // A stand-in should sit back, not compete with the people
                     // it is standing in for (Greg, 2026-09-20).
                     stroke="#d6def0"
-                    strokeWidth={SEAT_RADIUS * 2}
-                    opacity={reveal.torus * 0.85 * mo.a}
+                    strokeWidth={SEAT_RADIUS * (scaleMode === 'large' && activeFocusId ? 1.1 : 2)}
+                    opacity={reveal.torus * (scaleMode === 'large' && activeFocusId ? 0.36 : 0.85) *
+                      mo.a * focusDim(t.id)}
                   />
                 );
               })}
@@ -2123,8 +2243,9 @@ export default function GrowLab({
                 grid as the camera approaches the person. */}
             {reveal.workCapsule > 0.01 && people.map((person) => {
               const items = sampleWork[person.id] ?? [];
-              if (!items.length) return null;
+              if (!items.length || (scaleMode === 'large' && activeFocusId && focusDim(person.id) < 0.38)) return null;
               const seat = m(person.id);
+              if (!onScreen(seat, 50)) return null;
               const parent = person.parentId ? m(person.parentId) : null;
               const axis = parent ? Math.atan2(seat.y - parent.y, seat.x - parent.x) : -Math.PI / 2;
               const radius = PERSON_R + 11.5;
@@ -2147,12 +2268,42 @@ export default function GrowLab({
               </g>;
             })}
 
+            {scaleMode === 'large' && overviewDetail < 0.99 && teams.map((team) => {
+              const mo = m(team.id);
+              if (!onScreen(mo, 35)) return null;
+              const target = targets[team.id];
+              const arrived = (!target || Math.hypot(target.x - mo.x, target.y - mo.y) < 3) && mo.a > 0.6;
+              const dotRadius = ((depthOf[team.id] ?? 0) === 0 ? 5 : 3.2) / Math.max(k, 0.01);
+              return <g key={`dot-${team.id}`} transform={`translate(${mo.x} ${mo.y})`}
+                opacity={mo.a * (1 - overviewDetail)}
+                style={{ cursor: 'pointer', pointerEvents: arrived ? 'auto' : 'none' }}
+                onMouseEnter={() => setHoveredNodeId(team.id)}
+                onMouseLeave={() => setHoveredNodeId(null)}
+                onMouseDown={(event) => { event.stopPropagation(); beginDrag(team.id, event.clientX, event.clientY); }}
+                onTouchStart={(event) => {
+                  if (event.touches.length !== 1) return;
+                  const touch = event.touches[0];
+                  if (!touch) return;
+                  event.stopPropagation();
+                  beginDrag(team.id, touch.clientX, touch.clientY);
+                }}
+                onClick={(event) => event.stopPropagation()}>
+                <circle r={dotRadius} fill={TEAM_HUE} />
+                <circle r={13 / Math.max(k, 0.01)} fill="transparent" />
+              </g>;
+            })}
+
             {nodes.map((n) => {
               const mo = m(n.id);
+              // A thousand hidden avatar groups are still a thousand SVG
+              // subtrees for React to reconcile on every camera frame.
+              if (n.kind === 'person' && (reveal.people < 0.01 || !onScreen(mo, 60))) return null;
+              if (n.kind === 'team' && !onScreen(mo, 100)) return null;
               const t = targets[n.id];
               // Mid-flight it is sitting on top of its parent, so it must not
               // take the click — but only *it* stops listening, not the map.
               const arrived = (!t || Math.hypot(t.x - mo.x, t.y - mo.y) < 3) && mo.a > 0.6;
+              if (n.kind === 'team' && overviewDetail < 0.02) return null;
               return (
                 <NodeShape
                   key={n.id}
@@ -2167,6 +2318,8 @@ export default function GrowLab({
                   zoom={k}
                   reveal={reveal}
                   progress={sampleRings[n.id]}
+                  ringReveal={ringRevealFor(n)}
+                  visualPresence={overviewDetail * focusDim(n.id)}
                   onHover={(active) => setHoveredNodeId(active ? n.id : null)}
                   onRingHover={(key, x, y) => setHoveredRing(key ? { nodeId: n.id, key, x, y } : null)}
                   onRingSelect={(key, x, y) => setSelectedRing((current) =>
@@ -2177,6 +2330,7 @@ export default function GrowLab({
             })}
 
             {reveal.workDots > 0.01 && workMarks.map(({ person, item, seat, point }) => {
+              if (!onScreen(point, 20)) return null;
               const active = hoveredWorkId === item.id || selectedWorkId === item.id;
               return <circle key={item.id} cx={point.x} cy={point.y}
                 r={WORK_RADIUS * (active ? 1.55 : 1)} fill={WORK_STATUS_FILL[item.status]}
@@ -2665,6 +2819,22 @@ export default function GrowLab({
         </div>}
       </div>
 
+      {focusStops.length > 0 && <div style={{ position: 'absolute', top: 92, left: 20,
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 12,
+        background: SURFACE, border: `1px solid ${LINE}`,
+        boxShadow: '0 5px 18px rgba(86,103,179,.1)' }}>
+        <span style={{ fontSize: 12, color: INK_SOFT }}>Explore</span>
+        <select aria-label="Explore part of the organisation" value={selectedStudyStop ?? ''} onChange={(event) => {
+          if (event.target.value === 'all') fitView();
+          else focusStudyStop(event.target.value);
+        }} style={{ maxWidth: size.w < 560 ? 170 : 250, border: 0, background: SURFACE,
+          color: INK, fontSize: 12, outlineColor: TEAM_HUE }}>
+          <option value="" disabled>Jump to a branch…</option>
+          <option value="all">Whole forest</option>
+          {focusStops.map((stop) => <option key={stop.id} value={stop.id}>{stop.label}</option>)}
+        </select>
+      </div>}
+
       <div style={{ position: 'absolute', top: 16, right: 20, display: 'flex', gap: 8 }}>
         {(layout.roots.length > 1 || anyPinned) && (
           <button className="zen-ghost" onClick={tidyUp}>
@@ -2838,6 +3008,8 @@ function NodeShape({
   zoom,
   reveal,
   progress,
+  ringReveal,
+  visualPresence,
   onHover,
   onRingHover,
   onRingSelect,
@@ -2856,6 +3028,8 @@ function NodeShape({
   zoom: number;
   reveal: Reveal;
   progress?: StudyRingProgress;
+  ringReveal: number;
+  visualPresence: number;
   onHover: (active: boolean) => void;
   onRingHover: (key: StudyRingKey | null, x: number, y: number) => void;
   onRingSelect: (key: StudyRingKey, x: number, y: number) => void;
@@ -2871,7 +3045,7 @@ function NodeShape({
   // hierarchy rather than a field of specks — the engine's own floors, not
   // numbers invented here. People get no floor: they are simply not drawn
   // until the camera is close enough for them.
-  const drawn = isTeam ? drawnUnitRadius({ r, depth }, zoom, r * 2.6) : r;
+  const drawn = (isTeam ? drawnUnitRadius({ r, depth }, zoom, r * 2.6) : r) * NODE_VISUAL_SCALE;
   const visualScale = drawn / Math.max(0.001, r);
   const presence = isTeam ? 1 : reveal.people;
   const avatar = !isTeam ? avatarPalette(node.id) : null;
@@ -2893,7 +3067,7 @@ function NodeShape({
   const ringStroke = ringWidthPx / live;
   const px = (n: number) => n / live;
   // Three gauges around a two-pixel dot are a smudge, not three gauges.
-  const ringLegible = smoothstep(5, 11, screenRadius) * studyRingReveal(depth, zoom);
+  const ringLegible = smoothstep(5, 11, screenRadius) * ringReveal * visualPresence;
   // While two nodes are being pushed together the gauges get out of the way,
   // so the thing you can actually see is the merge (Greg, 2026-09-20).
   const ringShow = progress && !joining ? ringLegible : 0;
@@ -2902,7 +3076,7 @@ function NodeShape({
   return (
     <g
       transform={`translate(${mo.x} ${mo.y}) scale(${(0.62 + 0.38 * mo.a) * (dragging ? 1.06 : 1) * visualScale})`}
-      opacity={mo.a * presence}
+      opacity={mo.a * presence * visualPresence}
       // Until it has arrived it is invisible but still hit-testable, and it is
       // sitting on top of its parent — so it must not take the click.
       // A person nobody can see is a person nobody can grab.
