@@ -82,6 +82,25 @@ clicking the node that's asking for them.
 - **`onPointerMove` is not a safe default for hover.** Plain mouse events fire
   everywhere, including the older browsers this has to run on; the ring's hover
   band uses those.
+- **The browser's `click` still arrives after your own mouseup handler has run.**
+  A node opens its panel on release, and the trailing click then bubbled to the
+  paper and shut it again. The node has to swallow that click.
+- **Drag listeners must be attached synchronously, not in an effect.** An effect
+  only runs after React commits, and a quick press-and-release finishes before
+  that — which silently swallowed the tap.
+- 🔴 **A hover affordance drawn *under the pointer* will fight the thing that
+  spawned it.** The ring's "+" appears where you are hovering, on top of the
+  ring's own hit band. Taking the pointer gave the band a `mouseleave`, which
+  hid the "+", which handed the pointer back to the band, which drew it again —
+  a flicker loop, with clicks landing on whichever element happened to be
+  there. Greg hit this as *"I had to click a few times."* The "+" on a ring is
+  now **paint only** (`pointer-events: none`) and the band owns both the hover
+  and the click. Anything else drawn under the cursor needs the same treatment.
+- **Don't gate the whole map on "is anything animating".** A blanket
+  `pointer-events: none` while the motion loop was busy was the first suspect
+  for the flicker above — wrong diagnosis, but a real hazard, because the "+"
+  chasing the pointer keeps the loop busy almost continuously. Each node now
+  says for itself whether it has arrived.
 
 ### Growing past the first team *(2026-09-20)*
 Hovering a team's **dotted orbit** reveals a `+` that rides the ring under the
@@ -123,6 +142,60 @@ to run straight through its own people's labels. The map carries a headcount
 (the whole subtree, so a parent counts everyone beneath it); the purpose stays
 in the panel it was typed into.
 
+### Moving things by hand *(2026-09-20)*
+**Anything can be dragged anywhere.** A node you put somewhere stays there, its
+children keep orbiting it from its new spot, and anything below it that had
+also been hand-placed travels with it. **Tidy up** is the undo: every
+hand-placed node goes back on its orbit and the islands straighten into a row.
+The camera's auto-fit is frozen for the duration of a drag — the world must not
+zoom or slide under the pointer while you're holding something.
+
+**A drop is also a question about the org**, read the way the production map
+reads it (`lib/orbital/snap.ts`, Greg 2026-09-13: *"snapping is relative to
+parent orbits, rather than an absolute grid"* — radius says which level, angle
+says which parent). Here the rungs aren't global (each island has its own), so
+**the orbit you landed on answers both at once**:
+
+- **Let go near an orbit** → that team is offered as the new parent. A **person**
+  just moves; moving a **team** takes its whole subtree with it, so that one is
+  asked about first. Either way the node gives up its hand-placed position —
+  joining a team means taking a seat on it.
+- **Let go on open paper** → nothing about the org changed. It has just moved.
+- A node can never be dropped inside its own subtree; that would cut the
+  subtree off the map (the guard `lib/orbital/snap.ts` also carries).
+
+### Pushing two things together *(2026-09-20)*
+Drag one node close to another of **the same kind** and they visibly start to
+run together — a metaball neck is drawn between them, and it stays while you
+decide, because the question on screen is about those two. Like pairs with
+like: two teams, or two people. A person meeting a *team* is a different
+question, and the orbit already asks it.
+
+**Two people** get asked *"Do these two work together?"* — **make them a team**
+(a new team closes around the pair, named during the interaction) or **put them
+on the same team** (move them both onto a team already on the map). They lean
+together rather than one vanishing into the other: nobody is absorbing anybody,
+a team is closing around them.
+
+**Where that new team sits depends on where the two came from.** Same team, and
+it plainly belongs there — no question asked. **Different teams, and it is put
+to the user** (Greg, 2026-09-20), because picking one of their parents for them
+would be a coin toss: *"Where does {team} sit?"* offers each of the two parents
+by name (*"where Priya already sits"*), **on its own**, or **something new** —
+which makes a second node above it and opens its wizard so you can name it.
+
+**Two teams** get asked which of two very different things you meant:
+
+| Choice | What it does |
+|---|---|
+| **Make them one team** | Everything either held — teams and people alike — ends up on the survivor's ring, under a name you give during the merge. **Nothing above either team changes.** |
+| **Give them a shared parent** | Both stay exactly as they are and start orbiting the same thing — an existing node, or a new one made for them. |
+
+Choosing to merge slides one team into the other for ~420ms before they become
+one, so the coalescence is something you watch rather than a jump cut (skipped
+outright under reduced motion). The shared-parent route **can orphan a parent**
+that has just lost its only child — allowed, by instruction.
+
 ### 🔴 Known limit — depth past three rungs
 Three rungs read beautifully. At **four** the camera has to pull back to about
 `k≈0.22`, and while the labels stay legible the nodes become specks and start
@@ -154,8 +227,24 @@ a half-done size floor makes nodes overlap, which is worse than small.
    answered the questions), or are they just the first seat?
 3. **Editing vs. adding** — clicking a finished node currently reopens its
    wizard prefilled. Fine for a feel study; probably not the real interaction.
-4. **Tidy up is the only layout control.** No drag, no snapping — by instruction,
-   and a manual reorder (above) will have to land somewhere in here.
+4. **Nothing pins an island's order.** Tidy up sorts islands left-to-right by
+   where they already are, so the row reshuffles if you move one. Fine for now;
+   the manual ordering Greg wants will need a real answer.
+5. 🔶 **Two *teams* merged into one still keep the target's place** — drag A
+   onto B and the survivor sits where B sat, silently, even when A and B had
+   different parents. People now get asked that question; teams do not. Greg
+   has seen this and parked it (2026-09-20): *"good enough for now."* It is a
+   one-step change, reusing the same panel, if the same answer should apply.
+6. 🔶 **How opinionated should placement be at all?** Greg, 2026-09-20: *"I
+   don't know how opinionated geographic placement of nodes should be."* This
+   is the question sitting underneath several of the others — where a new
+   parent appears, whether islands may overlap, whether the map should ever
+   move something you didn't move yourself. Right now the lab is barely
+   opinionated: things land where the action happened, overlaps are allowed,
+   and **Tidy up** is the only thing that rearranges anything. Nobody has
+   decided whether that is the answer or just the absence of one. **Don't
+   quietly make the map more opinionated** — it would be answering this by
+   stealth.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
