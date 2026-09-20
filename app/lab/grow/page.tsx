@@ -490,7 +490,14 @@ type DragState = {
   moved: boolean;
 };
 
-type MergeState = { a: string; b: string; stage: 'choose' | 'rename' | 'parent'; name: string };
+/** Two teams running together, or two people deciding to become a team. */
+type MergeState = {
+  a: string;
+  b: string;
+  kind: Kind;
+  stage: 'choose' | 'rename' | 'parent';
+  name: string;
+};
 
 /* ======================================================================== */
 
@@ -986,19 +993,75 @@ export default function GrowLab() {
     [layout],
   );
 
+  /**
+   * Two people who work together are a team — so say so, and one appears
+   * around them. It takes the place in the hierarchy the pair already had.
+   */
+  const formTeamAround = useCallback(
+    (aId: string, bId: string, name: string) => {
+      const aPos = layout.pos[aId];
+      const bPos = layout.pos[bId];
+      const under = byId[bId]?.parentId ?? null;
+      const team: Node = {
+        id: nid('team'),
+        kind: 'team',
+        parentId: under,
+        name: name.trim() || null,
+        role: null,
+        purpose: null,
+      };
+      setNodes((ns) => [team, ...ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: team.id } : n))]);
+      setPinned((p) => {
+        const next = without(p, aId, bId);
+        // Standing on its own, it appears between the two it was made for;
+        // inside something else, it takes a seat on that ring instead.
+        if (under === null) {
+          next[team.id] = {
+            x: ((aPos?.x ?? 0) + (bPos?.x ?? 0)) / 2,
+            y: ((aPos?.y ?? 0) + (bPos?.y ?? 0)) / 2,
+          };
+        }
+        return next;
+      });
+      setMerge(null);
+      setCoalescing(null);
+      if (!name.trim()) {
+        setOpenId(team.id);
+        setStepIx(0);
+      }
+    },
+    [layout, byId],
+  );
+
+  /** Put two people on the same team — one that is already on the map. */
+  const movePairInto = useCallback((aId: string, bId: string, teamId: string) => {
+    setNodes((ns) => ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: teamId } : n)));
+    setPinned((p) => without(p, aId, bId));
+    setMerge(null);
+  }, []);
+
   /** The droplet: slide one team into the other, then let them become one. */
   const runMerge = useCallback(
-    (aId: string, bId: string, name: string) => {
+    (kind: Kind, aId: string, bId: string, name: string) => {
+      const commit = () =>
+        kind === 'team' ? mergeIntoOne(aId, bId, name) : formTeamAround(aId, bId, name);
       const bPos = layout.pos[bId];
       if (!bPos || reduced) {
-        mergeIntoOne(aId, bId, name);
+        commit();
         return;
       }
       setCoalescing({ a: aId, b: bId });
-      setPinned((p) => ({ ...p, [aId]: { x: bPos.x, y: bPos.y } }));
-      window.setTimeout(() => mergeIntoOne(aId, bId, name), 420);
+      // Two people don't disappear into each other — they draw together and a
+      // team closes around them — so they only lean in.
+      const aPos = layout.pos[aId] ?? bPos;
+      const to =
+        kind === 'team'
+          ? bPos
+          : { x: aPos.x + (bPos.x - aPos.x) * 0.45, y: aPos.y + (bPos.y - aPos.y) * 0.45 };
+      setPinned((p) => ({ ...p, [aId]: to }));
+      window.setTimeout(commit, 420);
     },
-    [layout, reduced, mergeIntoOne],
+    [layout, reduced, mergeIntoOne, formTeamAround],
   );
 
   /* --- dragging ----------------------------------------------------------- */
@@ -1016,19 +1079,21 @@ export default function GrowLab() {
     if (!drag?.moved) return null;
     const a = byId[drag.id];
     const ap = layout.pos[drag.id];
-    if (!a || a.kind !== 'team' || !ap) return null;
+    if (!a || !ap) return null;
+    // Like pairs with like: two teams run together, two people become a team.
+    // A person meeting a team is a different question, and the orbit asks it.
     const blocked = descendantIds(layout.kids, drag.id);
     let best: { id: string; d: number } | null = null;
-    for (const t of teams) {
-      if (blocked.has(t.id)) continue;
-      const bp = layout.pos[t.id];
+    for (const other of nodes) {
+      if (other.kind !== a.kind || blocked.has(other.id)) continue;
+      const bp = layout.pos[other.id];
       if (!bp) continue;
       const d = Math.hypot(ap.x - bp.x, ap.y - bp.y);
-      if (d > (nodeR(a) + nodeR(t)) * 1.3) continue;
-      if (!best || d < best.d) best = { id: t.id, d };
+      if (d > (nodeR(a) + nodeR(other)) * 1.3) continue;
+      if (!best || d < best.d) best = { id: other.id, d };
     }
-    return best ? { a: drag.id, b: best.id } : null;
-  }, [drag, byId, layout, teams]);
+    return best ? { a: drag.id, b: best.id, kind: a.kind } : null;
+  }, [drag, byId, layout, nodes]);
 
   /** Where the drop would put this node in the org, if anywhere. */
   const landing = useMemo(() => {
@@ -1055,7 +1120,6 @@ export default function GrowLab() {
    */
   const beginDrag = useCallback(
     (id: string, cx: number, cy: number) => {
-      if (frame.busy) return;
       const cam = { k, tx, ty };
       const grab = toWorld(cx, cy, cam);
       // Anything below this node that has been hand-placed travels with it;
@@ -1109,7 +1173,13 @@ export default function GrowLab() {
         }
         const { armed: arm, landing: land, byId: ids } = live.current;
         if (arm) {
-          setMerge({ a: arm.a, b: arm.b, stage: 'choose', name: ids[arm.b]?.name ?? '' });
+          setMerge({
+            a: arm.a,
+            b: arm.b,
+            kind: arm.kind,
+            stage: 'choose',
+            name: arm.kind === 'team' ? ids[arm.b]?.name ?? '' : '',
+          });
           return;
         }
         if (land) {
@@ -1126,7 +1196,7 @@ export default function GrowLab() {
       window.addEventListener('touchend', finish);
       window.addEventListener('touchcancel', finish);
     },
-    [frame.busy, k, tx, ty, toWorld, layout, pinned, openNode, reparent],
+    [k, tx, ty, toWorld, layout, pinned, openNode, reparent],
   );
 
   /* --- pointer on a ring -------------------------------------------------- */
@@ -1281,7 +1351,9 @@ export default function GrowLab() {
           {/* ---- shapes, in the camera's frame ---- */}
           <g
             transform={`translate(${tx} ${ty}) scale(${k})`}
-            style={{ pointerEvents: frame.busy ? 'none' : 'auto' }}
+            /* No blanket gate here. Anything that shouldn't take a click
+               says so for itself — switching the whole map off meant the "+"
+               chasing the pointer could silently eat your clicks. */
           >
             {/* orbits — every team has one, and it's how you add to it */}
             {teams.map((t) => {
@@ -1315,7 +1387,7 @@ export default function GrowLab() {
                     // Mouse events, not pointer events: they fire everywhere,
                     // including the older browsers this has to run on.
                     onMouseMove={(e) => {
-                      if (menu) return;
+                      if (menu || drag) return;
                       setHover({ parentId: t.id, angle: angleOn(t.id, e) });
                     }}
                     onMouseLeave={() => {
@@ -1354,17 +1426,25 @@ export default function GrowLab() {
               return <path d={d} fill={TEAM_HUE} fillOpacity={coalescing ? 0.3 : 0.2} />;
             })()}
 
-            {nodes.map((n) => (
-              <NodeShape
-                key={n.id}
-                node={n}
-                mo={m(n.id)}
-                selected={openId === n.id}
-                dragging={drag?.id === n.id && drag.moved}
-                joining={armed ? armed.a === n.id || armed.b === n.id : false}
-                onGrab={(cx, cy) => beginDrag(n.id, cx, cy)}
-              />
-            ))}
+            {nodes.map((n) => {
+              const mo = m(n.id);
+              const t = targets[n.id];
+              // Mid-flight it is sitting on top of its parent, so it must not
+              // take the click — but only *it* stops listening, not the map.
+              const arrived = (!t || Math.hypot(t.x - mo.x, t.y - mo.y) < 3) && mo.a > 0.6;
+              return (
+                <NodeShape
+                  key={n.id}
+                  node={n}
+                  mo={mo}
+                  selected={openId === n.id}
+                  dragging={drag?.id === n.id && drag.moved}
+                  joining={armed ? armed.a === n.id || armed.b === n.id : false}
+                  interactive={arrived}
+                  onGrab={(cx, cy) => beginDrag(n.id, cx, cy)}
+                />
+              );
+            })}
 
             {frame.pos.__solo && (
               <AddDot mo={m('__solo')} k={k} onPick={formTeam} />
@@ -1373,6 +1453,7 @@ export default function GrowLab() {
               <AddDot
                 mo={m('__plus')}
                 k={k}
+                passive
                 onPick={() => {
                   if (plus) setMenu(plus);
                 }}
@@ -1580,28 +1661,38 @@ export default function GrowLab() {
 
           {merge.stage === 'choose' && (
             <>
-              <h2 className="zen-title">What should happen?</h2>
+              <h2 className="zen-title">
+                {merge.kind === 'team' ? 'What should happen?' : 'Do these two work together?'}
+              </h2>
               <div style={{ display: 'grid', gap: 8 }}>
                 <button
                   className="zen-choice"
                   onClick={() => setMerge({ ...merge, stage: 'rename', name: byId[merge.b]?.name ?? '' })}
                 >
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>Make them one team</span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>
+                    {merge.kind === 'team' ? 'Make them one team' : 'Make them a team'}
+                  </span>
                   <span style={{ fontSize: 12, color: INK_SOFT }}>
-                    Everyone and everything in both, on one ring. Nothing above either team changes.
+                    {merge.kind === 'team'
+                      ? 'Everyone and everything in both, on one ring. Nothing above either team changes.'
+                      : 'A new team closes around the two of them, where they already sit.'}
                   </span>
                 </button>
                 <button className="zen-choice" onClick={() => setMerge({ ...merge, stage: 'parent' })}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>Give them a shared parent</span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>
+                    {merge.kind === 'team' ? 'Give them a shared parent' : 'Put them on the same team'}
+                  </span>
                   <span style={{ fontSize: 12, color: INK_SOFT }}>
-                    Both stay as they are, and start orbiting the same thing.
+                    {merge.kind === 'team'
+                      ? 'Both stay as they are, and start orbiting the same thing.'
+                      : 'Move them both onto a team that is already on the map.'}
                   </span>
                 </button>
               </div>
               <div style={{ display: 'flex', marginTop: 14 }}>
                 <div style={{ flex: 1 }} />
                 <button className="zen-ghost" onClick={() => setMerge(null)}>
-                  Leave them apart
+                  {merge.kind === 'team' ? 'Leave them apart' : 'Not really'}
                 </button>
               </div>
             </>
@@ -1609,7 +1700,9 @@ export default function GrowLab() {
 
           {merge.stage === 'rename' && (
             <>
-              <h2 className="zen-title">What is the merged team called?</h2>
+              <h2 className="zen-title">
+                {merge.kind === 'team' ? 'What is the merged team called?' : 'What is their team called?'}
+              </h2>
               <input
                 className="zen-input"
                 autoFocus
@@ -1617,11 +1710,17 @@ export default function GrowLab() {
                 value={merge.name}
                 onChange={(e) => setMerge({ ...merge, name: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && merge.name.trim()) runMerge(merge.a, merge.b, merge.name);
+                  if (e.key === 'Enter' && merge.name.trim()) runMerge(merge.kind, merge.a, merge.b, merge.name);
                 }}
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                {[...new Set([byId[merge.a]?.name, byId[merge.b]?.name, ...TEAM_NAMES])]
+                {[
+                  ...new Set(
+                    merge.kind === 'team'
+                      ? [byId[merge.a]?.name, byId[merge.b]?.name, ...TEAM_NAMES]
+                      : TEAM_NAMES,
+                  ),
+                ]
                   .filter((v): v is string => !!v?.trim())
                   .slice(0, 5)
                   .map((v) => (
@@ -1638,9 +1737,9 @@ export default function GrowLab() {
                 <button
                   className="zen-primary"
                   disabled={!merge.name.trim()}
-                  onClick={() => runMerge(merge.a, merge.b, merge.name)}
+                  onClick={() => runMerge(merge.kind, merge.a, merge.b, merge.name)}
                 >
-                  Merge
+                  {merge.kind === 'team' ? 'Merge' : 'Create the team'}
                 </button>
               </div>
             </>
@@ -1648,18 +1747,35 @@ export default function GrowLab() {
 
           {merge.stage === 'parent' && (
             <>
-              <h2 className="zen-title">What do they both sit under?</h2>
+              <h2 className="zen-title">
+                {merge.kind === 'team' ? 'What do they both sit under?' : 'Which team?'}
+              </h2>
               <div style={{ display: 'grid', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
-                <button className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, null)}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>Something new</span>
-                  <span style={{ fontSize: 12, color: INK_SOFT }}>A new node, made to hold the two of them</span>
-                </button>
+                {merge.kind === 'team' && (
+                  <button className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, null)}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>Something new</span>
+                    <span style={{ fontSize: 12, color: INK_SOFT }}>A new node, made to hold the two of them</span>
+                  </button>
+                )}
                 {parentChoices.map((t) => (
-                  <button key={t.id} className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, t.id)}>
+                  <button
+                    key={t.id}
+                    className="zen-choice"
+                    onClick={() =>
+                      merge.kind === 'team'
+                        ? giveSharedParent(merge.a, merge.b, t.id)
+                        : movePairInto(merge.a, merge.b, t.id)
+                    }
+                  >
                     <span style={{ fontWeight: 600, fontSize: 14 }}>{t.name}</span>
                     <span style={{ fontSize: 12, color: INK_SOFT }}>Already on the map</span>
                   </button>
                 ))}
+                {merge.kind === 'person' && parentChoices.length === 0 && (
+                  <p style={{ fontSize: 13, color: INK_SOFT, margin: 0 }}>
+                    There is no other team to move them to yet.
+                  </p>
+                )}
               </div>
               <div style={{ display: 'flex', marginTop: 14 }}>
                 <button className="zen-ghost" onClick={() => setMerge({ ...merge, stage: 'choose' })}>
@@ -1772,16 +1888,35 @@ function SeedNode({ onPick }: { onPick: () => void }) {
   );
 }
 
-/** The "+" that rides a ring. Sized in screen pixels so it stays tappable. */
-function AddDot({ mo, k, onPick }: { mo: Motion; k: number; onPick: () => void }) {
+/**
+ * The "+" that rides a ring. Sized in screen pixels so it stays tappable.
+ *
+ * `passive` is load-bearing: this thing is drawn under the pointer, on top of
+ * the ring's hit band. If it takes the pointer, the band it came from gets a
+ * mouseleave, the "+" vanishes, the band takes over again — a flicker loop
+ * that eats clicks. So on a ring it is paint only, and the band owns both the
+ * hover and the click.
+ */
+function AddDot({
+  mo,
+  k,
+  passive,
+  onPick,
+}: {
+  mo: Motion;
+  k: number;
+  passive?: boolean;
+  onPick: () => void;
+}) {
   const r = 26 / k;
   const arm = 11 / k;
   return (
     <g
       transform={`translate(${mo.x} ${mo.y}) scale(${0.55 + 0.45 * mo.a})`}
       opacity={mo.a}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer', pointerEvents: passive ? 'none' : 'auto' }}
       onClick={(e) => {
+        if (passive) return;
         e.stopPropagation();
         onPick();
       }}
@@ -1799,6 +1934,7 @@ function NodeShape({
   selected,
   dragging,
   joining,
+  interactive,
   onGrab,
 }: {
   node: Node;
@@ -1806,6 +1942,7 @@ function NodeShape({
   selected: boolean;
   dragging: boolean;
   joining: boolean;
+  interactive: boolean;
   onGrab: (clientX: number, clientY: number) => void;
 }) {
   const isTeam = node.kind === 'team';
@@ -1822,10 +1959,7 @@ function NodeShape({
       opacity={mo.a}
       // Until it has arrived it is invisible but still hit-testable, and it is
       // sitting on top of its parent — so it must not take the click.
-      style={{
-        cursor: dragging ? 'grabbing' : 'grab',
-        pointerEvents: mo.a < 0.6 ? 'none' : 'auto',
-      }}
+      style={{ cursor: dragging ? 'grabbing' : 'grab', pointerEvents: interactive ? 'auto' : 'none' }}
       onMouseDown={(e) => {
         e.stopPropagation();
         onGrab(e.clientX, e.clientY);

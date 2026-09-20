@@ -87,6 +87,19 @@ clicking the node that's asking for them.
 - **Drag listeners must be attached synchronously, not in an effect.** An effect
   only runs after React commits, and a quick press-and-release finishes before
   that — which silently swallowed the tap.
+- 🔴 **A hover affordance drawn *under the pointer* will fight the thing that
+  spawned it.** The ring's "+" appears where you are hovering, on top of the
+  ring's own hit band. Taking the pointer gave the band a `mouseleave`, which
+  hid the "+", which handed the pointer back to the band, which drew it again —
+  a flicker loop, with clicks landing on whichever element happened to be
+  there. Greg hit this as *"I had to click a few times."* The "+" on a ring is
+  now **paint only** (`pointer-events: none`) and the band owns both the hover
+  and the click. Anything else drawn under the cursor needs the same treatment.
+- **Don't gate the whole map on "is anything animating".** A blanket
+  `pointer-events: none` while the motion loop was busy was the first suspect
+  for the flicker above — wrong diagnosis, but a real hazard, because the "+"
+  chasing the pointer keeps the loop busy almost continuously. Each node now
+  says for itself whether it has arrived.
 
 ### Growing past the first team *(2026-09-20)*
 Hovering a team's **dotted orbit** reveals a `+` that rides the ring under the
@@ -150,11 +163,21 @@ says which parent). Here the rungs aren't global (each island has its own), so
 - A node can never be dropped inside its own subtree; that would cut the
   subtree off the map (the guard `lib/orbital/snap.ts` also carries).
 
-### Running two teams together *(2026-09-20)*
-Drag one team close to another and they visibly start to run together — a
-metaball neck is drawn between them, and it stays while you decide, because the
-question on screen is about those two. Letting go asks which of two very
-different things you meant:
+### Pushing two things together *(2026-09-20)*
+Drag one node close to another of **the same kind** and they visibly start to
+run together — a metaball neck is drawn between them, and it stays while you
+decide, because the question on screen is about those two. Like pairs with
+like: two teams, or two people. A person meeting a *team* is a different
+question, and the orbit already asks it.
+
+**Two people** get asked *"Do these two work together?"* — **make them a team**
+(a new team closes around the pair, taking the place in the hierarchy they
+already had, named during the interaction) or **put them on the same team**
+(move them both onto a team already on the map). They lean together rather than
+one vanishing into the other: nobody is absorbing anybody, a team is closing
+around them.
+
+**Two teams** get asked which of two very different things you meant:
 
 | Choice | What it does |
 |---|---|
@@ -201,8 +224,9 @@ a half-done size floor makes nodes overlap, which is worse than small.
    where they already are, so the row reshuffles if you move one. Fine for now;
    the manual ordering Greg wants will need a real answer.
 5. **Merging keeps the *target's* place in the hierarchy.** Drag A onto B and
-   the survivor sits where B sat. With A and B under different parents that is
-   a choice, not a law — it has not been put to Greg.
+   the survivor sits where B sat — and a team formed around two people takes
+   the parent of the one you dropped *onto*. With the two under different
+   parents that is a choice, not a law; it has not been put to Greg.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
