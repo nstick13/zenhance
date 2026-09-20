@@ -153,7 +153,7 @@ type Layout = {
  * — which is what keeps a three-deep org readable instead of turning the
  * people into specks.
  */
-function buildLayout(nodes: Node[], islands: Record<string, { x: number; y: number }>): Layout {
+function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: number }>): Layout {
   const byId: Record<string, Node> = {};
   const kids: Record<string, Node[]> = {};
   const roots: Node[] = [];
@@ -199,27 +199,141 @@ function buildLayout(nodes: Node[], islands: Record<string, { x: number; y: numb
    * whole three-deep org on one straight line.
    */
   const place = (id: string, x: number, y: number, facing: number) => {
-    pos[id] = { x, y };
+    // A node the user has put somewhere stays put, and its children keep
+    // orbiting it from there. "Tidy up" is what gives these back.
+    const at = pinned[id];
+    const px = at ? at.x : x;
+    const py = at ? at.y : y;
+    pos[id] = { x: px, y: py };
     const ch = kids[id] ?? [];
     if (!ch.length) return;
     const R = ring[id]!;
     const spread = (2 * Math.PI) / ch.length;
     ch.forEach((c, i) => {
       const a = facing + (i - (ch.length - 1) / 2) * spread;
-      place(c.id, x + Math.cos(a) * R, y + Math.sin(a) * R, a);
+      place(c.id, px + Math.cos(a) * R, py + Math.sin(a) * R, a);
     });
   };
 
   for (const root of roots) {
     measure(root.id);
-    const at = islands[root.id] ?? { x: 0, y: 0 };
     // Facing "up" means the first two children land left and right of the
     // centre — the "alongside" reading the first team is built around.
-    place(root.id, at.x, at.y, -Math.PI / 2);
+    place(root.id, 0, 0, -Math.PI / 2);
   }
 
   return { pos, ring, reach, roots, kids };
 }
+
+/** Every node at or below `id`. Nothing may be dropped inside its own subtree
+ *  — that would cut the subtree off the map entirely (see lib/orbital/snap.ts). */
+function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
+  const out = new Set<string>([id]);
+  const stack = [id];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const c of kids[cur] ?? []) {
+      if (out.has(c.id)) continue;
+      out.add(c.id);
+      stack.push(c.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * What a drop would mean, read off where the node was let go — the same two
+ * questions the production map asks (lib/orbital/snap.ts): how far out you
+ * are says which level, and which orbit you are on says whose child you'd be.
+ * Here the rungs aren't global — each island has its own — so "the ring you
+ * landed on" answers both at once.
+ *
+ * Land nowhere near a ring and this returns null: the node has simply been
+ * moved, and nothing about the org has changed.
+ */
+const RING_CATCH = 46;
+
+function classifyDrop(
+  layout: Layout,
+  draggedId: string,
+  at: { x: number; y: number },
+): { parentId: string; distance: number } | null {
+  const blocked = descendantIds(layout.kids, draggedId);
+  let best: { parentId: string; distance: number } | null = null;
+  for (const [id, R] of Object.entries(layout.ring)) {
+    if (blocked.has(id)) continue;
+    const c = layout.pos[id];
+    if (!c) continue;
+    const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
+    if (off > RING_CATCH) continue;
+    if (!best || off < best.distance) best = { parentId: id, distance: off };
+  }
+  return best;
+}
+
+/** Two circles drawn as one blob of liquid, for the moment before a merge. */
+function metaballPath(
+  a: { x: number; y: number; r: number },
+  b: { x: number; y: number; r: number },
+): string | null {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const d = Math.hypot(vx, vy);
+  if (d === 0 || d <= Math.abs(a.r - b.r)) return null;
+  if (d > (a.r + b.r) * 2.2) return null;
+
+  const V = 0.5;
+  const HANDLE = 2.4;
+  let u1 = 0;
+  let u2 = 0;
+  if (d < a.r + b.r) {
+    u1 = Math.acos(Math.min(1, Math.max(-1, (a.r * a.r + d * d - b.r * b.r) / (2 * a.r * d))));
+    u2 = Math.acos(Math.min(1, Math.max(-1, (b.r * b.r + d * d - a.r * a.r) / (2 * b.r * d))));
+  }
+  const between = Math.atan2(vy, vx);
+  const maxSpread = Math.acos(Math.min(1, Math.max(-1, (a.r - b.r) / d)));
+
+  const a1 = between + u1 + (maxSpread - u1) * V;
+  const a2 = between - u1 - (maxSpread - u1) * V;
+  const a3 = between + Math.PI - u2 - (Math.PI - u2 - maxSpread) * V;
+  const a4 = between - Math.PI + u2 + (Math.PI - u2 - maxSpread) * V;
+
+  const pt = (c: { x: number; y: number }, ang: number, r: number) => ({
+    x: c.x + Math.cos(ang) * r,
+    y: c.y + Math.sin(ang) * r,
+  });
+  const p1 = pt(a, a1, a.r);
+  const p2 = pt(a, a2, a.r);
+  const p3 = pt(b, a3, b.r);
+  const p4 = pt(b, a4, b.r);
+
+  const total = a.r + b.r;
+  const base = Math.min(V * HANDLE, Math.hypot(p3.x - p1.x, p3.y - p1.y) / total);
+  const f = base * Math.min(1, (d * 2) / total);
+  const h1 = a.r * f;
+  const h2 = b.r * f;
+
+  const c1 = pt(p1, a1 - Math.PI / 2, h1);
+  const c2 = pt(p3, a3 + Math.PI / 2, h2);
+  const c3 = pt(p4, a4 - Math.PI / 2, h2);
+  const c4 = pt(p2, a2 + Math.PI / 2, h1);
+
+  return [
+    `M ${p1.x} ${p1.y}`,
+    `C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p3.x} ${p3.y}`,
+    `A ${b.r} ${b.r} 0 0 0 ${p4.x} ${p4.y}`,
+    `C ${c3.x} ${c3.y} ${c4.x} ${c4.y} ${p2.x} ${p2.y}`,
+    `A ${a.r} ${a.r} 0 0 0 ${p1.x} ${p1.y}`,
+    'Z',
+  ].join(' ');
+}
+
+/** A copy of the pin map with these ids dropped — they go back on their ring. */
+const without = (m: Record<string, { x: number; y: number }>, ...ids: string[]) => {
+  const out = { ...m };
+  for (const id of ids) delete out[id];
+  return out;
+};
 
 /* --- callout placement --------------------------------------------------- */
 type Side = 'right' | 'left' | 'below' | 'above' | 'sheet';
@@ -364,11 +478,25 @@ function declutter(
 /* --- what the ring offers ------------------------------------------------ */
 type RingAction = 'person' | 'parent' | 'sibling';
 
+type DragState = {
+  id: string;
+  /** The camera as it was when you grabbed. Auto-fit must not move the world
+   *  under the pointer mid-drag. */
+  cam: { k: number; tx: number; ty: number };
+  /** World point the pointer grabbed at. */
+  grab: { x: number; y: number };
+  /** Everything that travels with this node, at the moment it was grabbed. */
+  start: Record<string, { x: number; y: number }>;
+  moved: boolean;
+};
+
+type MergeState = { a: string; b: string; stage: 'choose' | 'rename' | 'parent'; name: string };
+
 /* ======================================================================== */
 
 export default function GrowLab() {
   const [nodes, setNodes] = useState<Node[]>([]);
-  const [islands, setIslands] = useState<Record<string, { x: number; y: number }>>({});
+  const [pinned, setPinned] = useState<Record<string, { x: number; y: number }>>({});
   const [openId, setOpenId] = useState<string | null>(null);
   const [parentJustAdded, setParentJustAdded] = useState<string | null>(null);
   const [stepIx, setStepIx] = useState(0);
@@ -378,6 +506,11 @@ export default function GrowLab() {
   /** Where the pointer is on a ring, and whether the menu has been opened there. */
   const [hover, setHover] = useState<{ parentId: string; angle: number } | null>(null);
   const [menu, setMenu] = useState<{ parentId: string; angle: number } | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [merge, setMerge] = useState<MergeState | null>(null);
+  /** Set while two teams are visibly running together, before they become one. */
+  const [coalescing, setCoalescing] = useState<{ a: string; b: string } | null>(null);
+  const [moveAsk, setMoveAsk] = useState<{ id: string; parentId: string } | null>(null);
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -415,7 +548,7 @@ export default function GrowLab() {
   }, []);
 
   /* --- derived ----------------------------------------------------------- */
-  const layout = useMemo(() => buildLayout(nodes, islands), [nodes, islands]);
+  const layout = useMemo(() => buildLayout(nodes, pinned), [nodes, pinned]);
 
   /** How many rungs out from its island's centre a node sits. */
   const depthOf = useMemo(() => {
@@ -475,7 +608,7 @@ export default function GrowLab() {
   }, [nodes, layout, plus, soloRoot, showSoloAdd]);
 
   /* --- camera: frame the whole forest ------------------------------------ */
-  const camera = useMemo(() => {
+  const cameraFit = useMemo(() => {
     if (!size.w) return { k: 1, tx: 0, ty: 0 };
     if (!nodes.length) return { k: 1, tx: size.w / 2, ty: size.h / 2 };
 
@@ -514,10 +647,21 @@ export default function GrowLab() {
     return { k, tx: size.w / 2 - cx * k, ty: (top + (size.h - bottom)) / 2 - cy * k };
   }, [nodes, layout, size, soloRoot, showSoloAdd]);
 
+  // Auto-fit is frozen for the duration of a drag: the world must not zoom or
+  // slide under the pointer while you are holding something.
+  const camera = drag ? drag.cam : cameraFit;
+
   // On a phone the wizard is a sheet across the bottom, so the map steps up
   // out of its way rather than being half-covered by it.
   const sheetMode = size.w < 560;
   const camTy = camera.ty - (sheetMode && (openId || menu) ? Math.min(150, size.h * 0.18) : 0);
+
+  /** The node being dragged and everything under it — these follow the pointer
+   *  exactly rather than easing after it, or the drag feels like elastic. */
+  const dragFamily = useMemo(
+    () => (drag ? descendantIds(layout.kids, drag.id) : null),
+    [drag, layout],
+  );
 
   /* --- motion (one rAF loop; stops when everything has settled) ---------- */
   const motion = useRef<Record<string, Motion>>({});
@@ -582,7 +726,8 @@ export default function GrowLab() {
       for (const id of Object.keys(motion.current)) {
         const m = motion.current[id]!;
         const t = targets[id];
-        const fp = id === '__plus' ? fPlus : fSlow;
+        const held = dragFamily?.has(id) ?? false;
+        const fp = held ? 1 : id === '__plus' ? fPlus : fSlow;
         const fa = id === '__plus' ? fPlus : fFade;
         if (!t) {
           // Nothing wants it any more: fade it out, then drop it.
@@ -617,7 +762,7 @@ export default function GrowLab() {
       if (raf.current) cancelAnimationFrame(raf.current);
       raf.current = null;
     };
-  }, [targets, camera, camTy, reduced, size.w, byId, plus?.parentId, soloRoot?.id]);
+  }, [targets, camera, camTy, reduced, size.w, byId, plus?.parentId, soloRoot?.id, dragFamily]);
 
   const m = (id: string) => frame.pos[id] ?? { x: 0, y: 0, a: 0 };
   const k = frame.k || camera.k;
@@ -634,12 +779,13 @@ export default function GrowLab() {
   const closeAll = useCallback(() => {
     setOpenId(null);
     setMenu(null);
+    setMoveAsk(null);
   }, []);
 
   const startFirstPerson = useCallback(() => {
     const p: Node = { id: nid('person'), kind: 'person', parentId: null, name: null, role: null, purpose: null };
     setNodes([p]);
-    setIslands({ [p.id]: { x: 0, y: 0 } });
+    setPinned({ [p.id]: { x: 0, y: 0 } });
     setOpenId(p.id);
     setStepIx(0);
   }, []);
@@ -651,7 +797,7 @@ export default function GrowLab() {
       if (!r) return ns;
       const t: Node = { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null };
       const mate: Node = { id: nid('person'), kind: 'person', parentId: t.id, name: null, role: null, purpose: null };
-      setIslands((is) => {
+      setPinned((is) => {
         const { [r.id]: at, ...rest } = is;
         return { ...rest, [t.id]: at ?? { x: 0, y: 0 } };
       });
@@ -701,7 +847,7 @@ export default function GrowLab() {
         setNodes((ns) => [up, ...ns.map((n) => (n.id === parentId ? { ...n, parentId: up.id } : n))]);
         if (child.parentId === null) {
           // The new node takes over the island the old root was standing on.
-          setIslands((is) => {
+          setPinned((is) => {
             const { [parentId]: at, ...rest } = is;
             return { ...rest, [up.id]: at ?? { x: 0, y: 0 } };
           });
@@ -716,14 +862,17 @@ export default function GrowLab() {
       const t: Node = { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null };
       const spot = nextIslandSpot();
       setNodes((ns) => [...ns, t]);
-      setIslands((is) => ({ ...is, [t.id]: spot }));
+      setPinned((is) => ({ ...is, [t.id]: spot }));
       setOpenId(t.id);
       setStepIx(0);
     },
     [byId, nextIslandSpot],
   );
 
-  /** Straighten the islands into one row, evenly spaced. */
+  /**
+   * Give everything back to the hierarchy: every hand-placed node returns to
+   * its orbit, and the islands straighten into one evenly spaced row.
+   */
   const tidyUp = useCallback(() => {
     const ordered = [...layout.roots].sort(
       (a, b) => (layout.pos[a.id]?.x ?? 0) - (layout.pos[b.id]?.x ?? 0),
@@ -736,17 +885,25 @@ export default function GrowLab() {
       next[root.id] = { x: cursor, y: 0 };
       cursor += reach + ISLAND_GAP;
     }
-    setIslands(next);
+    // Only the roots keep a position — everything below goes back on its ring.
+    setPinned(next);
   }, [layout]);
+
+  /** True once anything has been moved off its orbit. */
+  const anyPinned = nodes.some((n) => n.parentId !== null && pinned[n.id]);
 
   const reset = useCallback(() => {
     motion.current = {};
     cam.current = { k: 1, tx: 0, ty: 0 };
     setNodes([]);
-    setIslands({});
+    setPinned({});
     setOpenId(null);
     setMenu(null);
     setHover(null);
+    setDrag(null);
+    setMerge(null);
+    setCoalescing(null);
+    setMoveAsk(null);
     setParentJustAdded(null);
     setStepIx(0);
   }, []);
@@ -757,6 +914,220 @@ export default function GrowLab() {
     setOpenId(id);
     setStepIx(0);
   }, []);
+
+  /* --- structural moves ---------------------------------------------------- */
+
+  /** Hang a node off a different parent, and let it find its place on the ring. */
+  const reparent = useCallback((id: string, parentId: string) => {
+    setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, parentId } : n)));
+    // Drop the hand-placed position: joining a team means taking a seat on it.
+    setPinned((p) => without(p, id));
+    setMoveAsk(null);
+  }, []);
+
+  /**
+   * Run two teams together into one. Everything either of them held — teams
+   * and people alike — ends up on the survivor's ring; the survivor keeps its
+   * own place in the hierarchy, so nothing above either team changes.
+   */
+  const mergeIntoOne = useCallback(
+    (aId: string, bId: string, name: string) => {
+      setNodes((ns) =>
+        ns
+          .filter((n) => n.id !== aId)
+          .map((n) => {
+            if (n.id === bId) return { ...n, name: name.trim() || n.name };
+            if (n.parentId === aId) return { ...n, parentId: bId };
+            return n;
+          }),
+      );
+      setPinned((p) => {
+        const next = { ...p };
+        delete next[aId];
+        // Everything that was held by either side goes back on the ring, which
+        // is what makes the merged team redraw as one.
+        for (const n of nodes) if (n.parentId === aId || n.parentId === bId) delete next[n.id];
+        return next;
+      });
+      setMerge(null);
+      setCoalescing(null);
+    },
+    [nodes],
+  );
+
+  /** Put both teams under one parent — an existing node, or a brand new one. */
+  const giveSharedParent = useCallback(
+    (aId: string, bId: string, parentId: string | null) => {
+      const aPos = layout.pos[aId];
+      const bPos = layout.pos[bId];
+      if (parentId) {
+        setNodes((ns) => ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId } : n)));
+        setPinned((p) => without(p, aId, bId));
+        setMerge(null);
+        return;
+      }
+      const up: Node = { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null };
+      setNodes((ns) => [up, ...ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: up.id } : n))]);
+      setPinned((p) => {
+        // The new parent appears between the two teams it was made for.
+        return {
+          ...without(p, aId, bId),
+          [up.id]: {
+            x: ((aPos?.x ?? 0) + (bPos?.x ?? 0)) / 2,
+            y: ((aPos?.y ?? 0) + (bPos?.y ?? 0)) / 2,
+          },
+        };
+      });
+      setMerge(null);
+      setParentJustAdded(up.id);
+      setOpenId(up.id);
+      setStepIx(0);
+    },
+    [layout],
+  );
+
+  /** The droplet: slide one team into the other, then let them become one. */
+  const runMerge = useCallback(
+    (aId: string, bId: string, name: string) => {
+      const bPos = layout.pos[bId];
+      if (!bPos || reduced) {
+        mergeIntoOne(aId, bId, name);
+        return;
+      }
+      setCoalescing({ a: aId, b: bId });
+      setPinned((p) => ({ ...p, [aId]: { x: bPos.x, y: bPos.y } }));
+      window.setTimeout(() => mergeIntoOne(aId, bId, name), 420);
+    },
+    [layout, reduced, mergeIntoOne],
+  );
+
+  /* --- dragging ----------------------------------------------------------- */
+
+  /** Screen point → world point, through a given camera. */
+  const toWorld = useCallback((cx: number, cy: number, c: { k: number; tx: number; ty: number }) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    const left = rect?.left ?? 0;
+    const top = rect?.top ?? 0;
+    return { x: (cx - left - c.tx) / c.k, y: (cy - top - c.ty) / c.k };
+  }, []);
+
+  /** Two teams close enough that letting go would run them together. */
+  const armed = useMemo(() => {
+    if (!drag?.moved) return null;
+    const a = byId[drag.id];
+    const ap = layout.pos[drag.id];
+    if (!a || a.kind !== 'team' || !ap) return null;
+    const blocked = descendantIds(layout.kids, drag.id);
+    let best: { id: string; d: number } | null = null;
+    for (const t of teams) {
+      if (blocked.has(t.id)) continue;
+      const bp = layout.pos[t.id];
+      if (!bp) continue;
+      const d = Math.hypot(ap.x - bp.x, ap.y - bp.y);
+      if (d > (nodeR(a) + nodeR(t)) * 1.3) continue;
+      if (!best || d < best.d) best = { id: t.id, d };
+    }
+    return best ? { a: drag.id, b: best.id } : null;
+  }, [drag, byId, layout, teams]);
+
+  /** Where the drop would put this node in the org, if anywhere. */
+  const landing = useMemo(() => {
+    if (!drag?.moved || armed) return null;
+    const n = byId[drag.id];
+    const at = layout.pos[drag.id];
+    if (!n || !at || n.parentId === null) return null;
+    const hit = classifyDrop(layout, drag.id, at);
+    if (!hit || hit.parentId === n.parentId) return null;
+    return hit;
+  }, [drag, armed, byId, layout]);
+
+  // Event handlers run long after the render that created them, so they read
+  // the world through this instead of a stale closure.
+  const live = useRef({ drag, armed, landing, byId, layout });
+  useEffect(() => {
+    live.current = { drag, armed, landing, byId, layout };
+  });
+
+  /**
+   * Listeners are wired up here and now, not in an effect. An effect only runs
+   * after React commits, and a quick press-and-release finishes before that —
+   * which silently swallowed the tap.
+   */
+  const beginDrag = useCallback(
+    (id: string, cx: number, cy: number) => {
+      if (frame.busy) return;
+      const cam = { k, tx, ty };
+      const grab = toWorld(cx, cy, cam);
+      // Anything below this node that has been hand-placed travels with it;
+      // everything else keeps orbiting and follows for free.
+      const family = descendantIds(layout.kids, id);
+      const start: Record<string, { x: number; y: number }> = {
+        [id]: layout.pos[id] ?? { x: 0, y: 0 },
+      };
+      for (const fid of family) {
+        if (fid !== id && pinned[fid]) start[fid] = pinned[fid]!;
+      }
+      const session: DragState = { id, cam, grab, start, moved: false };
+      setDrag(session);
+      setHover(null);
+      setMenu(null);
+
+      const move = (mx: number, my: number) => {
+        const w = toWorld(mx, my, cam);
+        const dx = w.x - grab.x;
+        const dy = w.y - grab.y;
+        if (!session.moved) {
+          // A press that hasn't travelled is still a click, not a drag.
+          if (Math.hypot(dx, dy) * cam.k < 4) return;
+          session.moved = true;
+          setDrag({ ...session });
+        }
+        setPinned((prev) => {
+          const next = { ...prev };
+          for (const [nid2, at] of Object.entries(start)) next[nid2] = { x: at.x + dx, y: at.y + dy };
+          return next;
+        });
+      };
+
+      const onMouseMove = (e: MouseEvent) => move(e.clientX, e.clientY);
+      const onTouchMove = (e: TouchEvent) => {
+        const t = e.touches[0];
+        if (!t) return;
+        e.preventDefault();
+        move(t.clientX, t.clientY);
+      };
+      const finish = () => {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', finish);
+        window.removeEventListener('touchmove', onTouchMove);
+        window.removeEventListener('touchend', finish);
+        window.removeEventListener('touchcancel', finish);
+        setDrag(null);
+        if (!session.moved) {
+          openNode(id);
+          return;
+        }
+        const { armed: arm, landing: land, byId: ids } = live.current;
+        if (arm) {
+          setMerge({ a: arm.a, b: arm.b, stage: 'choose', name: ids[arm.b]?.name ?? '' });
+          return;
+        }
+        if (land) {
+          // A person changing team is unremarkable; moving a team takes its
+          // whole subtree with it, so that one gets asked about.
+          if (ids[id]?.kind === 'person') reparent(id, land.parentId);
+          else setMoveAsk({ id, parentId: land.parentId });
+        }
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', finish);
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', finish);
+      window.addEventListener('touchcancel', finish);
+    },
+    [frame.busy, k, tx, ty, toWorld, layout, pinned, openNode, reparent],
+  );
 
   /* --- pointer on a ring -------------------------------------------------- */
   const angleOn = useCallback(
@@ -833,6 +1204,24 @@ export default function GrowLab() {
 
   const menuOwner = menu ? byId[menu.parentId] : null;
 
+  const askPlacement = (() => {
+    const focusId = merge ? merge.b : moveAsk ? moveAsk.id : null;
+    if (!focusId) return null;
+    const here = toScreen(focusId);
+    const n = byId[focusId];
+    const h = merge ? (merge.stage === 'choose' ? 268 : merge.stage === 'rename' ? 300 : 280) : 232;
+    return {
+      ...placeCallout({ x: here.x, y: here.y, r: (n ? nodeR(n) : 40) * k }, otherBoxes(focusId), CALLOUT_W, h, size.w, size.h),
+    };
+  })();
+
+  /** Teams a pair could be filed under — never one of their own descendants. */
+  const parentChoices = (() => {
+    if (!merge) return [];
+    const blocked = new Set([...descendantIds(layout.kids, merge.a), ...descendantIds(layout.kids, merge.b)]);
+    return teams.filter((t) => !blocked.has(t.id) && t.name?.trim());
+  })();
+
   /** One entry per visible node: where its label goes and what it would say. */
   const labelItems = nodes
     .map((n) => {
@@ -899,7 +1288,8 @@ export default function GrowLab() {
               const R = layout.ring[t.id];
               const mo = m(t.id);
               if (!R || mo.a < 0.05) return null;
-              const live = hover?.parentId === t.id || menu?.parentId === t.id;
+              const live =
+                hover?.parentId === t.id || menu?.parentId === t.id || landing?.parentId === t.id;
               return (
                 <g key={`ring-${t.id}`}>
                   <circle
@@ -945,8 +1335,35 @@ export default function GrowLab() {
 
             {nodes.length === 0 && <SeedNode onPick={startFirstPerson} />}
 
+            {/* the droplet: two teams running together, or already doing so */}
+            {(() => {
+              // Visible while you hold them together, and while you decide —
+              // the question on screen is about these two, so show them joined.
+              const pair = coalescing ?? armed ?? (merge ? { a: merge.a, b: merge.b } : null);
+              if (!pair) return null;
+              const ma = m(pair.a);
+              const mb = m(pair.b);
+              const a = byId[pair.a];
+              const b = byId[pair.b];
+              if (!a || !b) return null;
+              const d = metaballPath(
+                { x: ma.x, y: ma.y, r: nodeR(a) + 4 },
+                { x: mb.x, y: mb.y, r: nodeR(b) + 4 },
+              );
+              if (!d) return null;
+              return <path d={d} fill={TEAM_HUE} fillOpacity={coalescing ? 0.3 : 0.2} />;
+            })()}
+
             {nodes.map((n) => (
-              <NodeShape key={n.id} node={n} mo={m(n.id)} selected={openId === n.id} onPick={() => openNode(n.id)} />
+              <NodeShape
+                key={n.id}
+                node={n}
+                mo={m(n.id)}
+                selected={openId === n.id}
+                dragging={drag?.id === n.id && drag.moved}
+                joining={armed ? armed.a === n.id || armed.b === n.id : false}
+                onGrab={(cx, cy) => beginDrag(n.id, cx, cy)}
+              />
             ))}
 
             {frame.pos.__solo && (
@@ -1145,6 +1562,146 @@ export default function GrowLab() {
         </div>
       )}
 
+      {/* ---- running two teams together ---- */}
+      {merge && askPlacement && (
+        <div
+          className="zen-callout"
+          style={{
+            position: 'absolute',
+            ...(askPlacement.side === 'sheet' ? { bottom: 12 } : { top: askPlacement.rect.y }),
+            left: askPlacement.rect.x,
+            width: askPlacement.rect.w,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="zen-kicker">
+            {byId[merge.a]?.name ?? 'This team'} + {byId[merge.b]?.name ?? 'that one'}
+          </div>
+
+          {merge.stage === 'choose' && (
+            <>
+              <h2 className="zen-title">What should happen?</h2>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <button
+                  className="zen-choice"
+                  onClick={() => setMerge({ ...merge, stage: 'rename', name: byId[merge.b]?.name ?? '' })}
+                >
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>Make them one team</span>
+                  <span style={{ fontSize: 12, color: INK_SOFT }}>
+                    Everyone and everything in both, on one ring. Nothing above either team changes.
+                  </span>
+                </button>
+                <button className="zen-choice" onClick={() => setMerge({ ...merge, stage: 'parent' })}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>Give them a shared parent</span>
+                  <span style={{ fontSize: 12, color: INK_SOFT }}>
+                    Both stay as they are, and start orbiting the same thing.
+                  </span>
+                </button>
+              </div>
+              <div style={{ display: 'flex', marginTop: 14 }}>
+                <div style={{ flex: 1 }} />
+                <button className="zen-ghost" onClick={() => setMerge(null)}>
+                  Leave them apart
+                </button>
+              </div>
+            </>
+          )}
+
+          {merge.stage === 'rename' && (
+            <>
+              <h2 className="zen-title">What is the merged team called?</h2>
+              <input
+                className="zen-input"
+                autoFocus
+                placeholder="Team name"
+                value={merge.name}
+                onChange={(e) => setMerge({ ...merge, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && merge.name.trim()) runMerge(merge.a, merge.b, merge.name);
+                }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                {[...new Set([byId[merge.a]?.name, byId[merge.b]?.name, ...TEAM_NAMES])]
+                  .filter((v): v is string => !!v?.trim())
+                  .slice(0, 5)
+                  .map((v) => (
+                    <button key={v} className="zen-chip" onClick={() => setMerge({ ...merge, name: v })}>
+                      {v}
+                    </button>
+                  ))}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16 }}>
+                <button className="zen-ghost" onClick={() => setMerge({ ...merge, stage: 'choose' })}>
+                  Back
+                </button>
+                <div style={{ flex: 1 }} />
+                <button
+                  className="zen-primary"
+                  disabled={!merge.name.trim()}
+                  onClick={() => runMerge(merge.a, merge.b, merge.name)}
+                >
+                  Merge
+                </button>
+              </div>
+            </>
+          )}
+
+          {merge.stage === 'parent' && (
+            <>
+              <h2 className="zen-title">What do they both sit under?</h2>
+              <div style={{ display: 'grid', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
+                <button className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, null)}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>Something new</span>
+                  <span style={{ fontSize: 12, color: INK_SOFT }}>A new node, made to hold the two of them</span>
+                </button>
+                {parentChoices.map((t) => (
+                  <button key={t.id} className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, t.id)}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{t.name}</span>
+                    <span style={{ fontSize: 12, color: INK_SOFT }}>Already on the map</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', marginTop: 14 }}>
+                <button className="zen-ghost" onClick={() => setMerge({ ...merge, stage: 'choose' })}>
+                  Back
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ---- moving a team to a different parent ---- */}
+      {moveAsk && !merge && askPlacement && (
+        <div
+          className="zen-callout"
+          style={{
+            position: 'absolute',
+            ...(askPlacement.side === 'sheet' ? { bottom: 12 } : { top: askPlacement.rect.y }),
+            left: askPlacement.rect.x,
+            width: askPlacement.rect.w,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="zen-kicker">{byId[moveAsk.id]?.name ?? 'This team'}</div>
+          <h2 className="zen-title">
+            Move it under {byId[moveAsk.parentId]?.name ?? 'that team'}?
+          </h2>
+          <p style={{ fontSize: 13, color: INK_SOFT, margin: '0 0 14px' }}>
+            Everything below it comes too. Dropping it somewhere on the paper only moves it.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button className="zen-ghost" onClick={() => setMoveAsk(null)}>
+              Just leave it there
+            </button>
+            <div style={{ flex: 1 }} />
+            <button className="zen-primary" onClick={() => reparent(moveAsk.id, moveAsk.parentId)}>
+              Move it
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ---- chrome ---- */}
       <div style={{ position: 'absolute', top: 18, left: 22, pointerEvents: 'none' }}>
         <div style={{ fontSize: 12, letterSpacing: '.1em', textTransform: 'uppercase', color: INK_SOFT }}>
@@ -1154,7 +1711,7 @@ export default function GrowLab() {
       </div>
 
       <div style={{ position: 'absolute', top: 16, right: 20, display: 'flex', gap: 8 }}>
-        {layout.roots.length > 1 && (
+        {(layout.roots.length > 1 || anyPinned) && (
           <button className="zen-ghost" onClick={tidyUp}>
             Tidy up
           </button>
@@ -1240,12 +1797,16 @@ function NodeShape({
   node,
   mo,
   selected,
-  onPick,
+  dragging,
+  joining,
+  onGrab,
 }: {
   node: Node;
   mo: Motion;
   selected: boolean;
-  onPick: () => void;
+  dragging: boolean;
+  joining: boolean;
+  onGrab: (clientX: number, clientY: number) => void;
 }) {
   const isTeam = node.kind === 'team';
   const r = nodeR(node);
@@ -1257,17 +1818,31 @@ function NodeShape({
 
   return (
     <g
-      transform={`translate(${mo.x} ${mo.y}) scale(${0.62 + 0.38 * mo.a})`}
+      transform={`translate(${mo.x} ${mo.y}) scale(${(0.62 + 0.38 * mo.a) * (dragging ? 1.06 : 1)})`}
       opacity={mo.a}
       // Until it has arrived it is invisible but still hit-testable, and it is
       // sitting on top of its parent — so it must not take the click.
-      style={{ cursor: 'pointer', pointerEvents: mo.a < 0.6 ? 'none' : 'auto' }}
-      onClick={(e) => {
-        e.stopPropagation();
-        onPick();
+      style={{
+        cursor: dragging ? 'grabbing' : 'grab',
+        pointerEvents: mo.a < 0.6 ? 'none' : 'auto',
       }}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        onGrab(e.clientX, e.clientY);
+      }}
+      onTouchStart={(e) => {
+        const t = e.touches[0];
+        if (!t) return;
+        e.stopPropagation();
+        onGrab(t.clientX, t.clientY);
+      }}
+      // The press already did the work. The browser still fires a click
+      // afterwards, and letting it reach the paper would shut the panel that
+      // the release just opened.
+      onClick={(e) => e.stopPropagation()}
     >
       {wants && <circle className="zen-pulse" r={r + 11} fill={hue} fillOpacity={0.18} />}
+      {joining && <circle r={r + 13} fill={TEAM_HUE} fillOpacity={0.16} />}
       {selected && <circle r={r + 8} fill="none" stroke={hue} strokeWidth={1.5} opacity={0.5} />}
       <circle r={r} fill={SURFACE} stroke={hue} strokeWidth={isTeam ? 3 : 2.5} opacity={unnamed ? 0.55 : 1} />
       {isTeam ? (

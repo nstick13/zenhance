@@ -81,6 +81,12 @@ clicking the node that's asking for them.
 - **`onPointerMove` is not a safe default for hover.** Plain mouse events fire
   everywhere, including the older browsers this has to run on; the ring's hover
   band uses those.
+- **The browser's `click` still arrives after your own mouseup handler has run.**
+  A node opens its panel on release, and the trailing click then bubbled to the
+  paper and shut it again. The node has to swallow that click.
+- **Drag listeners must be attached synchronously, not in an effect.** An effect
+  only runs after React commits, and a quick press-and-release finishes before
+  that — which silently swallowed the tap.
 
 ### Growing past the first team *(2026-09-20)*
 Hovering a team's **dotted orbit** reveals a `+` that rides the ring under the
@@ -122,6 +128,44 @@ to run straight through its own people's labels. The map carries a headcount
 (the whole subtree, so a parent counts everyone beneath it); the purpose stays
 in the panel it was typed into.
 
+### Moving things by hand *(2026-09-20)*
+**Anything can be dragged anywhere.** A node you put somewhere stays there, its
+children keep orbiting it from its new spot, and anything below it that had
+also been hand-placed travels with it. **Tidy up** is the undo: every
+hand-placed node goes back on its orbit and the islands straighten into a row.
+The camera's auto-fit is frozen for the duration of a drag — the world must not
+zoom or slide under the pointer while you're holding something.
+
+**A drop is also a question about the org**, read the way the production map
+reads it (`lib/orbital/snap.ts`, Greg 2026-09-13: *"snapping is relative to
+parent orbits, rather than an absolute grid"* — radius says which level, angle
+says which parent). Here the rungs aren't global (each island has its own), so
+**the orbit you landed on answers both at once**:
+
+- **Let go near an orbit** → that team is offered as the new parent. A **person**
+  just moves; moving a **team** takes its whole subtree with it, so that one is
+  asked about first. Either way the node gives up its hand-placed position —
+  joining a team means taking a seat on it.
+- **Let go on open paper** → nothing about the org changed. It has just moved.
+- A node can never be dropped inside its own subtree; that would cut the
+  subtree off the map (the guard `lib/orbital/snap.ts` also carries).
+
+### Running two teams together *(2026-09-20)*
+Drag one team close to another and they visibly start to run together — a
+metaball neck is drawn between them, and it stays while you decide, because the
+question on screen is about those two. Letting go asks which of two very
+different things you meant:
+
+| Choice | What it does |
+|---|---|
+| **Make them one team** | Everything either held — teams and people alike — ends up on the survivor's ring, under a name you give during the merge. **Nothing above either team changes.** |
+| **Give them a shared parent** | Both stay exactly as they are and start orbiting the same thing — an existing node, or a new one made for them. |
+
+Choosing to merge slides one team into the other for ~420ms before they become
+one, so the coalescence is something you watch rather than a jump cut (skipped
+outright under reduced motion). The shared-parent route **can orphan a parent**
+that has just lost its only child — allowed, by instruction.
+
 ### 🔴 Known limit — depth past three rungs
 Three rungs read beautifully. At **four** the camera has to pull back to about
 `k≈0.22`, and while the labels stay legible the nodes become specks and start
@@ -153,8 +197,12 @@ a half-done size floor makes nodes overlap, which is worse than small.
    answered the questions), or are they just the first seat?
 3. **Editing vs. adding** — clicking a finished node currently reopens its
    wizard prefilled. Fine for a feel study; probably not the real interaction.
-4. **Tidy up is the only layout control.** No drag, no snapping — by instruction,
-   and a manual reorder (above) will have to land somewhere in here.
+4. **Nothing pins an island's order.** Tidy up sorts islands left-to-right by
+   where they already are, so the row reshuffles if you move one. Fine for now;
+   the manual ordering Greg wants will need a real answer.
+5. **Merging keeps the *target's* place in the hierarchy.** Drag A onto B and
+   the survivor sits where B sat. With A and B under different parents that is
+   a choice, not a law — it has not been put to Greg.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
