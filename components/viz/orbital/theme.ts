@@ -1,63 +1,56 @@
 /**
- * The orbital map's palette — the shipped "paper" register (Greg's call,
- * 2026-09-13), so this sits inside Zenhance rather than beside it.
- *
- * Colour is spent sparingly and only where it carries meaning: the map is
- * paper and ink, and the one place a hue appears is where a number needs a
- * verdict — team health, and a work item's status.
+ * Bright orbital palette: cool structure, vivid progress, quiet white space.
  */
 export const C = {
-  paper: "#f6f4ee",
-  band: ["#f2efe6", "#eeeade", "#e9e5d7", "#e5e0d0"],
-  bandRing: "#ded8c9",
-  atmosphere: "#efece3",
-  rung: "#b0a892",
+  paper: "#fefefe",
+  guide: "#b9c5ed",
 
   unitFill: "#ffffff",
-  unitStroke: "#d3ccba",
+  unitStroke: "#afbbf2",
+  nodeShadow: "#5667b3",
 
-  ink: "#22272e",
-  inkSoft: "#5c6570",
+  ink: "#222b58",
+  inkSoft: "#6370a1",
 
-  seat: "#6b727c",
-  seatLead: "#22272e",
+  seat: "#6075d8",
+  seatLead: "#6654c7",
   seatOpen: "#ffffff",
 
-  link: "#d9d3c4",
-  seatLink: "#c9c2b0",
-  dust: "#e7e2d4",
+  link: "#c8d1f4",
+  seatLink: "#bbcaeb",
 
   /** Unfilled part of any progress ring. */
-  track: "#e2ddcf",
-  accent: "#10b981",
+  track: "#e0e8fb",
+  accent: "#24bfdb",
   /** The route from the company to whatever you last clicked. Its own colour,
    *  not the accent: green already means "you're dragging this". */
-  path: "#7a6cff",
-  alert: "#ef4444",
+  path: "#765ae8",
+  alert: "#e95677",
   white: "#ffffff",
 
+  delivery: "#5767e8",
+  sprint: "#925cf2",
+  health: "#24c6dd",
+
   /** Verdict colours — the only hues on the map. */
-  ok: "#10b981",
-  watch: "#eab308",
-  risk: "#ef4444",
+  ok: "#27c5da",
+  watch: "#efa637",
+  risk: "#e95677",
 } as const;
 
 /** A work item's status, read at a glance. */
 export const WORK_STATUS_FILL: Record<string, string> = {
-  backlog: "#ded8c9",
-  in_progress: "#5c6570",
-  review: "#eab308",
-  done: "#10b981",
+  backlog: "#c9d4ef",
+  in_progress: "#6075d8",
+  review: "#925cf2",
+  done: "#24bfdb",
 };
 
 export const FONT =
   "-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif";
 
 /**
- * Health is the one ring that renders a judgement rather than a quantity —
- * so it only reaches for colour when there is something to say. A healthy
- * team is drawn in ink like everything else; the map stays paper until it
- * needs to raise its hand.
+ * The health ring stays cyan when healthy, shifting warm only when needed.
  */
 export const healthColor = (value: number): string =>
-  value < 0.45 ? C.risk : value < 0.72 ? C.watch : C.inkSoft;
+  value < 0.45 ? C.risk : value < 0.72 ? C.watch : C.health;

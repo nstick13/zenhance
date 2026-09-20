@@ -3,8 +3,8 @@
  *
  * These are Konva `sceneFunc`s rather than React nodes on purpose. The
  * morphs (Greg, 2026-09-13/14) need to interpolate on *every* frame as the
- * camera moves — an arc shrinking onto a circle, a torus resolving into
- * people, a capsule opening into the work inside it — and pushing that
+ * camera moves — a torus resolving into people, a capsule opening into the
+ * work inside it — and pushing that
  * through React would mean a re-render per frame. Each of these is one Shape
  * that reads the live scene, the live zoom and the live spring positions and
  * paints the lot in a single pass.
@@ -27,8 +27,8 @@ import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
 import {
   UNIT_CULL_PX,
   drawnUnitRadius,
-  lerp,
   smoothstep,
+  unitRingReveal,
   unitPresence,
   type Reveal,
 } from "@/lib/orbital/lod";
@@ -91,6 +91,9 @@ export type RenderCtx = {
    *  UAT's complaint was that the map "loses context quickly". */
   focusedUnitId: string | null;
   focusPath: ReadonlySet<string>;
+  /** The semantic-focus branch. Context remains in the motion graph so it
+   * can travel out and back, but it should not compete with the local map. */
+  focusBranch: ReadonlySet<string> | null;
   /** Live stage zoom, read straight off the camera each frame — node sizes
    *  hold still against it, so they can't be quantised to React's throttled
    *  copy without visibly pulsing. */
@@ -104,13 +107,7 @@ const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
 
 // --- ring geometry ---------------------------------------------------------
-const RING_CHUNKY_WIDTH = 10;
-const RING_THIN_WIDTH = 3;
-const RING_CHUNKY_STEP = 14;
-const RING_THIN_STEP = 5.5;
-const RING_THIN_INSET = 7;
-
-const SEAT_RING_WIDTH = 2.4;
+const SEAT_RING_WIDTH = 3.6;
 
 /** A unit's gauges fade in between these two on-screen node sizes. Below the
  *  first they are a smudge; above the second you can read them. */
@@ -127,8 +124,8 @@ const PATH_STROKE_PX = 2.8;
 const PATH_FOCUS_STROKE_PX = 4.2;
 const PATH_LINK_MIN_PX = 3.5;
 
-/** Rings sit back until you ask them a question (Greg, 2026-09-14). */
-const RING_RESTING_ALPHA = 0.34;
+/** Rings carry visible information even before hover (Greg, 2026-09-20). */
+const RING_RESTING_ALPHA = 0.93;
 
 /** A rounded rectangle, drawn by hand — Konva's context doesn't proxy the
  *  browser's own `roundRect`. */
@@ -145,26 +142,26 @@ function roundRectPath(ctx: Konva.Context, x: number, y: number, w: number, h: n
  *  Shared with the hit test, so what you can point at is exactly what you
  *  can see — the one number both sides have to agree on. */
 export function ringGeometry(
-  unit: { r: number; seatRingRadius: number },
+  unit: PlacedUnit,
   index: number,
-  settle: number,
-  /** How much the node itself has been inflated to stay visible. The rings are
-   *  the node's furniture, so they take the same magnification — otherwise an
-   *  inflated disc simply swallows them. It is 1 at every zoom that matters. */
-  inflate = 1,
+  scale: number,
 ) {
-  const base = lerp(unit.seatRingRadius, unit.r + RING_THIN_INSET, settle) * inflate;
-  const step = lerp(RING_CHUNKY_STEP, RING_THIN_STEP, settle) * inflate;
+  const live = Math.max(scale, 1e-6);
+  const drawn = unitDrawRadius(unit, live);
+  const screenRadius = drawn * live;
+  const widthPx = Math.min(7.5, Math.max(4.5, screenRadius * 0.13));
+  const gapPx = Math.max(2.4, widthPx * 0.46);
+  const insetPx = Math.max(3.5, widthPx * 0.7);
   return {
-    radius: base + index * step,
-    width: lerp(RING_CHUNKY_WIDTH, RING_THIN_WIDTH, settle) * inflate,
+    radius: drawn + (insetPx + widthPx / 2 + index * (widthPx + gapPx)) / live,
+    width: widthPx / live,
   };
 }
 
 /** The drawn size of a unit at the current zoom — the one number the disc,
  *  its label and its hit test all have to agree on. */
 export function unitDrawRadius(unit: PlacedUnit, scale: number): number {
-  return drawnUnitRadius(unit, scale, unit.drawCeiling);
+  return drawnUnitRadius(unit, scale, unit.drawCeiling) * 0.9;
 }
 
 /**
@@ -195,32 +192,34 @@ export function paintUnitDiscs(get: CtxGetter) {
       const hovered = c.hoveredUnitId === unit.id;
       const focused = c.focusedUnitId === unit.id;
       const onPath = c.focusPath.has(unit.id);
+      const outsideFocus = !!c.focusBranch && !c.focusBranch.has(unit.id);
       // Whatever the zoom, a unit on the path keeps a full-strength outline.
       const solid = dragged || hovered || onPath;
 
       // A speck held above the pixel floor shouldn't read as solidly as a
       // bubble you could point at, so the faintest ones sit back into the page.
-      ctx.setAttr("globalAlpha", solid ? 1 : unitPresence(r * scale));
+      const contextAlpha = outsideFocus ? (onPath ? 0.55 : 0.1) : 1;
+      ctx.setAttr("globalAlpha", (solid ? 1 : unitPresence(r * scale)) * contextAlpha);
       ctx.setAttr("fillStyle", C.unitFill);
       ctx.setAttr("strokeStyle", dragged ? C.accent : focused ? C.ink : onPath ? C.path : C.unitStroke);
       const outline = dragged ? 3 : focused ? PATH_FOCUS_STROKE_PX : onPath ? PATH_STROKE_PX : 1.75;
       ctx.setAttr("lineWidth", outline * Math.min(inv, r / 6));
-      // The paper lift, but only on nodes big enough to cast one — a shadow
+      // A soft blue lift, but only on nodes big enough to cast one — a shadow
       // under a two-pixel dot is just a smudge, and there are four hundred
       // of them.
       const lifted = r * scale > SHADOW_MIN_PX;
       if (lifted) {
-        ctx.setAttr("shadowColor", C.ink);
-        ctx.setAttr("shadowBlur", (dragged ? 26 : 14) * inv);
-        ctx.setAttr("shadowOffsetY", (dragged ? 8 : 3) * inv);
-        ctx.setAttr("globalAlpha", (dragged ? 0.16 : 0.06) * (solid ? 1 : unitPresence(r * scale)));
+        ctx.setAttr("shadowColor", C.nodeShadow);
+        ctx.setAttr("shadowBlur", (dragged ? 28 : 20) * inv);
+        ctx.setAttr("shadowOffsetY", (dragged ? 8 : 5) * inv);
+        ctx.setAttr("globalAlpha", (dragged ? 0.27 : 0.19) * (solid ? 1 : unitPresence(r * scale)) * contextAlpha);
         ctx.beginPath();
         ctx.arc(centre.x, centre.y, r, 0, TAU, false);
         ctx.fill();
         ctx.setAttr("shadowColor", "transparent");
         ctx.setAttr("shadowBlur", 0);
         ctx.setAttr("shadowOffsetY", 0);
-        ctx.setAttr("globalAlpha", solid ? 1 : unitPresence(r * scale));
+        ctx.setAttr("globalAlpha", (solid ? 1 : unitPresence(r * scale)) * contextAlpha);
       }
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, r, 0, TAU, false);
@@ -241,53 +240,47 @@ export function paintUnitDiscs(get: CtxGetter) {
 }
 
 /**
- * A unit's progress rings: delivery, sprint, health. At distance these are
- * chunky arcs standing out in the orbit where the people will be — they *are*
- * what you read when nothing else is drawn. As you approach they shrink onto
- * the circle and thin out, leaving the orbit free for the torus, and then for
- * the people themselves.
+ * Fitness-like concentric progress rings: delivery, sprint, health. Geometry
+ * stays attached to the drawn disc while visibility arrives by reporting depth.
  */
 export function paintUnitRings(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const settle = c.reveal.ringSettle;
-
     ctx.save();
     ctx.setAttr("lineCap", "round");
     for (const unit of c.scene.units) {
+      if (c.focusBranch && !c.focusBranch.has(unit.id)) continue;
       const progress = c.unitRings.get(unit.id);
       if (!progress || progress.people === 0) continue;
       const drawn = unitDrawRadius(unit, c.scale);
       // Three gauges around a two-pixel dot are not three gauges, they're a
       // smudge — and on a 400-unit map they turn the whole far view fuzzy.
       // Rings wait until the node is big enough to actually carry them.
-      const legible = smoothstep(RING_MIN_PX, RING_CLEAR_PX, drawn * c.scale);
+      const legible = smoothstep(RING_MIN_PX, RING_CLEAR_PX, drawn * c.scale)
+        * unitRingReveal(unit.depth, c.scale);
       if (legible <= 0.01) continue;
       const centre = c.at(uid(unit.id), unit);
-      const from = unit.seatFanAngle - Math.max(unit.seatFanSpan, 0.9) / 2;
-      const inflate = drawn / Math.max(unit.r, 1e-6);
+      const from = -Math.PI / 2;
 
       UNIT_RING_KEYS.forEach((key, i) => {
         const value = Math.max(0, Math.min(1, progress[key]));
-        const { radius, width } = ringGeometry(unit, i, settle, inflate);
+        const { radius, width } = ringGeometry(unit, i, c.scale);
         if (radius <= 0) return;
         const hovered = c.hoveredRing?.unitId === unit.id && c.hoveredRing.key === key;
-        const colour = key === "delivery" ? C.ink : key === "sprint" ? C.inkSoft : healthColor(value);
+        const colour = key === "delivery" ? C.delivery : key === "sprint" ? C.sprint : healthColor(value);
 
-        if (settle > 0.02) {
-          ctx.setAttr("globalAlpha", (hovered ? 0.7 : 0.3) * settle * legible);
-          ctx.setAttr("strokeStyle", C.track);
-          ctx.setAttr("lineWidth", width);
-          ctx.beginPath();
-          ctx.arc(centre.x, centre.y, radius, 0, TAU, false);
-          ctx.stroke();
-        }
+        ctx.setAttr("globalAlpha", (hovered ? 0.8 : 0.7) * legible);
+        ctx.setAttr("strokeStyle", C.track);
+        ctx.setAttr("lineWidth", width);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, radius, 0, TAU, false);
+        ctx.stroke();
 
         if (value <= 0.001) return;
         // Hovering lifts the ring off the page: full colour and a shadow.
         if (hovered) {
-          ctx.setAttr("shadowColor", "rgba(34,39,46,0.5)");
+          ctx.setAttr("shadowColor", "rgba(89,86,188,0.38)");
           ctx.setAttr("shadowBlur", 14);
           ctx.setAttr("shadowOffsetY", 3);
         }
@@ -310,9 +303,8 @@ export function paintUnitRings(get: CtxGetter) {
 
 /**
  * The torus: one thick arc standing exactly where a unit's people will be,
- * its length set by how many there are (Greg, 2026-09-14). It arrives once
- * the rings have settled onto the circle, and gives way to the people
- * themselves as you keep going. It inherits their fan angle, so it obeys the
+ * its length set by how many there are (Greg, 2026-09-14). It gives way to
+ * the people themselves as you keep going. It inherits their fan angle, so it obeys the
  * "furthest side from the grandparent" rule without being told to.
  */
 export function paintTorus(get: CtxGetter) {
@@ -327,6 +319,7 @@ export function paintTorus(get: CtxGetter) {
     ctx.setAttr("strokeStyle", C.seat);
     ctx.setAttr("lineWidth", SEAT_RADIUS * 2);
     for (const unit of c.scene.units) {
+      if (c.focusBranch && !c.focusBranch.has(unit.id)) continue;
       const crowd = (c.scene.seatsByUnit.get(unit.id) ?? []).filter((s) => s.kind !== "lead");
       if (crowd.length === 0) continue;
       const centre = c.at(uid(unit.id), unit);
@@ -360,6 +353,7 @@ export function paintSeatRings(get: CtxGetter) {
     ctx.setAttr("lineCap", "round");
     ctx.setAttr("lineWidth", SEAT_RING_WIDTH);
     for (const seat of c.scene.seats) {
+      if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
       const progress = c.seatRings.get(seat.id);
       if (!progress || progress.total === 0) continue;
       const at = c.at(sid(seat.id), seat);
@@ -374,7 +368,7 @@ export function paintSeatRings(get: CtxGetter) {
 
       if (progress.ratio <= 0.001) continue;
       ctx.setAttr("globalAlpha", 0.85 * visible * (focused ? 1 : 0.3));
-      ctx.setAttr("strokeStyle", C.ink);
+        ctx.setAttr("strokeStyle", C.delivery);
       ctx.beginPath();
       const from = -Math.PI / 2;
       ctx.arc(at.x, at.y, radius, from, from + progress.ratio * TAU, false);
@@ -402,6 +396,7 @@ export function paintWorkCapsules(get: CtxGetter) {
     if (t <= 0.01) return;
 
     for (const seat of c.scene.seats) {
+      if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
       const statuses = c.workStatus.get(seat.id) ?? [];
       if (statuses.length === 0) continue;
       const live = c.at(sid(seat.id), seat);
@@ -449,6 +444,7 @@ export function paintWorkDots(get: CtxGetter) {
 
     ctx.save();
     for (const seat of c.scene.seats) {
+      if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
       if (seat.work.length === 0) continue;
       const live = c.at(sid(seat.id), seat);
       const dx = live.x - seat.x;
@@ -488,7 +484,6 @@ export function paintUnitLinks(get: CtxGetter) {
     ctx.save();
     ctx.setAttr("lineCap", "round");
     ctx.setAttr("strokeStyle", C.link);
-    ctx.setAttr("globalAlpha", 0.8);
     const width = (targetId: string) => {
       const share = c.maxMoney > 0 ? (c.moneyByUnit.get(targetId) ?? 0) / c.maxMoney : 0;
       return 2.5 + Math.sqrt(Math.max(0, share)) * 20;
@@ -500,6 +495,9 @@ export function paintUnitLinks(get: CtxGetter) {
       if (link.kind !== "unit" || onPath(link.sourceId, link.targetId)) continue;
       const from = c.at(uid(link.sourceId), link.from);
       const to = c.at(uid(link.targetId), link.to);
+      const outsideFocus = !!c.focusBranch &&
+        (!c.focusBranch.has(link.sourceId) || !c.focusBranch.has(link.targetId));
+      ctx.setAttr("globalAlpha", outsideFocus ? 0.1 : 0.8);
       ctx.setAttr("lineWidth", width(link.targetId));
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
@@ -683,23 +681,11 @@ export function paintRipples(get: CtxGetter) {
       if (age < 0 || age > 1) continue;
       const eased = 1 - (1 - age) * (1 - age);
       ctx.setAttr("globalAlpha", (1 - age) * 0.55);
-      ctx.setAttr("lineWidth", lerp(5, 1, age));
+      ctx.setAttr("lineWidth", 5 - 4 * age);
       ctx.beginPath();
       ctx.arc(ripple.x, ripple.y, ripple.reach * eased, 0, TAU, false);
       ctx.stroke();
     }
     ctx.restore();
-  };
-}
-
-/** Ambient motes, parallaxed by the layer they sit in. */
-export function paintDust(points: Point[]) {
-  return (ctx: Konva.Context, shape: Konva.Shape) => {
-    ctx.beginPath();
-    for (const p of points) {
-      ctx.moveTo(p.x + 1.6, p.y);
-      ctx.arc(p.x, p.y, 1.6, 0, TAU, false);
-    }
-    ctx.fillShape(shape);
   };
 }

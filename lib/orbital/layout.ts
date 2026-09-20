@@ -59,10 +59,9 @@ export type PlacedUnit = {
   sector: Sector;
   /** Where this unit's people fan out — also where a "+ person" lands. */
   seatFanAngle: number;
-  /** How wide that fan is, and how far out it sits. When people are hidden
-   *  at distance, the unit's progress arcs stand in for them by occupying
-   *  exactly this stretch of orbit, then shrink onto the circle as the
-   *  people grow out of it (Greg, 2026-09-13). */
+  /** How wide that fan is, and how far out it sits. The torus stands in for
+   *  people while they're hidden; progress rings now remain close to the
+   *  unit disc at every zoom (Greg, 2026-09-20). */
   seatFanSpan: number;
   seatRingRadius: number;
   /** Where the lead sits: facing this unit's own parent, at every zoom. */
@@ -82,6 +81,7 @@ export type PlacedSeat = {
   id: string;
   unitId: string;
   personId: string | null;
+  photoUrl?: string | null;
   name: string;
   role: string | null;
   kind: SeatKind;
@@ -511,6 +511,7 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
       id: seat.id,
       unitId: unit.id,
       personId: seat.personId,
+      photoUrl: seat.photoUrl ?? null,
       name: seat.name,
       role: seat.role,
       kind: seat.kind,

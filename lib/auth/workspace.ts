@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { memberships, workspaces, type Workspace } from "@/lib/db/schema";
-import { getUserId } from "./currentUser";
+import { isRetiredScaleDemoWorkspace } from "@/lib/demoCompanies";
+import { getUserId, isDevAuthEnabled } from "./currentUser";
 
 /** Which of their workspaces the user last chose. */
 export const WORKSPACE_COOKIE = "zenhance_workspace";
@@ -20,7 +21,13 @@ export async function listWorkspaces(userId: string): Promise<Workspace[]> {
     .innerJoin(workspaces, eq(memberships.workspaceId, workspaces.id))
     .where(eq(memberships.userId, userId))
     .orderBy(asc(workspaces.createdAt));
-  return rows.map((r) => r.workspace);
+  const visible = rows.map((r) => r.workspace);
+  // This is a local demo decision, not a cap on customer company size. Keep
+  // the synthetic enterprise in the database for later scale work, but make
+  // only the two smaller companies interactive for the dev account.
+  return isDevAuthEnabled() && userId === "dev-user"
+    ? visible.filter((workspace) => !isRetiredScaleDemoWorkspace(workspace.name))
+    : visible;
 }
 
 /**
@@ -63,11 +70,15 @@ export async function getOrCreateWorkspace(
  */
 export async function selectWorkspace(userId: string, workspaceId: string): Promise<boolean> {
   const allowed = await db
-    .select({ id: memberships.workspaceId })
+    .select({ id: memberships.workspaceId, name: workspaces.name })
     .from(memberships)
+    .innerJoin(workspaces, eq(memberships.workspaceId, workspaces.id))
     .where(and(eq(memberships.userId, userId), eq(memberships.workspaceId, workspaceId)))
     .limit(1);
   if (allowed.length === 0) return false;
+  if (isDevAuthEnabled() && userId === "dev-user" && isRetiredScaleDemoWorkspace(allowed[0].name)) {
+    return false;
+  }
   (await cookies()).set(WORKSPACE_COOKIE, workspaceId, {
     httpOnly: true,
     sameSite: "lax",

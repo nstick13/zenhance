@@ -1,5 +1,7 @@
 "use client";
 
+// Archived after the semantic-focus interaction graduated to OrbitalMap.
+
 import {
   useMemo,
   useRef,

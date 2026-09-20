@@ -7,14 +7,15 @@
  *
  * The ladder, from far to near:
  *
- *   < 1.0    units, their rings, and one pinned dot per unit — the lead, the
- *            person you'd talk to about this node
+ *   < 1.0    units and one pinned dot per unit — the lead. Progress rings
+ *            reveal by depth; the central node always carries its rings
  *   1.0–1.75 the lead is joined by a torus: one thick arc standing where that
  *            unit's people will be, its length set by how many there are
  *   1.75+    the torus resolves into the people themselves, and each of them
  *            grows a capsule holding their whole board
  *   3.5+     the capsule resolves into individual work items you can point at
- *   5.5+     names are drawn on the map; below that they live in hover
+ *   0.7+     unit names may appear inside sufficiently large circles;
+ *            people's names remain in hover/tap detail
  *
  * Each level is the one above it magnified rather than a different drawing,
  * which is what makes zooming feel like walking closer.
@@ -33,17 +34,26 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
 /** Zoom bands, as [start, fullyShown]. */
 export const REVEAL_BANDS = {
   deepUnits: [0.1, 0.2],
-  /** Progress rings travel from chunky arcs out in the orbit to thin gauges
-   *  on the circle — done before the torus arrives, so the two never fight
-   *  over the same stretch of orbit. */
-  ringSettle: [0.45, 0.95],
   lead: [0.4, 0.65],
   torus: [0.95, 1.3],
   people: [1.7, 2.1],
   workCapsule: [1.75, 2.15],
   workDots: [3.4, 4.0],
-  labels: [5.3, 6.0],
 } as const;
+
+/** The centre always summarizes the company. Each reporting layer gains its
+ * gauges shortly after the preceding one, without lighting up the entire
+ * map at maximum zoom-out. This is a visual depth index, not a data metric. */
+export function unitRingReveal(depth: number, scale: number): number {
+  if (depth <= 0) return 1;
+  const start = 0.18 + depth * 0.13;
+  return smoothstep(start, start + 0.14, scale);
+}
+
+/** Names never compete with the map at overview scale. */
+export function unitLabelVisible(drawnRadius: number, scale: number): boolean {
+  return scale >= 0.7 && drawnRadius * scale >= 28;
+}
 
 /** A node drawn smaller than this on screen isn't worth a draw call. Nothing
  *  reaches it while `drawnUnitRadius` is holding the floors below. */
@@ -97,8 +107,6 @@ export function unitPresence(drawnScreenPx: number): number {
 
 export type Reveal = {
   deepUnits: number;
-  /** 0 = chunky arcs out in the orbit, 1 = thin gauges on the circle. */
-  ringSettle: number;
   /** The pinned lead dot. */
   lead: number;
   /** The aggregate arc standing in for a unit's people. */
@@ -109,8 +117,6 @@ export type Reveal = {
   workCapsule: number;
   /** Individual, pointable work items. */
   workDots: number;
-  /** Names drawn on the map rather than left to hover. */
-  labels: number;
 };
 
 const band = (b: readonly [number, number], scale: number) => smoothstep(b[0], b[1], scale);
@@ -120,7 +126,6 @@ export function revealAt(scale: number): Reveal {
   const dots = band(REVEAL_BANDS.workDots, scale);
   return {
     deepUnits: band(REVEAL_BANDS.deepUnits, scale),
-    ringSettle: band(REVEAL_BANDS.ringSettle, scale),
     lead: band(REVEAL_BANDS.lead, scale),
     // The torus is a stand-in: it arrives, then gives way to the real people.
     torus: band(REVEAL_BANDS.torus, scale) * (1 - people),
@@ -128,7 +133,6 @@ export function revealAt(scale: number): Reveal {
     // Likewise the capsule gives way to the items inside it.
     workCapsule: band(REVEAL_BANDS.workCapsule, scale) * (1 - dots),
     workDots: dots,
-    labels: band(REVEAL_BANDS.labels, scale),
   };
 }
 

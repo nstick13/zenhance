@@ -1,5 +1,7 @@
 "use client";
 
+// Archived reference: the production orbital map now owns this interaction.
+
 import dynamic from "next/dynamic";
 
 const OrbitalFocusMap = dynamic(() => import("./OrbitalFocusMap"), {

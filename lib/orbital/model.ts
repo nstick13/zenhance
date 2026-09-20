@@ -32,6 +32,7 @@ export type PersonInput = {
   id: string;
   name: string;
   title?: string | null;
+  photoUrl?: string | null;
 };
 
 export type AssignmentInput = {
@@ -54,6 +55,7 @@ export type Seat = {
   id: string;
   unitId: string;
   personId: string | null;
+  photoUrl?: string | null;
   name: string;
   role: string | null;
   kind: SeatKind;
@@ -136,6 +138,7 @@ export function buildOrbitalTree(input: OrgInput, opts: BuildOptions = {}): Orbi
         id: `open-${a.orgUnitId}-${openIndex++}`,
         unitId: a.orgUnitId,
         personId: null,
+        photoUrl: null,
         name: a.roleOnTeam ?? "Open role",
         role: a.roleOnTeam ?? null,
         kind: "open",
@@ -152,6 +155,7 @@ export function buildOrbitalTree(input: OrgInput, opts: BuildOptions = {}): Orbi
       id: `seat-${a.orgUnitId}-${a.personId}`,
       unitId: a.orgUnitId,
       personId: a.personId,
+      photoUrl: person.photoUrl ?? null,
       name: person.name,
       role: a.roleOnTeam ?? person.title ?? null,
       kind: unit.leadPersonId === a.personId ? "lead" : "member",
@@ -172,6 +176,7 @@ export function buildOrbitalTree(input: OrgInput, opts: BuildOptions = {}): Orbi
       id,
       unitId: u.id,
       personId: u.leadPersonId,
+      photoUrl: person.photoUrl ?? null,
       name: person.name,
       role: person.title ?? "Lead",
       kind: "lead",

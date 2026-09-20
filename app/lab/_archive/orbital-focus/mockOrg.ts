@@ -1,5 +1,5 @@
 /**
- * Invented, deterministic enterprise used only by the orbital-focus lab.
+ * Invented, deterministic enterprise preserved with the archived orbital-focus lab.
  * It deliberately has a ragged twelve-rung shape and teams at many depths.
  */
 

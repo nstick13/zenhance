@@ -35,6 +35,15 @@ describe("buildOrbitalTree", () => {
     expect(seats[0]).toMatchObject({ name: "Aimee Bradford", kind: "lead" });
   });
 
+  it("carries an existing person photo through to their map seat", () => {
+    const input = demoInput();
+    const aimee = input.people.find((person) => person.id === "aimee")!;
+    aimee.photoUrl = "https://example.test/avatar.png";
+    const tree = buildOrbitalTree(input);
+    const seat = [...tree.seats.values()].find((candidate) => candidate.personId === "aimee")!;
+    expect(seat.photoUrl).toBe(aimee.photoUrl);
+  });
+
   it("puts humans on every rung, not just the leaves", () => {
     const tree = buildOrbitalTree(demoInput());
     const depthsWithPeople = new Set(

@@ -576,6 +576,9 @@ export async function loadDemoOrg(): Promise<never> {
  * difference from `npm run db:companies`, which is hardcoded to `dev-user`.
  */
 export async function seedDemoCompany(kind: DemoCompanyKind): Promise<never> {
+  // Keep the scale fixture in code for later work, but do not offer it through
+  // an interactive action while the small-company visual language is in flux.
+  if (kind !== "small") throw new Error("Only the small example is currently available.");
   const { userId } = await requireWorkspace();
   const [ws] = await db
     .insert(workspaces)

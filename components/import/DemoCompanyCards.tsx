@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { seedDemoCompany } from "@/lib/data/actions";
 import { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
 
+const STARTER_KINDS = ["small"] as const satisfies readonly DemoCompanyKind[];
+
 /**
  * The "no file handy" door on the import page. Each card creates a *new*
  * workspace, seeds it, and drops you on its map — so the first thing a new
@@ -31,8 +33,8 @@ export function DemoCompanyCards() {
         own — your current one is left exactly as it is.
       </p>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {(Object.keys(DEMO_COMPANIES) as DemoCompanyKind[]).map((kind) => {
+      <div className="mt-4 max-w-md">
+        {STARTER_KINDS.map((kind) => {
           const c = DEMO_COMPANIES[kind];
           const isRunning = pending && running === kind;
           return (
@@ -53,9 +55,6 @@ export function DemoCompanyCards() {
         })}
       </div>
 
-      <p className="mt-3 text-xs text-ink-soft">
-        The large one takes a few seconds — it builds ~2,400 people.
-      </p>
     </section>
   );
 }

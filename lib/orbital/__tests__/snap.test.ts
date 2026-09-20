@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { polar, radiusOf } from "../geometry";
 import { buildOrbitalTree } from "../model";
 import { layoutOrbital } from "../layout";
-import { descendantIds, snapSeat, snapUnit } from "../snap";
+import { descendantIds, snapSeat, snapUnit, snapUnitOnRing } from "../snap";
 import { demoInput } from "./orbitalFixture";
 
 const scene = () => layoutOrbital(buildOrbitalTree(demoInput(), { workCountFor: () => 4 }));
@@ -85,6 +85,28 @@ describe("snapUnit — no burying one node under another", () => {
     const snap = snapUnit(s, "starlight", polar(moonlight.angle, band));
     expect(snap!.parentId).toBe("atlas");
     expect(Math.abs(snap!.angle - moonlight.angle)).toBeGreaterThan(1e-3);
+  });
+});
+
+describe("snapUnitOnRing — geography never changes reporting", () => {
+  it("keeps the real parent when moved beside another parent's units", () => {
+    const s = scene();
+    const orion = s.unitById.get("orion")!;
+    const starlight = s.unitById.get("starlight")!;
+    const snap = snapUnitOnRing(s, starlight.id, polar(orion.angle, radiusOf(starlight)));
+    expect(snap?.parentId).toBe("atlas");
+    expect(snap?.reparents).toBe(false);
+    expect(snap?.rerungs).toBe(false);
+  });
+
+  it("only proposes a level change when moved to another ring", () => {
+    const s = scene();
+    const starlight = s.unitById.get("starlight")!;
+    const innerBand = s.bands.find((band) => band.depth === 1)!.radius;
+    const snap = snapUnitOnRing(s, starlight.id, polar(starlight.angle, innerBand));
+    expect(snap?.depth).toBe(1);
+    expect(snap?.rerungs).toBe(true);
+    expect(snap?.parentId).toBe("atlas");
   });
 });
 

@@ -7,6 +7,8 @@ import {
   screenFloorPx,
   smoothstep,
   tierAt,
+  unitLabelVisible,
+  unitRingReveal,
 } from "../lod";
 
 describe("smoothstep", () => {
@@ -78,13 +80,18 @@ describe("revealAt — the ladder Greg specified", () => {
     expect(r.workCapsule).toBe(0); // likewise
   });
 
-  it("keeps names off the map until 5.5x", () => {
-    expect(revealAt(4).labels).toBe(0);
-    expect(revealAt(6.5).labels).toBe(1);
+  it("holds names until 0.7x and only within circles large enough for text", () => {
+    expect(unitLabelVisible(100, 0.69)).toBe(false);
+    expect(unitLabelVisible(30, 0.7)).toBe(false);
+    expect(unitLabelVisible(40, 0.7)).toBe(true);
   });
 
-  it("settles the rings onto their circles before the torus needs the orbit", () => {
-    expect(revealAt(REVEAL_BANDS.torus[0]).ringSettle).toBeGreaterThan(0.95);
+  it("shows central data rings at any zoom, then reveals each outer level in order", () => {
+    expect(unitRingReveal(0, 0.01)).toBe(1);
+    expect(unitRingReveal(1, 0.01)).toBe(0);
+    expect(unitRingReveal(1, 0.5)).toBe(1);
+    expect(unitRingReveal(2, 0.5)).toBeGreaterThan(0);
+    expect(unitRingReveal(3, 0.5)).toBe(0);
   });
 
   it("never runs outside 0..1 at any zoom", () => {
@@ -102,7 +109,6 @@ describe("revealAt — the ladder Greg specified", () => {
       const next = revealAt(scale);
       expect(next.people).toBeGreaterThanOrEqual(previous.people - 1e-9);
       expect(next.workDots).toBeGreaterThanOrEqual(previous.workDots - 1e-9);
-      expect(next.labels).toBeGreaterThanOrEqual(previous.labels - 1e-9);
       previous = next;
     }
   });
@@ -121,7 +127,6 @@ describe("revealAt — the ladder Greg specified", () => {
     expect(REVEAL_BANDS.lead[0]).toBeLessThan(REVEAL_BANDS.torus[0]);
     expect(REVEAL_BANDS.torus[1]).toBeLessThanOrEqual(REVEAL_BANDS.people[0]);
     expect(REVEAL_BANDS.people[1]).toBeLessThanOrEqual(REVEAL_BANDS.workDots[0]);
-    expect(REVEAL_BANDS.workDots[1]).toBeLessThanOrEqual(REVEAL_BANDS.labels[0]);
   });
 });
 

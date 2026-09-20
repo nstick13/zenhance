@@ -127,6 +127,34 @@ export function snapUnit(scene: OrbitalScene, unitId: string, pointer: Point): U
   };
 }
 
+/** Position-only unit snap. Radius proposes a level, but angle never chooses
+ * a parent: reporting structure is data, not geography. The caller may ask
+ * for confirmation when `rerungs` is true; until then this result is only a
+ * visual landing preview. */
+export function snapUnitOnRing(scene: OrbitalScene, unitId: string, pointer: Point): UnitSnap | null {
+  const dragged = scene.unitById.get(unitId);
+  if (!dragged || dragged.parentId === null) return null;
+  const depth = Math.min(Math.max(bandAtRadius(scene, radiusOf(pointer)), 1), Math.max(1, scene.maxDepth));
+  const band = scene.bands.find((candidate) => candidate.depth === depth)?.radius;
+  if (band == null) return null;
+  const blocked = descendantIds(scene, unitId);
+  const taken = scene.units
+    .filter((unit) => unit.depth === depth && !blocked.has(unit.id))
+    .map((unit) => unit.angle);
+  const separation = angularStep(unitRadius(depth), 8, Math.max(1, band));
+  const angle = nearestFreeAngle(taken, angleOf(pointer), separation);
+  return {
+    kind: "unit",
+    unitId,
+    parentId: dragged.parentId,
+    depth,
+    angle,
+    position: polar(angle, band),
+    reparents: false,
+    rerungs: depth !== dragged.depth,
+  };
+}
+
 function pickParent(
   scene: OrbitalScene,
   depth: number,

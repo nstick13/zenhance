@@ -24,3 +24,11 @@ export const DEMO_COMPANIES = {
 } as const;
 
 export type DemoCompanyKind = keyof typeof DEMO_COMPANIES;
+
+/** The scale fixture is retained for benchmarks and historical design work,
+ * but is no longer part of the interactive local demo while we settle the
+ * small-company visual language. Include the earlier seeded name so existing
+ * workspaces disappear from the switcher without deleting their data. */
+export function isRetiredScaleDemoWorkspace(name: string): boolean {
+  return name === DEMO_COMPANIES.large.name || name === "Northwind Freight & Logistics";
+}
