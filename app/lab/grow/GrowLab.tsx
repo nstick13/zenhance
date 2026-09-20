@@ -57,6 +57,13 @@ const SOLO_ADD_R = 150;
 /** Clear air between a node and the subtree on its orbit. Three times the
  *  engine's figure: +50%, then doubled again (Greg, 2026-09-20). */
 const GAP = SEAT_ORBIT_GAP * 3;
+/**
+ * People are the exception. A ring carrying nothing but humans sits at half
+ * that distance and packs them half as loosely — Greg, 2026-09-20: "humans now
+ * can be drawn at half the distance from their parent node … that should
+ * tighten things up a bit at that level". Rings carrying teams are untouched.
+ */
+const SEAT_GAP_SHARE = 0.5;
 /** An empty team still has to be worth looking at. */
 const MIN_TEAM_R = 20;
 /** The node's outline, in screen pixels — never world units, or zooming in
@@ -235,9 +242,10 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
 
     if (ch.length === 0) {
       // An empty team still draws the orbit it could hold — that ring is how
-      // you add to it, so it has to exist before there's anything on it.
+      // you add to it, so it has to exist before there's anything on it. It is
+      // waiting for people, so it waits at the people distance.
       if (n.kind === 'team') {
-        ring[id] = r + SEAT_RADIUS + GAP;
+        ring[id] = r + SEAT_RADIUS + GAP * SEAT_GAP_SHARE;
         return (reach[id] = ring[id]!);
       }
       return (reach[id] = r);
@@ -245,10 +253,13 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
 
     const childReach = ch.map((c) => measure(c.id));
     const widest = Math.max(...childReach);
+    // A ring of nothing but people draws in close; the moment a team stands on
+    // it, it is a structural rung again and takes the full distance.
+    const share = ch.every((c) => c.kind === 'person') ? SEAT_GAP_SHARE : 1;
     // Clear this node and the deepest child...
-    const clearance = r + widest + GAP;
+    const clearance = r + widest + GAP * share;
     // ...and be long enough round for every child to stand side by side.
-    const circumference = ch.length * (2 * widest + PAD);
+    const circumference = ch.length * (2 * widest + PAD * share);
     ring[id] = Math.max(clearance, circumference / (2 * Math.PI));
     return (reach[id] = ring[id]! + widest);
   };

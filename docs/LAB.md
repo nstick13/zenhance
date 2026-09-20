@@ -267,6 +267,13 @@ two can't drift:
   until you ask.
 - **The crowd stand-in is a pale blue-grey**, not the seat colour. It stands in
   for people; it should not out-shout them.
+- **People are the exception to the spacing.** A ring carrying nothing but
+  humans sits at *half* the distance and packs them half as loosely; the moment
+  a team stands on that ring it is a structural rung again and takes the full
+  distance. Greg, 2026-09-20: *"humans now can be drawn at half the distance
+  from their parent node … that should tighten things up a bit at that level."*
+  It also brings the whole map in enough that the default view clears the
+  gauges' legibility threshold, which the doubled spacing had pushed it below.
 - **Avatars are drawn to fit their seat.** The illustration reaches ~12.5 units
   from its centre and was spilling out of a 9.5 circle.
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
