@@ -27,11 +27,11 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## `grow` — the first team *(active, 2026-09-19)*
 
 > 🔶 **These routes are not on `main`.** Greg, 2026-09-20: the refined `/org` is
-> what ships; the latest refined grow studies stay on `merge/grow-looks-like-org` until the
+> what ships; the grow studies stay on **`codex/grow-child-orbits`** until the
 > creation model is ready to be part of the product. Everything they taught is
 > recorded here so it survives whether or not the branch does — check out that
-> branch to run them. The earlier `grow-studies` branch predates the visual
-> refinements recorded there.
+> branch to run them. (`grow-studies` and `merge/grow-looks-like-org` were
+> earlier names for the same line and were deleted on 2026-09-20.)
 
 `/lab/grow` — a thin page around the self-contained `GrowLab.tsx` study, SVG not Konva (three to a dozen nodes don't
 need a canvas, and SVG gives crisp text at any camera scale for free). No DB, no
