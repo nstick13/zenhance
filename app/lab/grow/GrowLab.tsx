@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { avatarPalette } from '@/lib/orbital/avatar';
-import { SEAT_ORBIT_GAP, SEAT_RADIUS, WORK_RADIUS, unitRadius, workGridPoints } from '@/lib/orbital/geometry';
+import { SEAT_ORBIT_GAP, SEAT_RADIUS, WORK_RADIUS, relaxAngles, unitRadius, workGridPoints } from '@/lib/orbital/geometry';
 import {
   drawnUnitRadius,
   revealAt,
@@ -208,7 +208,11 @@ type Layout = {
  * — which is what keeps a three-deep org readable instead of turning the
  * people into specks.
  */
-function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: number }>): Layout {
+export function buildLayout(
+  nodes: Node[],
+  pinned: Record<string, { x: number; y: number }>,
+  angleHints: Record<string, number> = {},
+): Layout {
   const byId: Record<string, Node> = {};
   const kids: Record<string, Node[]> = {};
   const roots: Node[] = [];
@@ -300,8 +304,21 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
     const ch = kids[id] ?? [];
     if (!ch.length) return;
     const spread = (2 * Math.PI) / ch.length;
+    const angles = ch.map((c, i) => angleHints[c.id] ?? facing + (i - (ch.length - 1) / 2) * spread);
+    // A new child keeps the angle where it was placed. Only siblings sharing
+    // its orbit need a gentle nudge; the other orbit stays where it was.
+    for (const kind of ['person', 'team'] as const) {
+      const indices = ch.flatMap((c, i) => c.kind === kind ? [i] : []);
+      if (!indices.some((i) => angleHints[ch[i]!.id] !== undefined)) continue;
+      const R = kind === 'person' ? personRing[id]! : ring[id]!;
+      const widest = kind === 'person' ? SEAT_RADIUS : Math.max(...indices.map((i) => reach[ch[i]!.id]!));
+      const separation = (2 * widest + (kind === 'person' ? 8 : PAD)) / Math.max(1, R);
+      const adjusted = relaxAngles(indices.map((i) => angles[i]!), separation,
+        indices.map((i) => angleHints[ch[i]!.id] !== undefined), true);
+      indices.forEach((i, j) => { angles[i] = adjusted[j]!; });
+    }
     ch.forEach((c, i) => {
-      const a = facing + (i - (ch.length - 1) / 2) * spread;
+      const a = angles[i]!;
       const R = c.kind === 'person' ? personRing[id]! : ring[id]!;
       place(c.id, px + Math.cos(a) * R, py + Math.sin(a) * R, a);
     });
@@ -351,13 +368,13 @@ function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
  */
 const RING_CATCH_SHARE = 0.15;
 
-function classifyDrop(
+export function classifyDrop(
   layout: Layout,
   draggedId: string,
   at: { x: number; y: number },
-): { parentId: string; distance: number } | null {
+): { parentId: string; distance: number; orbit: OrbitKind } | null {
   const blocked = descendantIds(layout.kids, draggedId);
-  let best: { parentId: string; distance: number } | null = null;
+  let best: { parentId: string; distance: number; orbit: OrbitKind } | null = null;
   for (const [id, outer] of Object.entries(layout.ring)) {
     if (blocked.has(id)) continue;
     const c = layout.pos[id];
@@ -365,14 +382,25 @@ function classifyDrop(
     // A mixed parent has an inner human orbit as well as the structural one.
     // Either is a valid drop target for a relationship question.
     const inner = layout.personRing[id];
-    for (const R of inner && Math.abs(inner - outer) > 1 ? [outer, inner] : [outer]) {
+    const rings: { radius: number; orbit: OrbitKind }[] = inner && Math.abs(inner - outer) > 1
+      ? [{ radius: outer, orbit: 'teams' }, { radius: inner, orbit: 'people' }]
+      : [{ radius: outer, orbit: 'people' }];
+    for (const { radius: R, orbit } of rings) {
       const catchRange = R * RING_CATCH_SHARE;
       const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
       if (off > catchRange) continue;
-      if (!best || off < best.distance) best = { parentId: id, distance: off };
+      if (!best || off < best.distance) best = { parentId: id, distance: off, orbit };
     }
   }
   return best;
+}
+
+/** Passing the human orbit says "make this a child". A team only starts to
+ * merge once its centre is deliberately carried farther in than that band. */
+export function canArmTeamMerge(layout: Layout, targetId: string, distance: number, combinedRadius: number): boolean {
+  const humanOrbit = layout.personRing[targetId];
+  if (!humanOrbit) return false;
+  return distance < humanOrbit * (1 - RING_CATCH_SHARE) && distance <= combinedRadius * MERGE_REACH;
 }
 
 /**
@@ -625,7 +653,9 @@ function declutter(
 }
 
 /* --- what the ring offers ------------------------------------------------ */
-type RingAction = 'person' | 'parent' | 'sibling';
+type OrbitKind = 'people' | 'teams';
+type RingTarget = { parentId: string; angle: number; orbit: OrbitKind };
+type RingAction = 'person' | 'parent' | 'team' | 'island';
 
 type DragState = {
   id: string;
@@ -668,6 +698,7 @@ export default function GrowLab({
 }) {
   const [nodes, setNodes] = useState<Node[]>(() => initialNodes.map((node) => ({ ...node })));
   const [pinned, setPinned] = useState<Record<string, { x: number; y: number }>>({});
+  const [angleHints, setAngleHints] = useState<Record<string, number>>({});
   const [openId, setOpenId] = useState<string | null>(null);
   const [draftFocusId, setDraftFocusId] = useState<string | null>(null);
   const [parentJustAdded, setParentJustAdded] = useState<string | null>(null);
@@ -677,13 +708,13 @@ export default function GrowLab({
   const [reduced, setReduced] = useState(false);
 
   /** Where the pointer is on a ring, and whether the menu has been opened there. */
-  const [hover, setHover] = useState<{ parentId: string; angle: number } | null>(null);
+  const [hover, setHover] = useState<RingTarget | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredRing, setHoveredRing] = useState<{ nodeId: string; key: StudyRingKey; x: number; y: number } | null>(null);
   const [selectedRing, setSelectedRing] = useState<{ nodeId: string; key: StudyRingKey; x: number; y: number } | null>(null);
   const [hoveredWorkId, setHoveredWorkId] = useState<string | null>(null);
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ parentId: string; angle: number } | null>(null);
+  const [menu, setMenu] = useState<RingTarget | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [merge, setMerge] = useState<MergeState | null>(null);
   /** Set while two teams are visibly running together, before they become one. */
@@ -734,7 +765,7 @@ export default function GrowLab({
   }, []);
 
   /* --- derived ----------------------------------------------------------- */
-  const layout = useMemo(() => buildLayout(nodes, pinned), [nodes, pinned]);
+  const layout = useMemo(() => buildLayout(nodes, pinned, angleHints), [nodes, pinned, angleHints]);
 
   /** How big a node really is — its depth decides it (Greg, 2026-09-20). */
   const radiusOf = useCallback(
@@ -796,7 +827,7 @@ export default function GrowLab({
     }
     if (plus) {
       const c = layout.pos[plus.parentId];
-      const R = layout.ring[plus.parentId];
+      const R = plus.orbit === 'people' ? layout.personRing[plus.parentId] : layout.ring[plus.parentId];
       if (c && R) t.__plus = { x: c.x + Math.cos(plus.angle) * R, y: c.y + Math.sin(plus.angle) * R, a: 1 };
     }
     return t;
@@ -1099,15 +1130,53 @@ export default function GrowLab({
     return { x: right + ISLAND_GAP + newReach, y: drift };
   }, [layout]);
 
+  /** Preserve the current angles of siblings when a child arrives. Radius may
+   * grow, but the rest of the family should not spin around the parent. */
+  const rememberChildAngle = useCallback((parentId: string, childId: string, angle: number) => {
+    const center = layout.pos[parentId];
+    if (!center) return;
+    setAngleHints((current) => {
+      const next = { ...current, [childId]: angle };
+      for (const sibling of layout.kids[parentId] ?? []) {
+        if (pinned[sibling.id]) continue;
+        const at = layout.pos[sibling.id];
+        if (at) next[sibling.id] = Math.atan2(at.y - center.y, at.x - center.x);
+      }
+      return next;
+    });
+  }, [layout, pinned]);
+
   const ringAction = useCallback(
-    (parentId: string, action: RingAction) => {
+    (target: RingTarget, action: RingAction) => {
       setMenu(null);
       setHover(null);
+      const { parentId, angle } = target;
 
       if (action === 'person') {
         const p: Node = { id: nid('person'), kind: 'person', parentId, name: null, role: null, purpose: null };
+        rememberChildAngle(parentId, p.id, angle);
         setNodes((ns) => [...ns, p]);
         setOpenId(p.id);
+        setStepIx(0);
+        return;
+      }
+
+      if (action === 'team') {
+        const t: Node = { id: nid('team'), kind: 'team', parentId, name: null, role: null, purpose: null };
+        const center = layout.pos[parentId];
+        const R = target.orbit === 'people' ? layout.personRing[parentId] : layout.ring[parentId];
+        if (center && R) motion.current[t.id] = {
+          x: center.x + Math.cos(angle) * R, y: center.y + Math.sin(angle) * R, a: 0.3,
+        };
+        rememberChildAngle(parentId, t.id, angle);
+        setNodes((ns) => [...ns, t]);
+        // At detail zoom the next structural orbit can lie offscreen. Follow
+        // the new placeholder at a legible scale so its connection stays in
+        // view while it is named; Show all/zoom returns to free navigation.
+        manualCameraRef.current = null;
+        setManualCamera(null);
+        setDraftFocusId(t.id);
+        setOpenId(t.id);
         setStepIx(0);
         return;
       }
@@ -1137,7 +1206,7 @@ export default function GrowLab({
         return;
       }
 
-      // sibling — a separate island. Nothing is claimed about how they relate.
+      // A separate island remains available; nobody is forced into a family.
       const t: Node = { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null };
       const spot = nextIslandSpot();
       setNodes((ns) => [...ns, t]);
@@ -1145,7 +1214,7 @@ export default function GrowLab({
       setOpenId(t.id);
       setStepIx(0);
     },
-    [byId, nextIslandSpot],
+    [byId, layout, nextIslandSpot, rememberChildAngle],
   );
 
   /**
@@ -1177,6 +1246,7 @@ export default function GrowLab({
     }
     // Only the roots keep a position — everything below goes back on its ring.
     setPinned(next);
+    setAngleHints({});
   }, [layout]);
 
   /** True once anything has been moved off its orbit. */
@@ -1187,6 +1257,7 @@ export default function GrowLab({
     cam.current = { k: 1, tx: 0, ty: 0 };
     setNodes(initialNodes.map((node) => ({ ...node })));
     setPinned({});
+    setAngleHints({});
     setOpenId(null);
     setDraftFocusId(null);
     manualCameraRef.current = null;
@@ -1246,11 +1317,21 @@ export default function GrowLab({
    */
   const reparent = useCallback(
     (id: string, parentId: string | null, at?: { x: number; y: number }) => {
+      const center = parentId ? layout.pos[parentId] : null;
+      if (parentId && center && at) {
+        rememberChildAngle(parentId, id, Math.atan2(at.y - center.y, at.x - center.x));
+      } else {
+        setAngleHints((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      }
       setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, parentId } : n)));
       setPinned((p) => (parentId === null && at ? { ...p, [id]: at } : without(p, id)));
       setMoveAsk(null);
     },
-    [],
+    [layout, rememberChildAngle],
   );
 
   /**
@@ -1431,7 +1512,9 @@ export default function GrowLab({
       // they are touching long before their centres are. Arming at contact
       // meant the merge only appeared once they had already overlapped
       // (Greg, 2026-09-20).
-      if (d > (radiusOf(a.id) + radiusOf(other.id)) * MERGE_REACH) continue;
+      const combinedRadius = radiusOf(a.id) + radiusOf(other.id);
+      if (a.kind === 'team' && !canArmTeamMerge(layout, other.id, d, combinedRadius)) continue;
+      if (a.kind === 'person' && d > combinedRadius * MERGE_REACH) continue;
       if (!best || d < best.d) best = { id: other.id, d };
     }
     return best ? { a: drag.id, b: best.id, kind: a.kind } : null;
@@ -1452,7 +1535,7 @@ export default function GrowLab({
     const onOrbit = classifyDrop(layout, drag.id, at);
     const parentId = onOrbit ? onOrbit.parentId : boundaryAt(layout, byId, drag.id, at);
     if (parentId === (n.parentId ?? null)) return null;
-    return { parentId, viaOrbit: !!onOrbit };
+    return { parentId, viaOrbit: !!onOrbit, orbit: onOrbit?.orbit ?? null };
   }, [drag, armed, byId, layout]);
 
   // Event handlers run long after the render that created them, so they read
@@ -1605,13 +1688,23 @@ export default function GrowLab({
 
   const next = () => {
     if (stepIx < steps.length - 1) setStepIx(stepIx + 1);
-    else setOpenId(null);
+    else {
+      if (draftFocusId) {
+        // Keep the local view the wizard just used, without leaving a hidden
+        // focus lock after the last placeholder has been completed.
+        const current = { ...cam.current };
+        manualCameraRef.current = current;
+        setManualCamera(current);
+        setDraftFocusId(null);
+      }
+      setOpenId(null);
+    }
   };
 
   /* --- where the boxes go ------------------------------------------------- */
   const CALLOUT_W = Math.min(330, size.w - 24);
   const CALLOUT_H = step ? (step.kind === 'text' ? 330 : step.kind === 'choice' ? 262 : 216) : 0;
-  const MENU_H = 300;
+  const MENU_H = 370;
 
   const otherBoxes = useCallback(
     (exceptId?: string): Rect[] =>
@@ -1860,24 +1953,47 @@ export default function GrowLab({
               const humanR = layout.personRing[t.id];
               const mo = m(t.id);
               if (!R || mo.a < 0.05) return null;
-              const live =
-                hover?.parentId === t.id || menu?.parentId === t.id || landing?.parentId === t.id;
+              const hasTwoOrbits = !!humanR && humanR < R - 1;
+              const outerKind: OrbitKind = hasTwoOrbits ? 'teams' : 'people';
+              const innerLive = (hover?.parentId === t.id && hover.orbit === 'people') ||
+                (menu?.parentId === t.id && menu.orbit === 'people') ||
+                (landing?.parentId === t.id && landing.orbit === 'people');
+              const outerLive = (hover?.parentId === t.id && hover.orbit === outerKind) ||
+                (menu?.parentId === t.id && menu.orbit === outerKind) ||
+                (landing?.parentId === t.id && landing.orbit !== 'people');
+              const targetOn = (orbit: OrbitKind, e: { clientX: number; clientY: number }): RingTarget =>
+                ({ parentId: t.id, angle: angleOn(t.id, e), orbit });
               return (
                 <g key={`ring-${t.id}`}>
-                  {humanR && humanR < R - 1 && (layout.kids[t.id] ?? []).some((c) => c.kind === 'person') && (
-                    <circle r={humanR} cx={mo.x} cy={mo.y} fill="none" stroke={C.seatLink}
-                      strokeWidth={1.2 / k} strokeDasharray={`${3 / k} ${10 / k}`}
-                      opacity={mo.a * reveal.people * 0.52} style={{ pointerEvents: 'none' }} />
-                  )}
+                  {hasTwoOrbits && <>
+                    <circle r={humanR} cx={mo.x} cy={mo.y} fill="none"
+                      stroke={innerLive ? TEAM_HUE : C.seatLink}
+                      strokeWidth={(innerLive ? 2.2 : 1.2) / k} strokeDasharray={`${3 / k} ${10 / k}`}
+                      opacity={mo.a * reveal.people * (innerLive ? 0.92 : 0.55)}
+                      style={{ pointerEvents: 'none' }} />
+                    <circle r={humanR} cx={mo.x} cy={mo.y} fill="none" stroke="transparent"
+                      strokeWidth={RING_BAND / k}
+                      style={{ cursor: 'pointer', pointerEvents: reveal.people > 0.35 ? 'stroke' : 'none' }}
+                      onMouseMove={(e) => { if (!menu && !drag) setHover(targetOn('people', e)); }}
+                      onMouseLeave={() => { if (!menu) setHover((current) =>
+                        current?.parentId === t.id && current.orbit === 'people' ? null : current); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const target = targetOn('people', e);
+                        setHover(target);
+                        setMenu(target);
+                        setOpenId(null);
+                      }} />
+                  </>}
                   <circle
                     r={R}
                     cx={mo.x}
                     cy={mo.y}
                     fill="none"
-                    stroke={live ? TEAM_HUE : LINE}
-                    strokeWidth={(live ? 2 : 1.5) / k}
+                    stroke={outerLive ? TEAM_HUE : LINE}
+                    strokeWidth={(outerLive ? 2 : 1.5) / k}
                     strokeDasharray={`${4 / k} ${9 / k}`}
-                    opacity={mo.a * (live ? 0.75 : 0.9)}
+                    opacity={mo.a * (outerLive ? 0.75 : 0.9)}
                     style={{ transition: 'stroke 160ms ease' }}
                   />
                   {/* the band that answers the pointer — invisible, generous */}
@@ -1893,16 +2009,17 @@ export default function GrowLab({
                     // including the older browsers this has to run on.
                     onMouseMove={(e) => {
                       if (menu || drag) return;
-                      setHover({ parentId: t.id, angle: angleOn(t.id, e) });
+                      setHover(targetOn(outerKind, e));
                     }}
                     onMouseLeave={() => {
-                      if (!menu) setHover(null);
+                      if (!menu) setHover((current) =>
+                        current?.parentId === t.id && current.orbit === outerKind ? null : current);
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      const angle = angleOn(t.id, e);
-                      setHover({ parentId: t.id, angle });
-                      setMenu({ parentId: t.id, angle });
+                      const target = targetOn(outerKind, e);
+                      setHover(target);
+                      setMenu(target);
                       setOpenId(null);
                     }}
                   />
@@ -2271,19 +2388,25 @@ export default function GrowLab({
           <div className="zen-kicker">{menuOwner.name ?? 'This team'}</div>
           <h2 className="zen-title">What goes here?</h2>
           <div style={{ display: 'grid', gap: 8 }}>
-            <button className="zen-choice" onClick={() => ringAction(menu.parentId, 'person')}>
+            <button className="zen-choice" onClick={() => ringAction(menu, 'person')}>
               <span style={{ fontWeight: 600, fontSize: 14 }}>A person</span>
-              <span style={{ fontSize: 12, color: INK_SOFT }}>Another seat on this orbit</span>
+              <span style={{ fontSize: 12, color: INK_SOFT }}>A seat on {menuOwner.name ?? 'this team'}&apos;s human orbit</span>
             </button>
-            <button className="zen-choice" onClick={() => ringAction(menu.parentId, 'parent')}>
+            <button className="zen-choice" onClick={() => ringAction(menu, 'parent')}>
               <span style={{ fontWeight: 600, fontSize: 14 }}>Something above it</span>
               <span style={{ fontSize: 12, color: INK_SOFT }}>
                 {menuOwner.name ?? 'This team'} starts orbiting a parent
               </span>
             </button>
-            <button className="zen-choice" onClick={() => ringAction(menu.parentId, 'sibling')}>
+            <button className="zen-choice" onClick={() => ringAction(menu, 'team')}>
               <span style={{ fontWeight: 600, fontSize: 14 }}>Another team</span>
-              <span style={{ fontSize: 12, color: INK_SOFT }}>Stands on its own, off to one side</span>
+              <span style={{ fontSize: 12, color: INK_SOFT }}>
+                A child of {menuOwner.name ?? 'this team'}; settles onto the outer orbit
+              </span>
+            </button>
+            <button className="zen-choice" onClick={() => ringAction(menu, 'island')}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>A separate team</span>
+              <span style={{ fontSize: 12, color: INK_SOFT }}>Unconnected, off to one side</span>
             </button>
           </div>
         </div>

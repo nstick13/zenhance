@@ -133,13 +133,14 @@ things, and each one is deliberately not the same shape of change:
 |---|---|
 | **A person** | A new seat on that orbit. |
 | **Something above it** | A parent is inserted *above the ring's owner*, wherever it sits — the owner and its whole subtree start orbiting the new node. |
-| **Another team** | A new **island**: its own root, its own dotted orbit, placed off to one side. **No relationship is drawn or implied.** |
+| **Another team** | A child of the ring's owner. If placed on a human orbit it begins there, then settles at the same angle on a wider team orbit. |
+| **A separate team** | A new **island**: its own root, its own dotted orbit, placed off to one side. **No relationship is drawn or implied.** |
 
 **The map is a forest, not a tree.** Nobody is made to declare how two teams
-relate just to put them both on the paper, and there is no snapping — **Tidy
-up** is the only thing that moves an island, and all it does is straighten them
-into one evenly spaced row. This contradicts the single-root assumption the
-first version carried, deliberately.
+relate just to put them both on the paper. The separate-team choice preserves
+that freedom; choosing *Another team* on a parent's orbit is now an explicit
+parenting action. **Tidy up** straightens independent islands into a grid and
+returns hand-placed children to their calculated orbits.
 
 **Rings are sized by what stands on them, not by depth.** Adding a parent grows
 the map *outwards* rather than shrinking everything inside it: a ring clears its
@@ -181,7 +182,9 @@ says which parent). Here the rungs aren't global (each island has its own), so
 - **Let go near an orbit** → that team is offered as the new parent. A **person**
   just moves; moving a **team** takes its whole subtree with it, so that one is
   asked about first. Either way the node gives up its hand-placed position —
-  joining a team means taking a seat on it.
+  joining a team means taking a seat on it. A team dropped on the human orbit
+  becomes a child, then moves outward to the structural orbit at the drop
+  angle. Carrying it further *inside* that orbit is the separate merge gesture.
 - **Let go on open paper** → nothing about the org changed. It has just moved.
 - A node can never be dropped inside its own subtree; that would cut the
   subtree off the map (the guard `lib/orbital/snap.ts` also carries).
@@ -190,8 +193,10 @@ says which parent). Here the rungs aren't global (each island has its own), so
 Drag one node close to another of **the same kind** and they visibly start to
 run together — a metaball neck is drawn between them, and it stays while you
 decide, because the question on screen is about those two. Like pairs with
-like: two teams, or two people. A person meeting a *team* is a different
-question, and the orbit already asks it.
+like: two teams, or two people. For teams, that neck only appears **inside**
+the receiving team's human-orbit catch band; crossing the ring itself offers
+child placement first. A person meeting a *team* is a different question,
+and the orbit already asks it.
 
 **Two people** get asked *"Do these two work together?"* — **make them a team**
 (a new team closes around the pair, named during the interaction) or **put them
@@ -328,22 +333,19 @@ to drop into lights up. Releasing acts. There is no dialog.
 > merge choices (two teams, or two people) still ask, because those are
 > genuinely ambiguous; a boundary crossing is not.
 
-### 🔴 Known limit — depth past three rungs
-Three rungs read beautifully. At **four** the camera has to pull back to about
-`k≈0.22`, and while the labels stay legible the nodes become specks and start
-colliding. Growing outwards buys readable text at the cost of area, and this is
-where that trade runs out. The real fix is production's approach — a minimum
-*on-screen* node radius bounded by the rung's radial room (`lib/orbital/lod.ts`
-`drawnUnitRadius`) — plus actual zoom and pan. **Not attempted here on purpose:**
-a half-done size floor makes nodes overlap, which is worse than small.
+### Historical scale limit — depth past three rungs
+The first static grow study became unreadable at **four** rungs (`k≈0.22` at
+Fit). The shared study now has zoom/pan and the shipped on-screen unit-size
+floor, and child creation has no hard depth cap. That does **not** mean an
+indefinitely deep company is solved at whole-map overview: deeper chains still
+consume space and need local navigation to stay readable.
 
 ### Settled — Greg, 2026-09-20
-- ✅ **Siblings never attach on their own.** A new team is always an unconnected
-  island, whatever its neighbour's shape. Two teams become related only when a
-  user *deliberately connects them*. Nothing about the map may quietly assert a
-  relationship nobody stated — that is the point of the forest.
-  **Still open: what "connect them" actually is as an interaction.** Undesigned;
-  don't invent it in passing.
+- ✅ **Teams never attach by proximity alone.** The user now explicitly picks
+  *Another team* on a parent's orbit, or drops an existing team on that orbit,
+  to make a child. *A separate team* still makes an unconnected island. This
+  revises the earlier "every new team is an island" rule after Greg found that
+  it prevented human-peer child teams and indefinite nesting (2026-09-20).
 - ✅ **Even redistribution stays, for now.** A new person lands where you
   clicked and the ring then spaces everyone evenly. **But a manual override is
   wanted later** — reordering the people within a team, and the teams within an
@@ -353,8 +355,9 @@ a half-done size floor makes nodes overlap, which is worse than small.
   Tap-the-ring is wired and works under simulated taps.
 
 ### Open — Greg's call
-1. **What does "connect two teams" mean?** (from the settled item above — the
-   decision is made, the interaction is not.)
+1. **Other ways to connect two teams.** Orbit placement now covers creating or
+   moving a child; the rest of the possible relationship choices still need
+   deliberate design.
 2. **Does the first person keep any special status** (they're the one who
    answered the questions), or are they just the first seat?
 3. **Editing vs. adding** — clicking a finished node currently reopens its
