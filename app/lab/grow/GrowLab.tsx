@@ -23,6 +23,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { avatarPalette } from '@/lib/orbital/avatar';
+import { SEAT_ORBIT_GAP, SEAT_RADIUS, unitRadius } from '@/lib/orbital/geometry';
+import { drawnUnitRadius, revealAt, unitLabelVisible, unitRingReveal, type Reveal } from '@/lib/orbital/lod';
 import { C, healthColor } from '@/components/viz/orbital/theme';
 
 /* --- unified orbital palette -------------------------------------------- */
@@ -35,12 +37,22 @@ const TEAM_HUE = '#765ae8';
 const ALERT = '#e95677';
 
 /* --- geometry ------------------------------------------------------------ */
-const PERSON_R = 40;
-const TEAM_R = 52;
+/*
+ * Sizes come from the shipped engine, not from numbers invented here, so the
+ * study and `/org` can't drift apart: a unit's radius is its depth
+ * (`unitRadius`: 165 · 72 · 48 · 36 …) and a person is a seat (9.5). Greg,
+ * 2026-09-20: depth decides how big a node is, contents decide how wide its
+ * orbit is — provisional, while the seniority question is still open.
+ */
+const PERSON_R = SEAT_RADIUS;
 const SEED_R = 50;
 const SOLO_ADD_R = 150;
 /** Clear air between a node and the subtree standing on its ring. */
-const GAP = 46;
+const GAP = SEAT_ORBIT_GAP;
+/** A company sits three unit-rungs above its people: company · group · team. */
+const UNIT_RUNGS = 3;
+/** How far the camera may zoom in on its own while framing a small map. */
+const MAX_FIT = 3.2;
 /** Breathing room between two neighbours on the same ring. */
 const PAD = 30;
 /** Gap between two islands when they're tidied into a row. */
@@ -118,7 +130,8 @@ type Camera = { k: number; tx: number; ty: number };
 let seq = 0;
 const nid = (k: Kind) => `${k}-${++seq}`;
 
-const nodeR = (n: Node) => (n.kind === 'team' ? TEAM_R : PERSON_R);
+/** How big a node really is, before the camera has any say. */
+const nodeR = (n: Node, depth = 1) => (n.kind === 'team' ? unitRadius(depth) : SEAT_RADIUS);
 
 /** A name is enough for a real node. Other omissions get a notification dot. */
 const isComplete = (n: Node) => !!n.name?.trim();
@@ -137,8 +150,13 @@ type Layout = {
   pos: Record<string, { x: number; y: number }>;
   /** Radius of the ring a node's children stand on. Teams always have one. */
   ring: Record<string, number>;
-  /** How far a node's whole subtree reaches from its centre. */
+  /** How far a node's whole subtree reaches from its centre. This is also the
+   *  node's **boundary**: cross it and the relationship changes. */
   reach: Record<string, number>;
+  /** Rungs from the family centre — what decides how big a node is drawn. */
+  depth: Record<string, number>;
+  /** A node's true radius, before the camera's screen floor. */
+  radius: Record<string, number>;
   roots: Node[];
   kids: Record<string, Node[]>;
 };
@@ -161,17 +179,48 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
 
   const ring: Record<string, number> = {};
   const reach: Record<string, number> = {};
+  const depth: Record<string, number> = {};
+  const radius: Record<string, number> = {};
+
+  /**
+   * How many rungs of *units* stand beneath a node — a team of people is 1,
+   * something holding teams is 2, and so on. People aren't units.
+   */
+  const unitHeight = (id: string): number => {
+    let below = 0;
+    for (const c of kids[id] ?? []) {
+      if (c.kind !== 'team') continue;
+      below = Math.max(below, unitHeight(c.id));
+    }
+    return 1 + below;
+  };
+
+  // Depth first, because a node's size depends on it and its orbit depends on
+  // the sizes underneath.
+  const rung = (id: string, d: number) => {
+    depth[id] = d;
+    const n = byId[id]!;
+    // Size is read from the bottom of the hierarchy, not the top: "a team of
+    // people" is the same size whatever sits above it, and only something that
+    // *holds* teams gets to be company-sized. Measuring from the top instead
+    // made the very first team a 165-radius disc with two invisible specks on
+    // it — the opening moment of the creation flow, unusable.
+    // Greg, 2026-09-20: depth decides size; this is which end you count from,
+    // and it is provisional while the seniority question is open.
+    radius[id] = n.kind === 'team' ? unitRadius(Math.max(0, UNIT_RUNGS - unitHeight(id))) : SEAT_RADIUS;
+    for (const c of kids[id] ?? []) rung(c.id, d + 1);
+  };
 
   const measure = (id: string): number => {
     const n = byId[id]!;
     const ch = kids[id] ?? [];
-    const r = nodeR(n);
+    const r = radius[id]!;
 
     if (ch.length === 0) {
       // An empty team still draws the orbit it could hold — that ring is how
       // you add to it, so it has to exist before there's anything on it.
       if (n.kind === 'team') {
-        ring[id] = r + PERSON_R + GAP;
+        ring[id] = r + SEAT_RADIUS + GAP;
         return (reach[id] = ring[id]!);
       }
       return (reach[id] = r);
@@ -212,13 +261,14 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
   };
 
   for (const root of roots) {
+    rung(root.id, 0);
     measure(root.id);
     // Facing "up" means the first two children land left and right of the
     // centre — the "alongside" reading the first team is built around.
     place(root.id, 0, 0, -Math.PI / 2);
   }
 
-  return { pos, ring, reach, roots, kids };
+  return { pos, ring, reach, depth, radius, roots, kids };
 }
 
 /** Every node at or below `id`. Nothing may be dropped inside its own subtree
@@ -580,16 +630,14 @@ export default function GrowLab({
   /* --- derived ----------------------------------------------------------- */
   const layout = useMemo(() => buildLayout(nodes, pinned), [nodes, pinned]);
 
+  /** How big a node really is — its depth decides it (Greg, 2026-09-20). */
+  const radiusOf = useCallback(
+    (id: string) => layout.radius[id] ?? SEAT_RADIUS,
+    [layout],
+  );
+
   /** How many rungs out from its island's centre a node sits. */
-  const depthOf = useMemo(() => {
-    const out: Record<string, number> = {};
-    const walk = (id: string, d: number) => {
-      out[id] = d;
-      for (const c of layout.kids[id] ?? []) walk(c.id, d + 1);
-    };
-    for (const r of layout.roots) walk(r.id, 0);
-    return out;
-  }, [layout]);
+  const depthOf = layout.depth;
 
   /** Everyone anywhere beneath a node — a parent counts its whole subtree. */
   const headcount = useMemo(() => {
@@ -666,13 +714,13 @@ export default function GrowLab({
     for (const n of nodes) {
       const p = layout.pos[n.id];
       if (!p) continue;
-      grow(p.x, p.y, nodeR(n));
+      grow(p.x, p.y, layout.radius[n.id] ?? SEAT_RADIUS);
       const R = layout.ring[n.id];
       if (R) grow(p.x, p.y, R);
     }
     if (soloRoot && showSoloAdd) {
       const p = layout.pos[soloRoot.id]!;
-      grow(p.x + SOLO_ADD_R, p.y, PERSON_R);
+      grow(p.x + SOLO_ADD_R, p.y, SEAT_RADIUS);
     }
 
     // Labels are drawn in screen space beneath each node, so the bottom needs
@@ -682,7 +730,12 @@ export default function GrowLab({
     const bottom = 120;
     const availW = Math.max(120, size.w - mx * 2);
     const availH = Math.max(120, size.h - top - bottom);
-    const k = Math.max(0.035, Math.min(1, availW / Math.max(1, maxX - minX), availH / Math.max(1, maxY - minY)));
+    // A small org is allowed to fill the screen. Capping the fit at 1x left
+    // the first team as a disc with two invisible people on it.
+    const k = Math.max(
+      0.035,
+      Math.min(MAX_FIT, availW / Math.max(1, maxX - minX), availH / Math.max(1, maxY - minY)),
+    );
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     return { k, tx: size.w / 2 - cx * k, ty: (top + (size.h - bottom)) / 2 - cy * k };
@@ -812,6 +865,15 @@ export default function GrowLab({
     };
   }, [targets, camera, camTy, reduced, size.w, byId, plus?.parentId, soloRoot?.id, dragFamily]);
 
+  /**
+   * The zoom ladder, straight from `lib/orbital/lod`. People are not drawn at
+   * overview scale at all: they fade in only once there is room for them, and
+   * a single arc stands in for the crowd on the way (Greg, 2026-09-20: "if you
+   * zoom out in /org, then humans vanish. When you zoom in, first they appear
+   * as an abstraction, then as nodes with connection lines").
+   */
+  const reveal: Reveal = revealAt(frame.k || camera.k);
+
   const m = (id: string) => frame.pos[id] ?? { x: 0, y: 0, a: 0 };
   const k = frame.k || camera.k;
   const tx = frame.tx || camera.tx;
@@ -898,10 +960,11 @@ export default function GrowLab({
     let right = -Infinity;
     for (const root of layout.roots) {
       const p = layout.pos[root.id];
-      if (p) right = Math.max(right, p.x + (layout.reach[root.id] ?? nodeR(root)));
+      if (p) right = Math.max(right, p.x + (layout.reach[root.id] ?? nodeR(root, 0)));
     }
     if (right === -Infinity) return { x: 0, y: 0 };
-    const newReach = TEAM_R + PERSON_R + GAP;
+    // A brand new island is a lone team at the centre of its own family.
+    const newReach = unitRadius(0) + SEAT_RADIUS + GAP;
     // Deliberately off the line — "tidy up" is what straightens them.
     const drift = layout.roots.length % 2 === 0 ? -86 : 74;
     return { x: right + ISLAND_GAP + newReach, y: drift };
@@ -967,7 +1030,7 @@ export default function GrowLab({
     const columns = ordered.length <= 1 ? 1 : ordered.length <= 4 ? 2 : Math.ceil(Math.sqrt(ordered.length));
     const rows = Array.from({ length: Math.ceil(ordered.length / columns) }, (_, i) =>
       ordered.slice(i * columns, (i + 1) * columns));
-    const reach = (id: string) => layout.reach[id] ?? TEAM_R;
+    const reach = (id: string) => layout.reach[id] ?? unitRadius(0);
     const sizes = rows.map((row) => ({
       width: row.reduce((sum, root) => sum + 2 * reach(root.id), 0) + ISLAND_GAP * (row.length - 1),
       height: Math.max(...row.map((root) => 2 * reach(root.id))),
@@ -1227,11 +1290,13 @@ export default function GrowLab({
       const bp = layout.pos[other.id];
       if (!bp) continue;
       const d = Math.hypot(ap.x - bp.x, ap.y - bp.y);
-      if (d > (nodeR(a) + nodeR(other)) * 1.3) continue;
+      // Proportional to the pair, because a seat is 9.5 and a company is 165:
+      // one absolute distance cannot serve both.
+      if (d > (radiusOf(a.id) + radiusOf(other.id)) * 0.95) continue;
       if (!best || d < best.d) best = { id: other.id, d };
     }
     return best ? { a: drag.id, b: best.id, kind: a.kind } : null;
-  }, [drag, byId, layout, nodes]);
+  }, [drag, byId, layout, nodes, radiusOf]);
 
   /** Where the drop would put this node in the org, if anywhere. */
   const landing = useMemo(() => {
@@ -1279,7 +1344,7 @@ export default function GrowLab({
               rootId: sourceRootId,
               x: sourceRoot.x,
               y: sourceRoot.y,
-              radius: (layout.reach[sourceRootId] ?? nodeR(byId[sourceRootId]!)) + 80,
+              radius: (layout.reach[sourceRootId] ?? unitRadius(0)) + 80,
             }
           : null,
       };
@@ -1410,7 +1475,7 @@ export default function GrowLab({
         .filter((n) => n.id !== exceptId)
         .map((n) => {
           const s = toScreen(n.id);
-          const nr = nodeR(n) * k;
+          const nr = radiusOf(n.id) * k;
           return { x: s.x - nr - 18, y: s.y - nr - 6, w: (nr + 18) * 2, h: nr * 2 + 58 };
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1420,7 +1485,7 @@ export default function GrowLab({
   const placement = (() => {
     if (!openNodeObj || !step) return null;
     const here = toScreen(openNodeObj.id);
-    const r = nodeR(openNodeObj) * k;
+    const r = radiusOf(openNodeObj.id) * k;
     return placeCallout({ x: here.x, y: here.y, r }, otherBoxes(openNodeObj.id), CALLOUT_W, CALLOUT_H, size.w, size.h);
   })();
 
@@ -1447,7 +1512,7 @@ export default function GrowLab({
             : 280
       : 232;
     return {
-      ...placeCallout({ x: here.x, y: here.y, r: (n ? nodeR(n) : 40) * k }, otherBoxes(focusId), CALLOUT_W, h, size.w, size.h),
+      ...placeCallout({ x: here.x, y: here.y, r: (n ? radiusOf(n.id) : SEAT_RADIUS) * k }, otherBoxes(focusId), CALLOUT_W, h, size.w, size.h),
     };
   })();
 
@@ -1498,7 +1563,7 @@ export default function GrowLab({
       const missing = missingLabel(n);
       const count = headcount[n.id] ?? 0;
       const minimumScreenRadius = n.kind === 'team' ? ((depthOf[n.id] ?? 0) === 0 ? 20 : (depthOf[n.id] ?? 0) === 1 ? 14 : 9) : 3;
-      const screenRadius = Math.max(nodeR(n) * k, minimumScreenRadius);
+      const screenRadius = Math.max(radiusOf(n.id) * k, minimumScreenRadius);
       const hasVisibleRings = n.kind === 'team' && sampleRings[n.id] &&
         ((depthOf[n.id] ?? 0) === 0 || k > ((depthOf[n.id] ?? 0) === 1 ? 0.12 : 0.28));
       return {
@@ -1611,7 +1676,7 @@ export default function GrowLab({
               {layout.roots.map((root) => {
                 const fixed = drag?.family?.rootId === root.id ? drag.family : null;
                 const centre = fixed ? { x: fixed.x, y: fixed.y } : m(root.id);
-                const radius = fixed?.radius ?? (layout.reach[root.id] ?? nodeR(root)) + 80;
+                const radius = fixed?.radius ?? (layout.reach[root.id] ?? unitRadius(0)) + 80;
                 return (
                   <g key={`helpers-${root.id}`}>
                     <circle
@@ -1705,12 +1770,63 @@ export default function GrowLab({
               const b = byId[pair.b];
               if (!a || !b) return null;
               const d = metaballPath(
-                { x: ma.x, y: ma.y, r: nodeR(a) + 4 },
-                { x: mb.x, y: mb.y, r: nodeR(b) + 4 },
+                { x: ma.x, y: ma.y, r: radiusOf(a.id) + 4 },
+                { x: mb.x, y: mb.y, r: radiusOf(b.id) + 4 },
               );
               if (!d) return null;
               return <path d={d} fill={TEAM_HUE} fillOpacity={coalescing ? 0.3 : 0.2} />;
             })()}
+
+            {/* Reporting lines. Unit to unit is always drawn, exactly as the
+                shipped map does it; the spokes out to individual people arrive
+                with the people themselves. Width stays flat — `/org` thickens
+                a link by the money flowing down it, and there is no money
+                here to thicken it with. */}
+            {nodes.map((n) => {
+              if (!n.parentId) return null;
+              const parent = byId[n.parentId];
+              if (!parent) return null;
+              const a = m(n.parentId);
+              const b = m(n.id);
+              const toPerson = n.kind === 'person';
+              const alpha = Math.min(m(n.id).a, m(n.parentId).a) * (toPerson ? reveal.people : 0.85);
+              if (alpha < 0.02) return null;
+              return (
+                <line
+                  key={`link-${n.id}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke={C.link}
+                  strokeWidth={(toPerson ? 1.4 : 2.5) / Math.max(k, 0.05)}
+                  strokeLinecap="round"
+                  opacity={alpha}
+                />
+              );
+            })}
+
+            {/* One thick arc standing exactly where a unit's people will be,
+                while they are still too small to draw. */}
+            {reveal.torus > 0.01 &&
+              teams.map((t) => {
+                const crowd = (layout.kids[t.id] ?? []).filter((c) => c.kind === 'person');
+                const R = layout.ring[t.id];
+                if (!crowd.length || !R) return null;
+                const mo = m(t.id);
+                return (
+                  <circle
+                    key={`torus-${t.id}`}
+                    cx={mo.x}
+                    cy={mo.y}
+                    r={R}
+                    fill="none"
+                    stroke={C.seat}
+                    strokeWidth={SEAT_RADIUS * 2}
+                    opacity={reveal.torus * 0.3 * mo.a}
+                  />
+                );
+              })}
 
             {nodes.map((n) => {
               const mo = m(n.id);
@@ -1728,7 +1844,9 @@ export default function GrowLab({
                   joining={armed ? armed.a === n.id || armed.b === n.id : false}
                   interactive={arrived}
                   depth={depthOf[n.id] ?? 0}
+                  radius={radiusOf(n.id)}
                   zoom={k}
+                  reveal={reveal}
                   progress={sampleRings[n.id]}
                   onHover={(active) => setHoveredNodeId(active ? n.id : null)}
                   onGrab={(cx, cy) => beginDrag(n.id, cx, cy)}
@@ -2326,7 +2444,9 @@ function NodeShape({
   joining,
   interactive,
   depth,
+  radius,
   zoom,
+  reveal,
   progress,
   onHover,
   onGrab,
@@ -2338,31 +2458,45 @@ function NodeShape({
   joining: boolean;
   interactive: boolean;
   depth: number;
+  /** Decided once, by the layout — never recomputed here, or the drawing and
+   *  the orbit it sits on disagree. */
+  radius: number;
   zoom: number;
+  reveal: Reveal;
   progress?: { delivery: number; sprint: number; health: number };
   onHover: (active: boolean) => void;
   onGrab: (clientX: number, clientY: number) => void;
 }) {
   const isTeam = node.kind === 'team';
-  const r = nodeR(node);
+  const r = radius;
   const hue = isTeam ? TEAM_HUE : roleColor(node.role);
   const unnamed = !node.name?.trim();
   const wants = unnamed;
   const missingDetails = !unnamed && (isTeam ? !node.purpose : !node.role);
-  const minimumScreenRadius = isTeam ? (depth === 0 ? 20 : depth === 1 ? 14 : 9) : 3;
-  const visualScale = Math.max(1, minimumScreenRadius / Math.max(0.001, r * zoom));
+  // Units claim a minimum size in screen pixels so a deep org still reads as a
+  // hierarchy rather than a field of specks — the engine's own floors, not
+  // numbers invented here. People get no floor: they are simply not drawn
+  // until the camera is close enough for them.
+  const drawn = isTeam ? drawnUnitRadius({ r, depth }, zoom, r * 2.6) : r;
+  const visualScale = drawn / Math.max(0.001, r);
+  const presence = isTeam ? 1 : reveal.people;
   const avatar = !isTeam ? avatarPalette(node.id) : null;
-  const ringVisible = progress && (depth === 0 || zoom > (depth === 1 ? 0.12 : 0.28));
+  const ringShow = progress ? unitRingReveal(depth, zoom) : 0;
+  const ringVisible = !!progress && ringShow > 0.01;
   const ringStroke = 5.5 / Math.max(0.001, zoom * visualScale);
   const ringGap = 2.7 / Math.max(0.001, zoom * visualScale);
 
   return (
     <g
       transform={`translate(${mo.x} ${mo.y}) scale(${(0.62 + 0.38 * mo.a) * (dragging ? 1.06 : 1) * visualScale})`}
-      opacity={mo.a}
+      opacity={mo.a * presence}
       // Until it has arrived it is invisible but still hit-testable, and it is
       // sitting on top of its parent — so it must not take the click.
-      style={{ cursor: dragging ? 'grabbing' : 'grab', pointerEvents: interactive ? 'auto' : 'none' }}
+      // A person nobody can see is a person nobody can grab.
+      style={{
+        cursor: dragging ? 'grabbing' : 'grab',
+        pointerEvents: interactive && presence > 0.35 ? 'auto' : 'none',
+      }}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onMouseDown={(e) => {
@@ -2391,7 +2525,7 @@ function NodeShape({
         const radius = r + (3.5 / Math.max(0.001, zoom * visualScale)) + ringStroke / 2 + index * (ringStroke + ringGap);
         const circumference = 2 * Math.PI * radius;
         const colour = key === 'delivery' ? C.delivery : key === 'sprint' ? C.sprint : healthColor(value);
-        return <g key={key} transform="rotate(-90)">
+        return <g key={key} transform="rotate(-90)" opacity={ringShow}>
           <circle r={radius} fill="none" stroke={C.track} strokeWidth={ringStroke} />
           <circle r={radius} fill="none" stroke={colour} strokeWidth={ringStroke} strokeLinecap="round"
             strokeDasharray={`${circumference * value} ${circumference}`} />
@@ -2407,7 +2541,7 @@ function NodeShape({
       ) : node.name && avatar ? (
         <g>
           <circle r={r - 2} fill={avatar.background} />
-          {zoom > 0.13 && <g transform={`scale(${r / 9.5})`}>
+          {reveal.people > 0.4 && <g transform={`scale(${r / SEAT_RADIUS})`}>
             <ellipse cx={0} cy={7} rx={8} ry={5.5} fill={avatar.shirt} />
             <circle cx={0} cy={-2.3} r={4.7} fill={avatar.hair} />
             <ellipse cx={0} cy={-1} rx={3.8} ry={4.4} fill={avatar.skin} />

@@ -218,6 +218,37 @@ one, so the coalescence is something you watch rather than a jump cut (skipped
 outright under reduced motion). The shared-parent route **can orphan a parent**
 that has just lost its only child — allowed, by instruction.
 
+### Wearing the shipped map's clothes *(2026-09-20)*
+Greg: *"make the result look and feel visually more like /org."* The study now
+takes its **maths** from the shipped engine rather than copying its look, so the
+two can't drift:
+
+- **Size comes from `lib/orbital/geometry`** — a unit is `unitRadius` (165 · 72 ·
+  48 · 36 …) and a person is a `SEAT_RADIUS` seat, 9.5. Orbits stay sized by
+  contents. Greg, 2026-09-20, chose "depth for size, contents for spacing",
+  explicitly provisional: *"orbits around the central master node may later
+  become about seniority too … I want to be able to do layout first."*
+- ⚠️ **Size is counted from the bottom, not the top.** A team whose children are
+  people is always the same size, whatever sits above it; only something that
+  *holds teams* is company-sized. Counting from the top instead made the very
+  first team a 165-radius disc with two invisible 9.5 specks on it — the opening
+  moment of the creation flow, unusable. Established orgs render identically
+  either way; this only changes shallow ones. **A deviation from the literal
+  answer, for a reason — worth putting back to Greg.**
+- **The zoom ladder is `lib/orbital/lod`.** People are not drawn at overview
+  scale at all; a single arc (the torus) stands in for a unit's crowd from
+  ~0.95×, and gives way to real avatars with their own connection lines from
+  ~1.7×. Greg, 2026-09-20: *"if you zoom out in /org, then humans vanish. When
+  you zoom in, first they appear as an abstraction, then as nodes with
+  connection lines."*
+- **Connection lines are back**, unit→unit always and out to people only as the
+  people themselves arrive. Width stays flat: `/org` thickens a link by the
+  money flowing down it, and there is no money here to thicken it with.
+- **Data rings follow `unitRingReveal`** and are still drawn only where a metric
+  has source data.
+- **The camera may now zoom past 1×** when the map is small. Capping the fit at
+  1× was the other half of why the first team was invisible.
+
 ### 🔴 Known limit — depth past three rungs
 Three rungs read beautifully. At **four** the camera has to pull back to about
 `k≈0.22`, and while the labels stay legible the nodes become specks and start
