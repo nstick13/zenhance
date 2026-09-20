@@ -24,7 +24,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { avatarPalette } from '@/lib/orbital/avatar';
 import { SEAT_ORBIT_GAP, SEAT_RADIUS, unitRadius } from '@/lib/orbital/geometry';
-import { drawnUnitRadius, revealAt, unitLabelVisible, unitRingReveal, type Reveal } from '@/lib/orbital/lod';
+import {
+  drawnUnitRadius,
+  revealAt,
+  smoothstep,
+  unitRingReveal,
+  type Reveal,
+} from '@/lib/orbital/lod';
 import { C, healthColor } from '@/components/viz/orbital/theme';
 
 /* --- unified orbital palette -------------------------------------------- */
@@ -48,13 +54,16 @@ const PERSON_R = SEAT_RADIUS;
 const SEED_R = 50;
 const SOLO_ADD_R = 150;
 /** Clear air between a node and the subtree standing on its ring. */
-const GAP = SEAT_ORBIT_GAP;
-/** A company sits three unit-rungs above its people: company · group · team. */
-const UNIT_RUNGS = 3;
+/** Clear air between a node and the subtree on its orbit. Half again on the
+ *  engine's figure — Greg, 2026-09-20: "spacing between nodes … increase by
+ *  50%". */
+const GAP = SEAT_ORBIT_GAP * 1.5;
+/** An empty team still has to be worth looking at. */
+const MIN_TEAM_R = 20;
 /** How far the camera may zoom in on its own while framing a small map. */
 const MAX_FIT = 3.2;
 /** Breathing room between two neighbours on the same ring. */
-const PAD = 30;
+const PAD = 45;
 /** Gap between two islands when they're tidied into a row. */
 const ISLAND_GAP = 110;
 /** Width of the invisible band around a ring that answers the pointer. */
@@ -183,31 +192,28 @@ function buildLayout(nodes: Node[], pinned: Record<string, { x: number; y: numbe
   const radius: Record<string, number> = {};
 
   /**
-   * How many rungs of *units* stand beneath a node — a team of people is 1,
-   * something holding teams is 2, and so on. People aren't units.
+   * Size is grown from the people upwards, never handed down from the top.
+   * A person is a seat; a node that holds others covers the **area of
+   * everything inside it**, so a team of six reads as bigger than a team of
+   * two and a division reads as bigger than either.
+   *
+   * Greg, 2026-09-20: "Humans are the base unit of a company, so they should
+   * define sizing … the parent node is sized according to the sum of the areas
+   * of the child nodes (for now)."
    */
-  const unitHeight = (id: string): number => {
-    let below = 0;
-    for (const c of kids[id] ?? []) {
-      if (c.kind !== 'team') continue;
-      below = Math.max(below, unitHeight(c.id));
-    }
-    return 1 + below;
+  const sizeOf = (id: string): number => {
+    const cached = radius[id];
+    if (cached !== undefined) return cached;
+    const n = byId[id]!;
+    if (n.kind === 'person') return (radius[id] = SEAT_RADIUS);
+    const ch = kids[id] ?? [];
+    const area = ch.reduce((sum, c) => sum + sizeOf(c.id) ** 2, 0);
+    return (radius[id] = Math.max(MIN_TEAM_R, Math.sqrt(area)));
   };
 
-  // Depth first, because a node's size depends on it and its orbit depends on
-  // the sizes underneath.
   const rung = (id: string, d: number) => {
     depth[id] = d;
-    const n = byId[id]!;
-    // Size is read from the bottom of the hierarchy, not the top: "a team of
-    // people" is the same size whatever sits above it, and only something that
-    // *holds* teams gets to be company-sized. Measuring from the top instead
-    // made the very first team a 165-radius disc with two invisible specks on
-    // it — the opening moment of the creation flow, unusable.
-    // Greg, 2026-09-20: depth decides size; this is which end you count from,
-    // and it is provisional while the seniority question is open.
-    radius[id] = n.kind === 'team' ? unitRadius(Math.max(0, UNIT_RUNGS - unitHeight(id))) : SEAT_RADIUS;
+    sizeOf(id);
     for (const c of kids[id] ?? []) rung(c.id, d + 1);
   };
 
@@ -313,6 +319,40 @@ function classifyDrop(
     const off = Math.abs(Math.hypot(at.x - c.x, at.y - c.y) - R);
     if (off > RING_CATCH) continue;
     if (!best || off < best.distance) best = { parentId: id, distance: off };
+  }
+  return best;
+}
+
+/**
+ * Which boundary a point has been let go inside — the innermost one wins, so a
+ * node dropped into a nested family joins *that* family and not the one around
+ * it. Nothing means outside every boundary: the node answers to no one.
+ *
+ * Greg, 2026-09-20: "dragging a node outside a boundary severs the connection
+ * line to the parental node that defines that boundary. Dragging a node into a
+ * boundary immediately reinstates a connection line … IF a user takes a node
+ * outside of any boundary and crosses the master boundary and then drops the
+ * node into a nested boundary, the dropped node takes the parent of the nested
+ * boundary."
+ */
+function boundaryAt(
+  layout: Layout,
+  byId: Record<string, Node>,
+  draggedId: string,
+  at: { x: number; y: number },
+): string | null {
+  const blocked = descendantIds(layout.kids, draggedId);
+  let best: string | null = null;
+  let bestReach = Infinity;
+  for (const [id, reach] of Object.entries(layout.reach)) {
+    if (blocked.has(id) || byId[id]?.kind !== 'team') continue;
+    const c = layout.pos[id];
+    if (!c) continue;
+    if (Math.hypot(at.x - c.x, at.y - c.y) > reach) continue;
+    if (reach < bestReach) {
+      bestReach = reach;
+      best = id;
+    }
   }
   return best;
 }
@@ -1109,12 +1149,20 @@ export default function GrowLab({
   /* --- structural moves ---------------------------------------------------- */
 
   /** Hang a node off a different parent, and let it find its place on the ring. */
-  const reparent = useCallback((id: string, parentId: string) => {
-    setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, parentId } : n)));
-    // Drop the hand-placed position: joining a team means taking a seat on it.
-    setPinned((p) => without(p, id));
-    setMoveAsk(null);
-  }, []);
+  /**
+   * Hang a node off a different parent — or off nothing at all, when it has
+   * been taken outside every boundary. A node that joins something gives up
+   * its hand-placed position and takes a seat; a node cut loose keeps exactly
+   * where it was let go, because that is now its own place in the world.
+   */
+  const reparent = useCallback(
+    (id: string, parentId: string | null, at?: { x: number; y: number }) => {
+      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, parentId } : n)));
+      setPinned((p) => (parentId === null && at ? { ...p, [id]: at } : without(p, id)));
+      setMoveAsk(null);
+    },
+    [],
+  );
 
   /**
    * Run two teams together into one. Everything either of them held — teams
@@ -1299,14 +1347,21 @@ export default function GrowLab({
   }, [drag, byId, layout, nodes, radiusOf]);
 
   /** Where the drop would put this node in the org, if anywhere. */
+  /**
+   * What letting go here would mean. Two complementary readings, in order:
+   * land on an orbit and you have chosen that team deliberately; otherwise the
+   * boundary you are inside decides, and being inside none of them means the
+   * node answers to nobody.
+   */
   const landing = useMemo(() => {
     if (!drag?.moved || armed) return null;
     const n = byId[drag.id];
     const at = layout.pos[drag.id];
     if (!n || !at) return null;
-    const hit = classifyDrop(layout, drag.id, at);
-    if (!hit || hit.parentId === n.parentId) return null;
-    return hit;
+    const onOrbit = classifyDrop(layout, drag.id, at);
+    const parentId = onOrbit ? onOrbit.parentId : boundaryAt(layout, byId, drag.id, at);
+    if (parentId === (n.parentId ?? null)) return null;
+    return { parentId, viaOrbit: !!onOrbit };
   }, [drag, armed, byId, layout]);
 
   // Event handlers run long after the render that created them, so they read
@@ -1348,7 +1403,6 @@ export default function GrowLab({
             }
           : null,
       };
-      let latest = start[id]!;
       setDrag(session);
       setHover(null);
       setMenu(null);
@@ -1357,7 +1411,6 @@ export default function GrowLab({
         const w = toWorld(mx, my, cam);
         const dx = w.x - grab.x;
         const dy = w.y - grab.y;
-        latest = { x: start[id]!.x + dx, y: start[id]!.y + dy };
         if (!session.moved) {
           // A press that hasn't travelled is still a click, not a drag.
           if (Math.hypot(dx, dy) * cam.k < 4) return;
@@ -1404,13 +1457,13 @@ export default function GrowLab({
           return;
         }
         if (land) {
-          // Proximity previews a choice. Releasing never silently changes a
-          // person's home or a team's parent, including in free placement.
-          setMoveAsk({ id, parentId: land.parentId });
-          return;
-        }
-        if (session.family && Math.hypot(latest.x - session.family.x, latest.y - session.family.y) > session.family.radius) {
-          setSplitAsk(id);
+          // The line drawn under your hand while you dragged *was* the
+          // question. Greg, 2026-09-20: "we're brave enough to re-parent when
+          // dragging something inside a boundary" — and taking a node outside
+          // every boundary severs it, there and then.
+          // NB this supersedes the "Split off on release, never an automatic
+          // change" line in docs/UNIFIED-ORBITAL.md.
+          reparent(id, land.parentId, live.current.layout.pos[id]);
         }
       };
 
@@ -1420,7 +1473,7 @@ export default function GrowLab({
       window.addEventListener('touchend', finish);
       window.addEventListener('touchcancel', finish);
     },
-    [k, tx, ty, toWorld, layout, pinned, openNode, byId, rootOf],
+    [k, tx, ty, toWorld, layout, pinned, openNode, byId, rootOf, reparent],
   );
 
   /* --- pointer on a ring -------------------------------------------------- */
@@ -1677,6 +1730,7 @@ export default function GrowLab({
                 const fixed = drag?.family?.rootId === root.id ? drag.family : null;
                 const centre = fixed ? { x: fixed.x, y: fixed.y } : m(root.id);
                 const radius = fixed?.radius ?? (layout.reach[root.id] ?? unitRadius(0)) + 80;
+                const landingHere = !!landing?.parentId && rootOf(landing.parentId) === root.id;
                 return (
                   <g key={`helpers-${root.id}`}>
                     <circle
@@ -1684,10 +1738,10 @@ export default function GrowLab({
                       cy={centre.y}
                       r={radius}
                       fill="none"
-                      stroke="#9aa9de"
-                      strokeWidth={1.7 / k}
+                      stroke={landingHere ? TEAM_HUE : '#9aa9de'}
+                      strokeWidth={(landingHere ? 2.6 : 1.7) / k}
                       strokeDasharray={`${4 / k} ${9 / k}`}
-                      opacity={0.75}
+                      opacity={landingHere ? 0.9 : 0.75}
                     />
                     {helperRootId === root.id && [0.25, 0.5, 0.75].map((fraction) => (
                       <circle
@@ -1783,14 +1837,19 @@ export default function GrowLab({
                 a link by the money flowing down it, and there is no money
                 here to thicken it with. */}
             {nodes.map((n) => {
-              if (!n.parentId) return null;
-              const parent = byId[n.parentId];
-              if (!parent) return null;
-              const a = m(n.parentId);
+              // While a node is in your hand the line shows where it would
+              // land, not where it came from — cross into a boundary and the
+              // line reappears on the new parent, cross out of everything and
+              // it goes. That preview is the whole confirmation.
+              const held = drag?.moved && drag.id === n.id;
+              const parentId = held && landing ? landing.parentId : n.parentId;
+              if (!parentId || !byId[parentId]) return null;
+              const a = m(parentId);
               const b = m(n.id);
               const toPerson = n.kind === 'person';
-              const alpha = Math.min(m(n.id).a, m(n.parentId).a) * (toPerson ? reveal.people : 0.85);
+              const alpha = Math.min(m(n.id).a, m(parentId).a) * (toPerson ? reveal.people : 0.85);
               if (alpha < 0.02) return null;
+              const proposed = held && !!landing;
               return (
                 <line
                   key={`link-${n.id}`}
@@ -1798,10 +1857,11 @@ export default function GrowLab({
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke={C.link}
-                  strokeWidth={(toPerson ? 1.4 : 2.5) / Math.max(k, 0.05)}
+                  stroke={proposed ? TEAM_HUE : C.link}
+                  strokeWidth={(proposed ? 3 : toPerson ? 1.4 : 2.5) / Math.max(k, 0.05)}
                   strokeLinecap="round"
-                  opacity={alpha}
+                  strokeDasharray={proposed ? `${7 / k} ${6 / k}` : undefined}
+                  opacity={proposed ? 0.9 : alpha}
                 />
               );
             })}
@@ -2481,10 +2541,23 @@ function NodeShape({
   const visualScale = drawn / Math.max(0.001, r);
   const presence = isTeam ? 1 : reveal.people;
   const avatar = !isTeam ? avatarPalette(node.id) : null;
-  const ringShow = progress ? unitRingReveal(depth, zoom) : 0;
+
+  // Everything inside the group is multiplied by the group's own scale as well
+  // as the camera's. Measuring the rings in that same space is what stops the
+  // node growing out through them as you zoom (Greg, 2026-09-20).
+  const live = Math.max(0.001, zoom * (0.62 + 0.38 * mo.a) * visualScale);
+  const screenRadius = r * live;
+  // The shipped map's figures exactly (`ringGeometry` in viz/orbital/render):
+  // a gauge is a fraction of the node it belongs to, so it gets chunkier as
+  // the node does, instead of staying a hairline on a big one.
+  const ringWidthPx = Math.min(7.5, Math.max(4.5, screenRadius * 0.13));
+  const ringGapPx = Math.max(2.4, ringWidthPx * 0.46);
+  const ringInsetPx = Math.max(3.5, ringWidthPx * 0.7);
+  const ringStroke = ringWidthPx / live;
+  // Three gauges around a two-pixel dot are a smudge, not three gauges.
+  const ringLegible = smoothstep(5, 11, screenRadius) * unitRingReveal(depth, zoom);
+  const ringShow = progress ? ringLegible : 0;
   const ringVisible = !!progress && ringShow > 0.01;
-  const ringStroke = 5.5 / Math.max(0.001, zoom * visualScale);
-  const ringGap = 2.7 / Math.max(0.001, zoom * visualScale);
 
   return (
     <g
@@ -2522,18 +2595,20 @@ function NodeShape({
         style={{ filter: 'drop-shadow(0 5px 8px rgba(86,103,179,.2))' }} />
       {ringVisible && (['delivery', 'sprint', 'health'] as const).map((key, index) => {
         const value = Math.max(0, Math.min(1, progress[key]));
-        const radius = r + (3.5 / Math.max(0.001, zoom * visualScale)) + ringStroke / 2 + index * (ringStroke + ringGap);
+        const radius = r + (ringInsetPx + ringWidthPx / 2 + index * (ringWidthPx + ringGapPx)) / live;
         const circumference = 2 * Math.PI * radius;
         const colour = key === 'delivery' ? C.delivery : key === 'sprint' ? C.sprint : healthColor(value);
         return <g key={key} transform="rotate(-90)" opacity={ringShow}>
-          <circle r={radius} fill="none" stroke={C.track} strokeWidth={ringStroke} />
+          <circle r={radius} fill="none" stroke={C.track} strokeWidth={ringStroke} opacity={0.7} />
           <circle r={radius} fill="none" stroke={colour} strokeWidth={ringStroke} strokeLinecap="round"
-            strokeDasharray={`${circumference * value} ${circumference}`} />
+            strokeDasharray={`${circumference * value} ${circumference}`} opacity={0.93} />
         </g>;
       })}
       {missingDetails && <circle cx={r * 0.72} cy={-r * 0.72} r={6} fill={ALERT} stroke={SURFACE} strokeWidth={2} />}
       {isTeam ? (
-        <g fill={hue} opacity={unnamed ? 0.5 : 0.9}>
+        // The glyph belongs to the node, so it grows and shrinks with it
+        // rather than staying a fixed size on a circle that no longer matches.
+        <g fill={hue} opacity={unnamed ? 0.5 : 0.9} transform={`scale(${r / 48})`}>
           <circle cx={-13} cy={4} r={6} />
           <circle cx={13} cy={4} r={6} />
           <circle cx={0} cy={-11} r={6} />
@@ -2541,7 +2616,9 @@ function NodeShape({
       ) : node.name && avatar ? (
         <g>
           <circle r={r - 2} fill={avatar.background} />
-          {reveal.people > 0.4 && <g transform={`scale(${r / SEAT_RADIUS})`}>
+          {/* The drawing reaches ~12.5 units from its centre, so it has to be
+              brought in to sit inside a 9.5 seat rather than spill over it. */}
+          {reveal.people > 0.4 && <g transform={`scale(${(r / SEAT_RADIUS) * 0.74})`}>
             <ellipse cx={0} cy={7} rx={8} ry={5.5} fill={avatar.shirt} />
             <circle cx={0} cy={-2.3} r={4.7} fill={avatar.hair} />
             <ellipse cx={0} cy={-1} rx={3.8} ry={4.4} fill={avatar.skin} />

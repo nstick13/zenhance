@@ -228,13 +228,13 @@ two can't drift:
   contents. Greg, 2026-09-20, chose "depth for size, contents for spacing",
   explicitly provisional: *"orbits around the central master node may later
   become about seniority too … I want to be able to do layout first."*
-- ⚠️ **Size is counted from the bottom, not the top.** A team whose children are
-  people is always the same size, whatever sits above it; only something that
-  *holds teams* is company-sized. Counting from the top instead made the very
-  first team a 165-radius disc with two invisible 9.5 specks on it — the opening
-  moment of the creation flow, unusable. Established orgs render identically
-  either way; this only changes shallow ones. **A deviation from the literal
-  answer, for a reason — worth putting back to Greg.**
+- **Size is grown from the people upwards.** A person is a 9.5 seat; a node
+  that holds others covers the **sum of the areas of everything inside it**, so
+  a team of six reads as bigger than a team of two. Greg, 2026-09-20: *"Humans
+  are the base unit of a company, so they should define sizing."* ⚠️ This is
+  flatter than `/org`'s 165 · 72 · 48 — roughly 1.7× a rung rather than 2.3× —
+  so the two are **not** pixel-identical on a deep org. That is the literal
+  instruction; the tension with "look identical to /org" is Greg's to settle.
 - **The zoom ladder is `lib/orbital/lod`.** People are not drawn at overview
   scale at all; a single arc (the torus) stands in for a unit's crowd from
   ~0.95×, and gives way to real avatars with their own connection lines from
@@ -244,10 +244,41 @@ two can't drift:
 - **Connection lines are back**, unit→unit always and out to people only as the
   people themselves arrive. Width stays flat: `/org` thickens a link by the
   money flowing down it, and there is no money here to thicken it with.
-- **Data rings follow `unitRingReveal`** and are still drawn only where a metric
-  has source data.
+- **Data rings are the shipped map's `ringGeometry`, exactly** — width is a
+  fraction of the node's own screen size (4.5–7.5px) rather than a fixed
+  hairline, so a gauge gets chunkier as its node does, and the whole stack is
+  measured in the node's own drawn space. That last part is what stops a node
+  growing out through its own rings as you zoom. They still appear only where a
+  metric has source data, and only once the node is big enough to carry them.
+- **Avatars are drawn to fit their seat.** The illustration reaches ~12.5 units
+  from its centre and was spilling out of a 9.5 circle.
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
   1× was the other half of why the first team was invisible.
+
+### Boundaries decide who your parent is *(2026-09-20)*
+Every node's **boundary** is the circle enclosing its whole subtree. Dragging
+reads two complementary things on release, in this order (Greg, 2026-09-20:
+*"we're brave enough to re-parent … We can have this alongside the existing
+drag-to-orbit behaviour, since it's complimentary"*):
+
+1. **Land on an orbit** and you have chosen that team deliberately.
+2. **Otherwise the boundary you are inside decides**, and the *innermost* one
+   wins — so a node carried across a family's outer boundary and dropped into a
+   nested one takes the nested one's parent, not the family's.
+3. **Inside none of them, the node is severed** and keeps exactly where it was
+   let go. That is now its own place in the world.
+
+**The line under your hand is the question.** While a node is held, its
+connection line shows where it *would* land — it reappears on a new parent as
+you cross in, and disappears as you cross out — and the boundary you are about
+to drop into lights up. Releasing acts. There is no dialog.
+
+> ⚠️ **This supersedes a line in [UNIFIED-ORBITAL.md](UNIFIED-ORBITAL.md)**,
+> which records an earlier decision that crossing the outer boundary *"offers
+> **Split off** on release, never an automatic change"*, and that a release
+> should "ask what should happen". Greg replaced both on 2026-09-20. The
+> merge choices (two teams, or two people) still ask, because those are
+> genuinely ambiguous; a boundary crossing is not.
 
 ### 🔴 Known limit — depth past three rungs
 Three rungs read beautifully. At **four** the camera has to pull back to about
