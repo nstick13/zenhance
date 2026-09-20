@@ -171,11 +171,17 @@ like: two teams, or two people. A person meeting a *team* is a different
 question, and the orbit already asks it.
 
 **Two people** get asked *"Do these two work together?"* — **make them a team**
-(a new team closes around the pair, taking the place in the hierarchy they
-already had, named during the interaction) or **put them on the same team**
-(move them both onto a team already on the map). They lean together rather than
-one vanishing into the other: nobody is absorbing anybody, a team is closing
-around them.
+(a new team closes around the pair, named during the interaction) or **put them
+on the same team** (move them both onto a team already on the map). They lean
+together rather than one vanishing into the other: nobody is absorbing anybody,
+a team is closing around them.
+
+**Where that new team sits depends on where the two came from.** Same team, and
+it plainly belongs there — no question asked. **Different teams, and it is put
+to the user** (Greg, 2026-09-20), because picking one of their parents for them
+would be a coin toss: *"Where does {team} sit?"* offers each of the two parents
+by name (*"where Priya already sits"*), **on its own**, or **something new** —
+which makes a second node above it and opens its wizard so you can name it.
 
 **Two teams** get asked which of two very different things you meant:
 
@@ -223,10 +229,11 @@ a half-done size floor makes nodes overlap, which is worse than small.
 4. **Nothing pins an island's order.** Tidy up sorts islands left-to-right by
    where they already are, so the row reshuffles if you move one. Fine for now;
    the manual ordering Greg wants will need a real answer.
-5. **Merging keeps the *target's* place in the hierarchy.** Drag A onto B and
-   the survivor sits where B sat — and a team formed around two people takes
-   the parent of the one you dropped *onto*. With the two under different
-   parents that is a choice, not a law; it has not been put to Greg.
+5. 🔶 **Two *teams* merged into one still keep the target's place** — drag A
+   onto B and the survivor sits where B sat, silently, even when A and B had
+   different parents. People now get asked that question; teams do not. The
+   inconsistency is deliberate for the moment (Greg scoped the fix to people)
+   but it is a one-step change if the same answer should apply.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the

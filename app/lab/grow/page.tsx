@@ -361,6 +361,9 @@ function placeCallout(
   }
 
   const G = 26;
+  // The title sits top-left and the buttons top-right; nothing may be placed
+  // under that strip.
+  const TOP = 58;
   const candidates: { side: Side; rect: Rect }[] = [
     { side: 'right', rect: { x: node.x + node.r + G, y: node.y - ch / 2, w: cw, h: ch } },
     { side: 'left', rect: { x: node.x - node.r - G - cw, y: node.y - ch / 2, w: cw, h: ch } },
@@ -374,7 +377,7 @@ function placeCallout(
     const clipped =
       Math.max(0, 12 - c.rect.x) +
       Math.max(0, c.rect.x + c.rect.w - (vw - 12)) +
-      Math.max(0, 12 - c.rect.y) +
+      Math.max(0, TOP - c.rect.y) +
       Math.max(0, c.rect.y + c.rect.h - (vh - 12));
     const hidden = others.filter((o) => overlaps(c.rect, o)).length;
     const score = hidden * 1000 + clipped * 2 + i;
@@ -387,7 +390,7 @@ function placeCallout(
   const rect = {
     ...best.rect,
     x: Math.max(12, Math.min(vw - cw - 12, best.rect.x)),
-    y: Math.max(12, Math.min(vh - ch - 12, best.rect.y)),
+    y: Math.max(TOP, Math.min(vh - ch - 12, best.rect.y)),
   };
   const tail =
     best.side === 'right' || best.side === 'left'
@@ -491,11 +494,14 @@ type DragState = {
 };
 
 /** Two teams running together, or two people deciding to become a team. */
+/** Where a team made around two people should sit. */
+type TeamHome = string | 'alone' | 'new';
+
 type MergeState = {
   a: string;
   b: string;
   kind: Kind;
-  stage: 'choose' | 'rename' | 'parent';
+  stage: 'choose' | 'rename' | 'home' | 'parent';
   name: string;
 };
 
@@ -998,10 +1004,22 @@ export default function GrowLab() {
    * around them. It takes the place in the hierarchy the pair already had.
    */
   const formTeamAround = useCallback(
-    (aId: string, bId: string, name: string) => {
+    (aId: string, bId: string, name: string, home: TeamHome) => {
       const aPos = layout.pos[aId];
       const bPos = layout.pos[bId];
-      const under = byId[bId]?.parentId ?? null;
+      const mid = {
+        x: ((aPos?.x ?? 0) + (bPos?.x ?? 0)) / 2,
+        y: ((aPos?.y ?? 0) + (bPos?.y ?? 0)) / 2,
+      };
+
+      // "A new parent" means two nodes, not one: the pair's team, and the
+      // thing that holds it. The holder is what you're then asked to name.
+      const holder: Node | null =
+        home === 'new'
+          ? { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null }
+          : null;
+      const under = holder ? holder.id : home === 'alone' ? null : home;
+
       const team: Node = {
         id: nid('team'),
         kind: 'team',
@@ -1010,27 +1028,32 @@ export default function GrowLab() {
         role: null,
         purpose: null,
       };
-      setNodes((ns) => [team, ...ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: team.id } : n))]);
+
+      setNodes((ns) => [
+        ...(holder ? [holder] : []),
+        team,
+        ...ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: team.id } : n)),
+      ]);
       setPinned((p) => {
         const next = without(p, aId, bId);
         // Standing on its own, it appears between the two it was made for;
         // inside something else, it takes a seat on that ring instead.
-        if (under === null) {
-          next[team.id] = {
-            x: ((aPos?.x ?? 0) + (bPos?.x ?? 0)) / 2,
-            y: ((aPos?.y ?? 0) + (bPos?.y ?? 0)) / 2,
-          };
-        }
+        if (holder) next[holder.id] = mid;
+        else if (under === null) next[team.id] = mid;
         return next;
       });
       setMerge(null);
       setCoalescing(null);
-      if (!name.trim()) {
+      if (holder) {
+        setParentJustAdded(holder.id);
+        setOpenId(holder.id);
+        setStepIx(0);
+      } else if (!name.trim()) {
         setOpenId(team.id);
         setStepIx(0);
       }
     },
-    [layout, byId],
+    [layout],
   );
 
   /** Put two people on the same team — one that is already on the map. */
@@ -1042,9 +1065,9 @@ export default function GrowLab() {
 
   /** The droplet: slide one team into the other, then let them become one. */
   const runMerge = useCallback(
-    (kind: Kind, aId: string, bId: string, name: string) => {
+    (kind: Kind, aId: string, bId: string, name: string, home: TeamHome = 'alone') => {
       const commit = () =>
-        kind === 'team' ? mergeIntoOne(aId, bId, name) : formTeamAround(aId, bId, name);
+        kind === 'team' ? mergeIntoOne(aId, bId, name) : formTeamAround(aId, bId, name, home);
       const bPos = layout.pos[bId];
       if (!bPos || reduced) {
         commit();
@@ -1279,10 +1302,47 @@ export default function GrowLab() {
     if (!focusId) return null;
     const here = toScreen(focusId);
     const n = byId[focusId];
-    const h = merge ? (merge.stage === 'choose' ? 268 : merge.stage === 'rename' ? 300 : 280) : 232;
+    const h = merge
+      ? merge.stage === 'choose'
+        ? 268
+        : merge.stage === 'rename'
+          ? 300
+          : merge.stage === 'home'
+            ? 330
+            : 280
+      : 232;
     return {
       ...placeCallout({ x: here.x, y: here.y, r: (n ? nodeR(n) : 40) * k }, otherBoxes(focusId), CALLOUT_W, h, size.w, size.h),
     };
+  })();
+
+  /**
+   * Two people from the same team make a team that plainly belongs there. Two
+   * people from *different* teams don't — picking one of their parents for
+   * them would be a coin toss, so it gets asked.
+   */
+  const pairHomes = (() => {
+    if (!merge || merge.kind !== 'person') return null;
+    const pa = byId[merge.a]?.parentId ?? null;
+    const pb = byId[merge.b]?.parentId ?? null;
+    if (pa === pb) return null;
+    const seen = new Set<string>();
+    const options: { value: TeamHome; label: string; hint: string }[] = [];
+    for (const [pid, who] of [
+      [pb, merge.b],
+      [pa, merge.a],
+    ] as const) {
+      if (!pid || seen.has(pid)) continue;
+      seen.add(pid);
+      options.push({
+        value: pid,
+        label: byId[pid]?.name ?? 'That team',
+        hint: `Where ${byId[who]?.name?.split(' ')[0] ?? 'they'} already sits`,
+      });
+    }
+    options.push({ value: 'alone', label: 'On its own', hint: 'Answering to nothing, for now' });
+    options.push({ value: 'new', label: 'Something new', hint: 'A new node above it, which you can name next' });
+    return options;
   })();
 
   /** Teams a pair could be filed under — never one of their own descendants. */
@@ -1710,7 +1770,9 @@ export default function GrowLab() {
                 value={merge.name}
                 onChange={(e) => setMerge({ ...merge, name: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && merge.name.trim()) runMerge(merge.kind, merge.a, merge.b, merge.name);
+                  if (e.key !== 'Enter' || !merge.name.trim()) return;
+                  if (pairHomes) setMerge({ ...merge, stage: 'home' });
+                  else runMerge(merge.kind, merge.a, merge.b, merge.name);
                 }}
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
@@ -1737,9 +1799,39 @@ export default function GrowLab() {
                 <button
                   className="zen-primary"
                   disabled={!merge.name.trim()}
-                  onClick={() => runMerge(merge.kind, merge.a, merge.b, merge.name)}
+                  onClick={() =>
+                    pairHomes
+                      ? setMerge({ ...merge, stage: 'home' })
+                      : runMerge(merge.kind, merge.a, merge.b, merge.name)
+                  }
                 >
-                  {merge.kind === 'team' ? 'Merge' : 'Create the team'}
+                  {pairHomes ? 'Next' : merge.kind === 'team' ? 'Merge' : 'Create the team'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {merge.stage === 'home' && pairHomes && (
+            <>
+              <h2 className="zen-title">Where does {merge.name.trim() || 'their team'} sit?</h2>
+              <p style={{ fontSize: 13, color: INK_SOFT, margin: '-6px 0 14px' }}>
+                They come from different teams, so this one is yours to say.
+              </p>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {pairHomes.map((o) => (
+                  <button
+                    key={String(o.value)}
+                    className="zen-choice"
+                    onClick={() => runMerge(merge.kind, merge.a, merge.b, merge.name, o.value)}
+                  >
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{o.label}</span>
+                    <span style={{ fontSize: 12, color: INK_SOFT }}>{o.hint}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', marginTop: 14 }}>
+                <button className="zen-ghost" onClick={() => setMerge({ ...merge, stage: 'rename' })}>
+                  Back
                 </button>
               </div>
             </>
