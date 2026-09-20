@@ -131,20 +131,30 @@ where that trade runs out. The real fix is production's approach — a minimum
 `drawnUnitRadius`) — plus actual zoom and pan. **Not attempted here on purpose:**
 a half-done size floor makes nodes overlap, which is worse than small.
 
+### Settled — Greg, 2026-09-20
+- ✅ **Siblings never attach on their own.** A new team is always an unconnected
+  island, whatever its neighbour's shape. Two teams become related only when a
+  user *deliberately connects them*. Nothing about the map may quietly assert a
+  relationship nobody stated — that is the point of the forest.
+  **Still open: what "connect them" actually is as an interaction.** Undesigned;
+  don't invent it in passing.
+- ✅ **Even redistribution stays, for now.** A new person lands where you
+  clicked and the ring then spaces everyone evenly. **But a manual override is
+  wanted later** — reordering the people within a team, and the teams within an
+  orbit. Treat the even spacing as the default, not as a rule the model depends
+  on: whatever replaces it has to let a user pin an order.
+- ✅ **Touch is unverified on real glass, and that's acceptable at this stage.**
+  Tap-the-ring is wired and works under simulated taps.
+
 ### Open — Greg's call
-1. **Should a sibling team ever attach?** Right now "another team" always makes
-   an unconnected island, even when the ring's owner already has a parent it
-   could plausibly join. That is the literal spec, and it may be exactly right —
-   but it means the map can never express "these two are siblings" until
-   somebody adds the parent by hand.
-2. **A new person lands on the ring, then the ring redistributes evenly.** You
-   don't get to keep the angle you clicked at. That is what makes the ring read
-   as a ring; it also means placement is never yours.
-3. **Does the first person keep any special status** (they're the one who
+1. **What does "connect two teams" mean?** (from the settled item above — the
+   decision is made, the interaction is not.)
+2. **Does the first person keep any special status** (they're the one who
    answered the questions), or are they just the first seat?
-4. **Editing vs. adding** — clicking a finished node currently reopens its
+3. **Editing vs. adding** — clicking a finished node currently reopens its
    wizard prefilled. Fine for a feel study; probably not the real interaction.
-5. **Tidy up is the only layout control.** No drag, no snapping — by instruction.
+4. **Tidy up is the only layout control.** No drag, no snapping — by instruction,
+   and a manual reorder (above) will have to land somewhere in here.
 
 > **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
