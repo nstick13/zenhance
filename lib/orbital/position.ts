@@ -1,7 +1,54 @@
 import type { Link, OrbitalScene, PlacedSeat, PlacedUnit } from "./layout";
-import type { Point } from "./geometry";
+import { polar, type Point } from "./geometry";
 
 export type PositionOffsets = ReadonlyMap<string, Point>;
+
+/** Reconstruct saved same-rung placements as branch offsets, not as input to
+ * the packer. Re-packing around one changed angle moves unrelated siblings
+ * and often their whole subtrees. An offset keeps the calculated map stable;
+ * only the chosen branch moves. The angle remains the persisted compact form.
+ */
+export function anglePlacementOffsets(scene: OrbitalScene, angles: ReadonlyMap<string, number>): Map<string, Point> {
+  const own = new Map<string, Point>();
+  const cumulative = new Map<string, Point>();
+  const roots = new Map(scene.families?.map((family) => [family.rootId, family.centre]) ?? []);
+  const centreOf = (unit: PlacedUnit): Point => {
+    let root = unit;
+    while (root.parentId && scene.unitById.has(root.parentId)) root = scene.unitById.get(root.parentId)!;
+    return roots.get(root.id) ?? { x: 0, y: 0 };
+  };
+  for (const unit of [...scene.units].sort((a, b) => a.depth - b.depth)) {
+    const inherited = unit.parentId ? cumulative.get(unit.parentId) ?? { x: 0, y: 0 } : { x: 0, y: 0 };
+    const angle = angles.get(unit.id);
+    if (angle === undefined || !Number.isFinite(angle)) {
+      cumulative.set(unit.id, inherited);
+      continue;
+    }
+    const centre = centreOf(unit);
+    const radius = Math.hypot(unit.x - centre.x, unit.y - centre.y);
+    const at = polar(angle, radius);
+    const delta = {
+      x: centre.x + at.x - unit.x - inherited.x,
+      y: centre.y + at.y - unit.y - inherited.y,
+    };
+    own.set(unit.id, delta);
+    cumulative.set(unit.id, { x: inherited.x + delta.x, y: inherited.y + delta.y });
+  }
+  return own;
+}
+
+/** Free-placement offsets add to any saved orbital placement. */
+export function combinePositionOffsets(
+  orbital: PositionOffsets,
+  free: PositionOffsets,
+): Map<string, Point> {
+  const combined = new Map(orbital);
+  for (const [id, delta] of free) {
+    const previous = combined.get(id) ?? { x: 0, y: 0 };
+    combined.set(id, { x: previous.x + delta.x, y: previous.y + delta.y });
+  }
+  return combined;
+}
 
 /** Apply meaning-free, snap-off placement without altering hierarchy. Offsets
  * are relative rather than absolute so the same user move survives a local

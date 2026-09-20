@@ -32,3 +32,13 @@ export type DemoCompanyKind = keyof typeof DEMO_COMPANIES;
 export function isRetiredScaleDemoWorkspace(name: string): boolean {
   return name === DEMO_COMPANIES.large.name || name === "Northwind Freight & Logistics";
 }
+
+/** Only these invented, dev-account fixtures may display synthetic work.
+ * The caller must also verify dev auth; a customer workspace with the same
+ * name must never acquire sample work by accident. */
+export function isSampleWorkFixtureName(name: string): boolean {
+  return name === "Digital Tailoring Supplies" ||
+    name === "Sparrow Jam Manufacturing, OH" ||
+    name === DEMO_COMPANIES.small.name ||
+    isRetiredScaleDemoWorkspace(name);
+}

@@ -134,22 +134,36 @@ export function snapUnit(scene: OrbitalScene, unitId: string, pointer: Point): U
 export function snapUnitOnRing(scene: OrbitalScene, unitId: string, pointer: Point): UnitSnap | null {
   const dragged = scene.unitById.get(unitId);
   if (!dragged || dragged.parentId === null) return null;
-  const depth = Math.min(Math.max(bandAtRadius(scene, radiusOf(pointer)), 1), Math.max(1, scene.maxDepth));
-  const band = scene.bands.find((candidate) => candidate.depth === depth)?.radius;
+  // A forest has several independent centres. Measure the cursor against the
+  // dragged unit's own family, never against the page origin or another root.
+  let root = dragged;
+  while (root.parentId && scene.unitById.has(root.parentId)) root = scene.unitById.get(root.parentId)!;
+  const family = scene.families?.find((candidate) => candidate.rootId === root.id);
+  const centre = family?.centre ?? { x: 0, y: 0 };
+  const bands = family?.bands ?? scene.bands;
+  const local = { x: pointer.x - centre.x, y: pointer.y - centre.y };
+  const localScene = family ? { ...scene, bands } : scene;
+  const maxDepth = Math.max(1, ...bands.map((candidate) => candidate.depth));
+  const depth = Math.min(Math.max(bandAtRadius(localScene, radiusOf(local)), 1), maxDepth);
+  const band = bands.find((candidate) => candidate.depth === depth)?.radius;
   if (band == null) return null;
   const blocked = descendantIds(scene, unitId);
   const taken = scene.units
-    .filter((unit) => unit.depth === depth && !blocked.has(unit.id))
-    .map((unit) => unit.angle);
+    .filter((unit) => unit.depth === depth && !blocked.has(unit.id) &&
+      (!family || Math.hypot(unit.x - centre.x, unit.y - centre.y) <= family.boundary))
+    // A saved placement changes world position without re-packing the layout,
+    // so use the position people see, not the unit's original layout angle.
+    .map((unit) => angleOf({ x: unit.x - centre.x, y: unit.y - centre.y }));
   const separation = angularStep(unitRadius(depth), 8, Math.max(1, band));
-  const angle = nearestFreeAngle(taken, angleOf(pointer), separation);
+  const angle = nearestFreeAngle(taken, angleOf(local), separation);
+  const relative = polar(angle, band);
   return {
     kind: "unit",
     unitId,
     parentId: dragged.parentId,
     depth,
     angle,
-    position: polar(angle, band),
+    position: { x: centre.x + relative.x, y: centre.y + relative.y },
     reparents: false,
     rerungs: depth !== dragged.depth,
   };

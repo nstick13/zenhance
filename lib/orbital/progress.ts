@@ -39,11 +39,11 @@ export type PersonVitals = {
 
 export type UnitProgress = {
   /** Share of the branch's work items that are finished. */
-  delivery: number;
+  delivery: number | null;
   /** Share of story points past the "still not started" line. */
-  sprint: number;
-  /** Average wellbeing of the people in the branch. */
-  health: number;
+  sprint: number | null;
+  /** Average explicit health score. Null means no health measurement exists. */
+  health: number | null;
   people: number;
   done: number;
   total: number;
@@ -126,18 +126,18 @@ export function personVitals(
 }
 
 /**
- * Roll a branch's people and their boards into the three figures a unit's
- * rings show. An empty branch reads as zero rather than as complete — a
- * team with no work has not finished anything.
+ * Roll a branch's measured work and health into the three figures a unit's
+ * rings show. Null means the metric has no source data, not a measured zero.
  */
 export function unitProgress(
-  members: { tasks: MockTask[]; wellbeing: number }[],
+  members: { tasks: MockTask[]; health: number | null }[],
 ): UnitProgress {
   let done = 0;
   let total = 0;
   let pointsMoved = 0;
   let pointsTotal = 0;
   let health = 0;
+  let healthCount = 0;
   for (const m of members) {
     for (const t of m.tasks) {
       total += 1;
@@ -149,12 +149,15 @@ export function unitProgress(
         pointsMoved += t.points * 0.5;
       }
     }
-    health += m.wellbeing;
+    if (m.health !== null && Number.isFinite(m.health)) {
+      health += m.health;
+      healthCount += 1;
+    }
   }
   return {
-    delivery: total === 0 ? 0 : done / total,
-    sprint: pointsTotal === 0 ? 0 : pointsMoved / pointsTotal,
-    health: members.length === 0 ? 0 : health / members.length,
+    delivery: total === 0 ? null : done / total,
+    sprint: pointsTotal === 0 ? null : pointsMoved / pointsTotal,
+    health: healthCount === 0 ? null : health / healthCount,
     people: members.length,
     done,
     total,

@@ -13,7 +13,7 @@ export default async function OrgPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { view } = await searchParams;
-  const { people, units, assignments, disciplines, lens, vocabulary } =
+  const { people, units, assignments, disciplines, lens, vocabulary, sampleWork } =
     await getOrgSnapshot();
   const isEmpty = units.length === 0;
 
@@ -104,6 +104,7 @@ export default async function OrgPage({
       assignments={assignments}
       vocabulary={vocabulary}
       savedNodes={savedNodes}
+      sampleWork={sampleWork}
     />,
   );
 }

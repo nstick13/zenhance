@@ -138,7 +138,7 @@ describe("personVitals", () => {
 });
 
 describe("unitProgress", () => {
-  const member = (tasks: MockTask[], score = 1) => ({ tasks, wellbeing: score });
+  const member = (tasks: MockTask[], score: number | null = 1) => ({ tasks, health: score });
 
   it("rolls delivery up from every board in the branch", () => {
     const p = unitProgress([
@@ -157,11 +157,13 @@ describe("unitProgress", () => {
     expect(halfMoving.sprint).toBeCloseTo(0.25);
   });
 
-  it("averages wellbeing across the people, not the tasks", () => {
+  it("averages measured health across the people, not the tasks", () => {
     expect(unitProgress([member([task("done")], 1), member([], 0)]).health).toBeCloseTo(0.5);
   });
 
-  it("reads an empty branch as zero rather than complete", () => {
-    expect(unitProgress([])).toMatchObject({ delivery: 0, sprint: 0, health: 0, people: 0 });
+  it("distinguishes missing measurements from a measured zero", () => {
+    expect(unitProgress([])).toMatchObject({ delivery: null, sprint: null, health: null, people: 0 });
+    expect(unitProgress([member([task("backlog")], null)])).toMatchObject({ delivery: 0, sprint: 0, health: null });
+    expect(unitProgress([member([], 0)])).toMatchObject({ delivery: null, sprint: null, health: 0 });
   });
 });

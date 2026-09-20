@@ -132,6 +132,8 @@ export type OrbitalScene = {
   /** Radius that contains everything drawn, work items included. */
   extent: number;
   maxDepth: number;
+  /** Independent rooted families. The outer boundary is visual, not a parent. */
+  families?: { rootId: string; centre: Point; boundary: number; bands: Band[] }[];
 };
 
 export type LayoutOptions = {

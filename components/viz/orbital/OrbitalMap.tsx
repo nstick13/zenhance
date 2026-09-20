@@ -15,7 +15,6 @@ import {
   type StructureOverrides,
 } from "@/lib/orbital/model";
 import {
-  layoutOrbital,
   type OrbitalScene,
   type PlacedSeat,
   type PlacedUnit,
@@ -23,7 +22,8 @@ import {
 import { descendantIds, snapSeat, snapUnitOnRing, type SeatSnap, type UnitSnap } from "@/lib/orbital/snap";
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
 import { focusOrbital } from "@/lib/orbital/focus";
-import { applyPositionOffsets } from "@/lib/orbital/position";
+import { layoutOrbitalForest } from "@/lib/orbital/forest";
+import { anglePlacementOffsets, applyPositionOffsets, combinePositionOffsets } from "@/lib/orbital/position";
 import {
   SEAT_RADIUS,
   WORK_RADIUS,
@@ -96,6 +96,7 @@ type Props = {
   assignments: Assignment[];
   vocabulary: Vocabulary;
   savedNodes: OrbitalNodeRow[];
+  sampleWork: boolean;
 };
 
 const MAX_SCALE = 12;
@@ -165,7 +166,7 @@ type FocusFrame = { unitId: string };
 const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
 
-export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes }: Props) {
+export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes, sampleWork }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const bgLayerRef = useRef<Konva.Layer | null>(null);
@@ -255,9 +256,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const boards = useMemo(() => {
     const tags = units.map((u) => u.name);
     const map = new Map<string, MockTask[]>();
-    for (const p of people) map.set(p.id, tasksForPerson(p, tags));
+    if (sampleWork) for (const p of people) map.set(p.id, tasksForPerson(p, tags));
     return map;
-  }, [people, units]);
+  }, [people, units, sampleWork]);
 
   const allocationByPerson = useMemo(() => {
     const map = new Map<string, number>();
@@ -299,19 +300,19 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
             roleOnTeam: a.roleOnTeam,
           })),
         },
-        { workCountFor: (id) => boards.get(id)?.length ?? 0 },
+        { workCountFor: (id) => boards.get(id)?.length ?? 0, mergePassThroughRoot: false },
       ),
     [units, people, assignments, boards],
   );
 
   const arrangedTree = useMemo(() => applyOverrides(baseTree, overrides), [baseTree, overrides]);
   const masterScene = useMemo(
-    () => layoutOrbital(arrangedTree, { angleOverrides }),
-    [arrangedTree, angleOverrides],
+    () => layoutOrbitalForest(arrangedTree),
+    [arrangedTree],
   );
   const focusedView = useMemo(
-    () => activeFocusId ? focusOrbital(arrangedTree, masterScene, activeFocusId, { angleOverrides }) : null,
-    [arrangedTree, masterScene, activeFocusId, angleOverrides],
+    () => activeFocusId ? focusOrbital(arrangedTree, masterScene, activeFocusId) : null,
+    [arrangedTree, masterScene, activeFocusId],
   );
   // Semantic focus only redraws the branch into a local orbital system while
   // snaps are on. With snaps off, user-authored geography is intentional: we
@@ -319,12 +320,29 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
   const projectedScene = focusedView && snapping ? focusedView.scene : masterScene;
   const projectedInteractionScene = focusedView && snapping ? focusedView.interactionScene : projectedScene;
   const scene = useMemo(
-    () => applyPositionOffsets(projectedScene, unitOffsetsRef.current, seatOffsetsRef.current),
-    [projectedScene, positionRevision],
+    () => applyPositionOffsets(projectedScene,
+      combinePositionOffsets(anglePlacementOffsets(projectedScene, angleOverrides), unitOffsetsRef.current),
+      seatOffsetsRef.current),
+    [projectedScene, angleOverrides, positionRevision],
   );
+  const activeFamilyRootId = useMemo(() => {
+    if (!activeFocusId) return null;
+    let unit = arrangedTree.units.get(activeFocusId);
+    while (unit?.parentId && unit.parentId !== "orbital-root") unit = arrangedTree.units.get(unit.parentId);
+    return unit?.id ?? null;
+  }, [activeFocusId, arrangedTree]);
+  const guideFamilies = scene.families ?? (activeFocusId
+    ? [{ rootId: activeFamilyRootId ?? activeFocusId, centre: { x: 0, y: 0 }, boundary: scene.extent + 82 }]
+    : []);
+  // The external contributor/subtractor sketch assumes a single central
+  // company and illustrative ratios. Keep it in the synthetic demo only until
+  // its place in a real forest is designed.
+  const showSampleExternals = sampleWork && guideFamilies.length === 1;
   const interactionScene = useMemo(
-    () => applyPositionOffsets(projectedInteractionScene, unitOffsetsRef.current, seatOffsetsRef.current),
-    [projectedInteractionScene, positionRevision],
+    () => applyPositionOffsets(projectedInteractionScene,
+      combinePositionOffsets(anglePlacementOffsets(projectedInteractionScene, angleOverrides), unitOffsetsRef.current),
+      seatOffsetsRef.current),
+    [projectedInteractionScene, angleOverrides, positionRevision],
   );
 
   useEffect(() => {
@@ -342,7 +360,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     }
   }, [activeFocusId, arrangedTree]);
 
-  const focusBreadcrumb = focusedView?.breadcrumb ?? [];
+  const focusBreadcrumb = (focusedView?.breadcrumb ?? []).filter((unit) => unit.id !== "orbital-root");
 
   const focusBranch = focusedView?.branchIds ?? null;
   const selectedUnit = selectedUnitId ? scene.unitById.get(selectedUnitId) : undefined;
@@ -387,23 +405,25 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
    *  it — "overall work item completedness for an entire team". */
   const unitRings = useMemo(() => {
     const map = new Map<string, UnitProgress>();
-    const gather = (unitId: string): { tasks: MockTask[]; wellbeing: number }[] => {
+    const gather = (unitId: string): { tasks: MockTask[]; health: number | null }[] => {
       const unit = scene.unitById.get(unitId);
       if (!unit) return [];
       const own = (scene.seatsByUnit.get(unitId) ?? [])
         .filter((s) => s.personId)
         .map((s) => ({
           tasks: boards.get(s.personId!) ?? [],
-          wellbeing: vitals.get(s.personId!)?.wellbeing ?? 1,
+          // The schema has no explicit health observation yet. Demo fixtures
+          // may illustrate it; a real org must not infer it from defaults.
+          health: sampleWork ? (vitals.get(s.personId!)?.wellbeing ?? null) : null,
         }));
-      return unit.childIds.reduce<{ tasks: MockTask[]; wellbeing: number }[]>(
+      return unit.childIds.reduce<{ tasks: MockTask[]; health: number | null }[]>(
         (acc, childId) => acc.concat(gather(childId)),
         own,
       );
     };
     for (const unit of scene.units) map.set(unit.id, unitProgress(gather(unit.id)));
     return map;
-  }, [scene, boards, vitals]);
+  }, [scene, boards, vitals, sampleWork]);
 
   /** Payroll running through each branch — the one money flow the schema
    *  records. A shared person contributes their allocated share to each unit
@@ -431,7 +451,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     return map;
   }, [scene, people]);
 
-  const totalPayroll = moneyByUnit.get(scene.units.find((u) => !u.parentId)?.id ?? "") ?? 0;
+  const totalPayroll = scene.units.filter((unit) => !unit.parentId)
+    .reduce((sum, unit) => sum + (moneyByUnit.get(unit.id) ?? 0), 0);
   const maxMoney = useMemo(() => Math.max(1, ...moneyByUnit.values()), [moneyByUnit]);
 
   /** Formal reporting lines, drawn between each person's primary seat and
@@ -461,11 +482,13 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
     dirtyRef.current = true;
   }, [showReporting]);
   const outerRadius = scene.extent + 60;
-  const worldRadius = activeFocusId ? outerRadius : outerRadius + EXTERNAL_GAP + EXTERNAL_R * 2;
+  const worldRadius = showSampleExternals && !activeFocusId
+    ? outerRadius + EXTERNAL_GAP + EXTERNAL_R * 2
+    : outerRadius;
 
   const externals = useMemo(
     (): (ExternalFlow & { note: string; angle: number })[] =>
-      (activeFocusId ? [] : EXTERNALS).map((e) => {
+      (activeFocusId || !showSampleExternals ? [] : EXTERNALS).map((e) => {
         const at = polar(e.angle, outerRadius + EXTERNAL_GAP + EXTERNAL_R);
         return {
           id: e.id,
@@ -478,7 +501,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
           angle: e.angle,
         };
       }),
-    [activeFocusId, outerRadius, totalPayroll],
+    [activeFocusId, outerRadius, totalPayroll, showSampleExternals],
   );
 
   // Units used to be culled below a fixed zoom, which quietly hid everything
@@ -1186,6 +1209,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       const opacity = unitRingReveal(unit.depth, live);
       if (opacity <= 0.05 || unitDrawRadius(unit, live) * live < 5) continue;
       for (let i = 0; i < UNIT_RING_KEYS.length; i++) {
+        if (unitRings.get(unit.id)?.[UNIT_RING_KEYS[i]] == null) continue;
         const g = ringGeometry(unit, i, live);
         if (Math.abs(d - g.radius) <= Math.max(g.width, 7) / 2 + 2) {
           return { kind: "ring", unitId: unit.id, ring: UNIT_RING_KEYS[i] };
@@ -1204,7 +1228,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
       }
     }
     return null;
-  }, []);
+  }, [unitRings]);
 
   const onStagePointerMove = useCallback(() => {
     if (dragRef.current) return;
@@ -1338,26 +1362,33 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
         onTap={onStageClick}
         style={{ cursor: dragging ? "grabbing" : "grab" }}
       >
-        {/* One quiet guide at each actual snap radius; reporting data is unchanged. */}
+        {/* Local family boundaries are always visible. The three inner helper
+            rings are visual guides, revealed only for a focused family. */}
         <Layer ref={bgLayerRef}>
           {/* Money runs under the whole map: the org sits on top of its own
               flows rather than beside them (Greg, 2026-09-14). */}
-          {painters && (
+          {painters && showSampleExternals && (
             <Shape sceneFunc={painters.externalFlows} perfectDrawEnabled={false} listening={false} />
           )}
-          {scene.bands.filter((band) => band.depth > 0).map((band) => (
-            <Circle
-              key={`band-${band.depth}`}
-              radius={band.radius}
-              stroke={C.guide}
-              strokeWidth={1.5 / Math.max(scale, 0.05)}
-              dash={[2 / Math.max(scale, 0.05), 7 / Math.max(scale, 0.05)]}
-              lineCap="round"
-              perfectDrawEnabled={false}
-              listening={false}
-            />
-          ))}
-          {!activeFocusId && EXTERNALS.map((ext) => {
+          {guideFamilies.flatMap((family) => {
+            const focused = !!activeFamilyRootId && family.rootId === activeFamilyRootId;
+            const fractions = focused ? [0.25, 0.5, 0.75, 1] : [1];
+            return fractions.map((fraction) => (
+              <Circle
+                key={`guide-${family.rootId}-${fraction}`}
+                x={family.centre.x}
+                y={family.centre.y}
+                radius={family.boundary * fraction}
+                stroke={C.guide}
+                strokeWidth={1.5 / Math.max(scale, 0.05)}
+                dash={[2 / Math.max(scale, 0.05), 7 / Math.max(scale, 0.05)]}
+                lineCap="round"
+                perfectDrawEnabled={false}
+                listening={false}
+              />
+            ));
+          })}
+          {!activeFocusId && showSampleExternals && EXTERNALS.map((ext) => {
             const at = polar(ext.angle, outerRadius + EXTERNAL_GAP + EXTERNAL_R);
             return (
               <Group
@@ -1754,9 +1785,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes 
         <span>
           <i style={{ ...S.dot, background: "transparent", border: `2px solid ${C.risk}` }} /> needs a break
         </span>
-        <span style={S.legendHint}>
-          rings: {UNIT_RING_LABELS.delivery} · {UNIT_RING_LABELS.sprint} · {UNIT_RING_LABELS.health}
-        </span>
+        {sampleWork && <span style={S.legendHint}>
+          sample rings: {UNIT_RING_LABELS.delivery} · {UNIT_RING_LABELS.sprint} · {UNIT_RING_LABELS.health}
+        </span>}
         <span style={S.legendHint}>
           {snapping
             ? "drag along a ring to adjust placement · tidy up restores the calculated map"
@@ -1830,11 +1861,11 @@ function OrbitalUnitCard({
         </div>
         <button type="button" style={S.panelClose} onClick={onClose} aria-label="Close unit details">×</button>
       </div>
-      {rings && rings.people > 0 && (
+      {rings && UNIT_RING_KEYS.some((key) => rings[key] !== null) && (
         <div style={{ marginTop: 10 }}>
-          <Meter label={UNIT_RING_LABELS.delivery} value={rings.delivery} color={C.delivery} />
-          <Meter label={UNIT_RING_LABELS.sprint} value={rings.sprint} color={C.sprint} />
-          <Meter label={UNIT_RING_LABELS.health} value={rings.health} color={healthColor(rings.health)} />
+          {rings.delivery !== null && <Meter label={UNIT_RING_LABELS.delivery} value={rings.delivery} color={C.delivery} />}
+          {rings.sprint !== null && <Meter label={UNIT_RING_LABELS.sprint} value={rings.sprint} color={C.sprint} />}
+          {rings.health !== null && <Meter label={UNIT_RING_LABELS.health} value={rings.health} color={healthColor(rings.health)} />}
         </div>
       )}
       <div style={{ ...S.hoverSub, marginTop: 10 }}>
@@ -1893,11 +1924,11 @@ function OrbitalHoverCard({
         <div style={S.hoverSub}>
           {rung} · CEO+{unit.depth}
         </div>
-        {rings && rings.people > 0 && (
+        {rings && UNIT_RING_KEYS.some((key) => rings[key] !== null) && (
           <div style={{ marginTop: 8 }}>
-            <Meter label={UNIT_RING_LABELS.delivery} value={rings.delivery} color={C.delivery} />
-            <Meter label={UNIT_RING_LABELS.sprint} value={rings.sprint} color={C.sprint} />
-            <Meter label={UNIT_RING_LABELS.health} value={rings.health} color={healthColor(rings.health)} />
+            {rings.delivery !== null && <Meter label={UNIT_RING_LABELS.delivery} value={rings.delivery} color={C.delivery} />}
+            {rings.sprint !== null && <Meter label={UNIT_RING_LABELS.sprint} value={rings.sprint} color={C.sprint} />}
+            {rings.health !== null && <Meter label={UNIT_RING_LABELS.health} value={rings.health} color={healthColor(rings.health)} />}
           </div>
         )}
         <div style={{ ...S.hoverSub, marginTop: 8 }}>
@@ -1920,6 +1951,7 @@ function OrbitalHoverCard({
     const rings = unitRings.get(hover.unit.id);
     if (!rings) return null;
     const value = rings[hover.ring];
+    if (value === null) return null;
     const crowd = (scene.seatsByUnit.get(hover.unit.id) ?? [])
       .map((s) => (s.personId ? vitals.get(s.personId) : undefined))
       .filter((v): v is PersonVitals => !!v);
@@ -1954,7 +1986,7 @@ function OrbitalHoverCard({
           <>
             <div style={S.hoverStat}>
               <span>points moved</span>
-              <strong>{pct(rings.sprint)}</strong>
+              <strong>{pct(value)}</strong>
             </div>
             <div style={S.hoverStat}>
               <span>days left</span>
@@ -1962,7 +1994,7 @@ function OrbitalHoverCard({
             </div>
             <div style={S.hoverStat}>
               <span>carry-over risk</span>
-              <strong>{rings.sprint < 0.5 ? "high" : "low"}</strong>
+              <strong>{value < 0.5 ? "high" : "low"}</strong>
             </div>
           </>
         )}

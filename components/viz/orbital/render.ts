@@ -264,7 +264,9 @@ export function paintUnitRings(get: CtxGetter) {
       const from = -Math.PI / 2;
 
       UNIT_RING_KEYS.forEach((key, i) => {
-        const value = Math.max(0, Math.min(1, progress[key]));
+        const measured = progress[key];
+        if (measured === null) return;
+        const value = Math.max(0, Math.min(1, measured));
         const { radius, width } = ringGeometry(unit, i, c.scale);
         if (radius <= 0) return;
         const hovered = c.hoveredRing?.unitId === unit.id && c.hoveredRing.key === key;

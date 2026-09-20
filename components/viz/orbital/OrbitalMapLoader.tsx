@@ -35,6 +35,7 @@ export function OrbitalMapLoader(props: {
   assignments: Assignment[];
   vocabulary: Vocabulary;
   savedNodes: OrbitalNodeRow[];
+  sampleWork: boolean;
 }) {
   return <OrbitalMap {...props} />;
 }

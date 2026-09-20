@@ -18,7 +18,7 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
-| `grow` | **active** | The blank-canvas start: grow an org one node at a time, let the *team* appear rather than be declared, then grow outwards from the orbit rings. A **forest**, not a tree. Rules + open questions below. |
+| `grow` / `grow-established` | **active** | The blank-canvas start and a 45-person invented established-company variant now share `GrowLab.tsx`. Both support wheel/pinch zoom, pan and Fit. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
 | `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Value streams→Teams→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
 | `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
 | `orbital-focus` | **archived** | Graduated to the production `OrbitalMap` (2026-09-15). Carried forward: focus-relative fixed rings; double-click/double-tap and card focus; progressive whole-company marks; dimmed context with a violet route home; nested focus; and focus-aware dragging with meaningful snap modes. The lab's aggregate summaries were deliberately dropped because every real unit remains visible. |
@@ -26,11 +26,33 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 
 ## `grow` — the first team *(active, 2026-09-19)*
 
-`/lab/grow` — one self-contained file, SVG not Konva (three to a dozen nodes don't
+`/lab/grow` — a thin page around the self-contained `GrowLab.tsx` study, SVG not Konva (three to a dozen nodes don't
 need a canvas, and SVG gives crisp text at any camera scale for free). No DB, no
 auth: **a hard refresh wipes it**, by design. `?still=1` forces the
 reduced-motion rendering so the calm version can be reviewed without changing OS
 settings.
+
+**Integration revision, 2026-09-20:** this history includes earlier rules that
+have since changed. The current decision contract is
+[UNIFIED-ORBITAL.md](UNIFIED-ORBITAL.md). In the local study, a name alone now
+completes a node; absent role/purpose gets a red dot, not a breathing draft.
+The palette is blue/purple/cyan on white. Each family has a dotted outer
+boundary; three inner helper rings appear while it is in focus. Dropping a
+branch outside its original boundary offers an explicit split choice. Drops
+on another orbit ask before changing parent for people **and** teams. Tidy up
+packs two/three/four independent roots as a line/triangle/square, then a grid.
+A bottom finder cycles through unnamed placeholders and can zoom to each; an
+unnamed placeholder can be deleted without deleting its children. The lab
+still has no database: none of those choices survive refresh, and the
+production `/org` integration remains unfinished.
+
+**Established-scale extension, 2026-09-20:** `/lab/grow-established` (also
+`/grow-established` for the review URL) starts with 45 invented people in 12
+teams. It shares the same in-memory create/edit/drag choices as `/lab/grow`,
+but paints human avatars and explicit sample progress rings. New nodes never
+receive invented metrics. Wheel/pinch zoom, background pan, a slider and Fit
+let the creation study be inspected as a whole map. This does not make the
+study persistent or grant `/org` the same creation controls yet.
 
 ### The idea being tested
 Greg's framing: *"the user starts with almost nothing."* One breathing `+` in the

@@ -20,6 +20,8 @@ import {
   type Discipline,
 } from "@/lib/db/orm";
 import { requireWorkspace, listWorkspaces } from "@/lib/auth/workspace";
+import { isDevAuthEnabled } from "@/lib/auth/currentUser";
+import { isSampleWorkFixtureName } from "@/lib/demoCompanies";
 import { normalizeLens, type Lens } from "@/lib/canvas/lens";
 import { normalizeVocabulary, type Vocabulary } from "@/lib/vocabulary";
 import {
@@ -46,6 +48,8 @@ function isMissingTable(err: unknown, table: string): boolean {
 /** Everything needed to render the org, fetched in one workspace-scoped pass. */
 export type OrgSnapshot = {
   workspaceId: string;
+  /** Synthetic work may be shown only inside explicit local demo fixtures. */
+  sampleWork: boolean;
   people: Person[];
   units: OrgUnit[];
   assignments: Assignment[];
@@ -57,7 +61,7 @@ export type OrgSnapshot = {
 };
 
 export async function getOrgSnapshot(): Promise<OrgSnapshot> {
-  const { workspace } = await requireWorkspace();
+  const { workspace, userId } = await requireWorkspace();
   const wid = workspace.id;
   const [p, u, a, d] = await Promise.all([
     db.select().from(people).where(eq(people.workspaceId, wid)).orderBy(asc(people.name)),
@@ -67,6 +71,8 @@ export async function getOrgSnapshot(): Promise<OrgSnapshot> {
   ]);
   return {
     workspaceId: wid,
+    sampleWork: isDevAuthEnabled() && userId === "dev-user" &&
+      isSampleWorkFixtureName(workspace.name),
     people: p,
     units: u,
     assignments: a,
