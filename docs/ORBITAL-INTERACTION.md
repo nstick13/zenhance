@@ -13,8 +13,12 @@ It supersedes three things below, all on `orbital-large-navigation`:
   local detail field and clears the selection. Focus is left by its breadcrumb,
   the ✕ beside it, or Esc.
 - **§3 "Dropping a node on a different ring changes that unit's level" is
-  gone,** with its confirm step. Radius is only ever geography; on the ring map
-  a unit stays on its own ring, and Break orbits is the way to place freely.
+  gone.** A unit's rendered connection length remains geography. Every
+  potential parent now offers a separate semantic interaction annulus; dropping
+  on another parent's annulus asks **"Move [branch] under [parent]?"** and only
+  confirmation changes `org_units.parent_id`. The carried branch stays intact,
+  descendants keep their authored arrangements, and cycles are rejected again
+  on the workspace-scoped server action.
 - **§5 "Dropping a person onto a different team moves them" now asks first,**
   and still changes the map only, not their membership in People and Teams.
 
@@ -92,6 +96,12 @@ Fully zoomed out, or when the company itself is at the centre:
 
 **Change from production today:** on `main`, the angle you drop at silently picks a new parent. Remove that. Position around a ring never changes who a unit reports to — only the confirm step above, or the future connection-line tool, does.
 
+**Built refinement, 2026-09-23:** rendered link length no longer chooses a
+parent. A generous semantic annulus does. The current parent's annulus is
+ignored so ordinary motion around home stays geographical; self and the whole
+carried descendant set are ineligible. The strongest eligible annulus and its
+prospective connection line are shown before release.
+
 ## 4. Snaps off — Decided
 
 - Place nodes anywhere. Position means nothing and never changes the org.
@@ -107,10 +117,18 @@ Fully zoomed out, or when the company itself is at the centre:
 
 ## 6. Merge — Decided, build after sections 1–5
 
-- Placing nodes near each other does nothing.
-- Deliberately pushing one node into another plays a merge animation signalling a merge is coming. Let go there to trigger the question; let go elsewhere and nothing happens. **No merge happens without that animation.**
+- Placing nodes near each other does nothing until they enter the magnetic
+  approach band. There, before full overlap, the units pull to a kissing state,
+  their gauges stand down and the grow-study metaball bridge appears.
+- Deliberately dwelling or pushing one node into another arms the relationship
+  question; a quick pass cannot. Retreat restores the ordinary map immediately.
+  Reduced motion shows the joined state immediately without travel.
 - A short wizard: **Merge?** → if yes, **who is the new lead?**
-- **Decision updated 2026-09-21:** a node always carries its complete descendant branch into a merge. The confirmation must state the impact in plain language and, where available, quantify the affected child units, teams and people. To merge only the selected unit, the user must cancel and reassign its child units first. No structural change is committed without confirmation.
+- **Decision updated 2026-09-23:** unit contact offers **Reparent branch**
+  (enabled), **Merge entire branch** (disabled pending the decisions below),
+  and **Cancel**. Reparenting moves the contacted unit and its complete
+  descendant branch beneath the target using the real workspace-scoped org
+  operation. No structural change is committed without confirmation.
 - A future **Review branch** action may highlight every affected descendant before confirmation. This is deliberately deferred as a feature of its own; do not include it in the current pan/zoom/large-company build. Raise it with Greg the next time a new feature or story is started.
 - What happens to the two units' directly assigned people and how the new lead is chosen still needs a separate product decision before merge is built. **As of 2026-09-23 the gesture, the target treatment and the confirmation exist; its "Merge entire branch" button is deliberately disabled until that decision is made.**
 

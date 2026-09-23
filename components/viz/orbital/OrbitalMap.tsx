@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Konva from "konva";
 import { Circle, Group, Layer, Shape, Stage, Text } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Assignment, OrbitalNodeRow, OrgUnit, Person } from "@/lib/db/schema";
 import type { Vocabulary } from "@/lib/vocabulary";
-import { clearOrbitalNodes, saveOrbitalNodes } from "@/lib/data/actions";
+import { clearOrbitalNodes, moveOrgUnit, saveOrbitalNodes } from "@/lib/data/actions";
 import { tasksForPerson, type MockTask } from "@/lib/mock/personTasks";
 import {
   applyOverrides,
@@ -26,9 +27,13 @@ import {
   branchImpact,
   chargeAt,
   isArmed,
+  magneticMergeTarget,
+  magneticPosition,
   mergeCopy,
   overlapTarget,
+  reparentOrbitTarget,
   trackRelation,
+  type ReparentOrbit,
   type Relation,
 } from "@/lib/orbital/relationship";
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
@@ -123,9 +128,10 @@ import { SeatAvatar } from "./SeatAvatar";
  * - **Seats are positioned absolutely, not parented to their unit**, so a
  *   dragged stream lets its teams and people trail after it on their own
  *   springs.
- * - **Drag reads the map, not a grid**: in normal orbits, angle changes visual
- *   placement and radius may propose a level change; neither silently edits
- *   reporting structure. Breaking orbits makes all placement visual-only.
+ * - **Drag reads the map, not a grid**: ordinary movement round the current
+ *   parent changes geography only. A different parent's semantic annulus or
+ *   magnetic node contact may propose a reporting change, but only explicit
+ *   confirmation edits it. Breaking orbits makes all placement visual-only.
  */
 
 type Props = {
@@ -205,6 +211,11 @@ type DragState =
     overTray: boolean;
     /** A unit it is deliberately on top of, and how armed that is. */
     relation: Relation | null;
+    /** Physical node-to-node attraction, separate from the relationship
+     * clock so retreat can restore the map immediately. */
+    magnet: { unitId: string; centre: Point; radius: number; strength: number } | null;
+    /** Strongest semantic parent orbit under the pointer. */
+    reparent: ReparentOrbit | null;
   }
   | {
     kind: "seat";
@@ -219,6 +230,7 @@ type DragState =
 /** A relationship change waiting for a yes. Nothing has changed yet. */
 type Proposal =
   | { kind: "merge"; fromId: string; intoId: string }
+  | { kind: "reparent"; fromId: string; parentId: string }
   | { kind: "move"; seatId: string; toUnitId: string };
 
 type HoverState =
@@ -242,6 +254,7 @@ const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
 
 export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes, sampleWork, previewGeography }: Props) {
+  const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const bgLayerRef = useRef<Konva.Layer | null>(null);
@@ -983,6 +996,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       carriedRoots,
       inFlight: null,
       relation: null,
+      reparent: null,
       drawn: drawnOf,
     };
     dirtyRef.current = true;
@@ -1137,6 +1151,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       ctx.relation = drag?.relation
         ? { ...drag.relation, kind: drag.kind === "unit" ? "merge" : "move", armed: isArmed(drag.relation) }
         : null;
+      ctx.reparent = drag?.kind === "unit" ? drag.reparent : null;
 
       motionRef.current.step(dt, targetsRef.current, reduce);
       ctx.draggedUnitId = drag?.kind === "unit" ? drag.id : null;
@@ -1585,6 +1600,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         fromBasket: false,
         overTray: false,
         relation: null,
+        magnet: null,
+        reparent: null,
       };
       targetsRef.current = buildTargets(s, dragRef.current);
     },
@@ -1615,6 +1632,48 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       return drawnOf(u);
     }, exclude);
   }, [drawnOf]);
+
+  /** Unit drags read two deliberately different invitations: a magnetic
+   * body contact (merge/reparent choice) and a semantic annulus (reparent).
+   * Neither uses a child's rendered connection length. */
+  const unitRelationshipTargets = useCallback((
+    point: Point,
+    drag: Extract<DragState, { kind: "unit" }>,
+  ) => {
+    const s = sceneRef.current;
+    const stage = stageRef.current;
+    if (!s || !stage) return { magnet: null, reparent: null };
+    const waitingInBasket = renderRef.current?.carriedBranch;
+    const eligible = s.units.filter((unit) =>
+      !waitingInBasket?.has(unit.id) &&
+      (presenceRef.current.get(unit.id) ?? 1) >= INTERACTABLE_PRESENCE);
+    const source = s.unitById.get(drag.id);
+    const magnet = source ? magneticMergeTarget(
+      eligible,
+      point,
+      drawnOf(source),
+      (id) => {
+        const unit = s.unitById.get(id);
+        return unit ? drawnOf(unit) : 0;
+      },
+      drag.moved,
+      stage.scaleX(),
+    ) : null;
+    const reparent = magnet ? null : reparentOrbitTarget(
+      eligible.map((unit) => ({
+        id: unit.id,
+        x: unit.x,
+        y: unit.y,
+        r: unit.r,
+        footprint: unit.footprint,
+      })),
+      point,
+      stage.scaleX(),
+      drag.moved,
+      drag.parentId,
+    );
+    return { magnet, reparent };
+  }, [drawnOf]);
   useEffect(() => {
     deliberateTargetRef.current = deliberateTarget;
   }, [deliberateTarget]);
@@ -1629,7 +1688,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!drag || drag.kind !== "unit" || !s || !displayed) return;
     const node = nodeRefs.current.get(uid(drag.id));
     if (!node) return;
-    drag.current = { x: node.x(), y: node.y() };
+    const pointerWorld = { x: node.x(), y: node.y() };
+    drag.current = pointerWorld;
     const stage = stageRef.current;
     const pointer = stage?.getPointerPosition();
     if (stage && pointer) {
@@ -1647,9 +1707,25 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     // basket there is no landing on the map at all.
     // Deliberately on top of another unit, the target holds still: no gap
     // opens, and the drop becomes a question rather than a placement.
-    const target = snapping && !over ? deliberateTarget(drag.current, drag.moved) : null;
-    drag.relation = trackRelation(drag.relation, target, performance.now());
-    const onTarget = !!target;
+    const relationship = snapping && !over
+      ? unitRelationshipTargets(pointerWorld, drag)
+      : { magnet: null, reparent: null };
+    drag.magnet = relationship.magnet;
+    drag.reparent = relationship.reparent;
+    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    if (relationship.magnet) {
+      const source = displayed.unitById.get(drag.id);
+      if (source) {
+        drag.current = magneticPosition(
+          pointerWorld,
+          relationship.magnet,
+          drawnOf(source),
+          reduceMotionRef.current,
+        );
+        node.position(drag.current);
+      }
+    }
+    const onTarget = !!relationship.magnet || !!relationship.reparent;
     drag.plan = snapping && !over && !onTarget
       ? planInsertion({
         scene: s,
@@ -1660,7 +1736,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       })
       : null;
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, deliberateTarget, overTray, snapping]);
+  }, [buildTargets, drawnOf, overTray, snapping, unitRelationshipTargets]);
 
   /** Land a planned drop exactly as it was previewed. False when the plan is
    *  not a place — the caller sends the unit home. Shared by drags on the map
@@ -1729,6 +1805,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
       return;
     }
+    if (drag.reparent) {
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
+      return;
+    }
     if (!snapping && s) {
       const delta = { x: drag.current.x - drag.origin.x, y: drag.current.y - drag.origin.y };
       if (Math.hypot(delta.x, delta.y) > 1) {
@@ -1778,16 +1859,29 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       drag.overTray = over;
       setTrayHot(over);
     }
-    const target = snapping && !over ? deliberateTarget(world, drag.moved) : null;
-    drag.relation = trackRelation(drag.relation, target, performance.now());
-    const onTarget = !!target;
+    const relationship = snapping && !over
+      ? unitRelationshipTargets(world, drag)
+      : { magnet: null, reparent: null };
+    drag.magnet = relationship.magnet;
+    drag.reparent = relationship.reparent;
+    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    if (relationship.magnet) {
+      const source = displayed.unitById.get(drag.id);
+      if (source) drag.current = magneticPosition(
+        world,
+        relationship.magnet,
+        drawnOf(source),
+        reduceMotionRef.current,
+      );
+    }
+    const onTarget = !!relationship.magnet || !!relationship.reparent;
     drag.plan = over || onTarget
       ? null
       : snapping
         ? planInsertion({ scene: s, base: baseInteractionRef.current ?? s, unitId: drag.id, pointer: world, carried: drag.moved })
         : { kind: "free", unitId: drag.id, position: world };
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, clientToWorld, deliberateTarget, overTray, snapping]);
+  }, [buildTargets, clientToWorld, drawnOf, overTray, snapping, unitRelationshipTargets]);
 
   useEffect(() => {
     dragFollowRef.current = () => {
@@ -1846,6 +1940,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         fromBasket: true,
         overTray: true,
         relation: null,
+        magnet: null,
+        reparent: null,
       };
     }
     dragClientRef.current = client;
@@ -1870,6 +1966,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!cancelled && isArmed(chargeAt(drag.relation, performance.now()))) {
       if (s) targetsRef.current = buildTargets(s, null);
       setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
+      return;
+    }
+    if (!cancelled && drag.reparent) {
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
       return;
     }
     const landed = !cancelled && !drag.overTray && commitPlan(drag.id, drag.origin, drag.plan);
@@ -1981,6 +2082,33 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const acceptMove = useCallback(() => {
     if (proposal?.kind === "move") confirmMove(proposal.seatId, proposal.toUnitId);
   }, [confirmMove, proposal]);
+
+  /** Confirmed reporting-structure edit. The server re-validates tenancy and
+   * cycles, moves the branch root, and removes only that root's stale saved
+   * placement. Descendant arrangements remain authored geography. */
+  const confirmReparent = useCallback((fromId: string, parentId: string) => {
+    setProposal(null);
+    startTransition(async () => {
+      const result = await moveOrgUnit(fromId, parentId);
+      if (!result.ok) {
+        setNotice(result.error);
+        return;
+      }
+      unitOffsetsRef.current.delete(fromId);
+      setAngleOverrides((previous) => {
+        const next = new Map(previous);
+        next.delete(fromId);
+        return next;
+      });
+      setOverrides((previous) => ({
+        ...previous,
+        unitParent: new Map([...(previous.unitParent ?? [])].filter(([id]) => id !== fromId)),
+      }));
+      setPositionRevision((revision) => revision + 1);
+      setNotice("Branch moved. Its descendants and their arrangements stayed together.");
+      router.refresh();
+    });
+  }, [router]);
 
   const arranged =
     (overrides.unitParent?.size ?? 0) > 0 ||
@@ -2658,18 +2786,67 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                 onClick={(event) => event.stopPropagation()}
               >
                 <div style={S.panelKicker}>relationship change · nothing has changed</div>
-                <div id="proposal-title" style={S.panelTitle}>{copy.title}</div>
+                <div id="proposal-title" style={S.panelTitle}>Move or merge &ldquo;{from}&rdquo; with &ldquo;{into}&rdquo;?</div>
                 <p style={S.confirmCopy}>{copy.body}</p>
+                <p style={S.confirmCopy}>
+                  <strong>Reparent branch</strong> moves {from} and everything below it under {into}; it does not combine the two units.
+                </p>
                 <p style={S.confirmNote}>
                   Merging isn&rsquo;t switched on yet: what happens to both units&rsquo; own people, and who leads the
                   merged unit, still need deciding. So this can&rsquo;t be completed here.
                 </p>
                 <div style={S.confirmActions}>
-                  <button type="button" style={S.confirmSecondary} onClick={close} autoFocus>
-                    Cancel
+                  <button
+                    type="button"
+                    style={S.confirmPrimary(false)}
+                    onClick={() => confirmReparent(proposal.fromId, proposal.intoId)}
+                  >
+                    Reparent branch
                   </button>
                   <button type="button" style={S.confirmPrimary(true)} disabled title="Needs a product decision first">
                     Merge entire branch
+                  </button>
+                  <button type="button" style={S.confirmSecondary} onClick={close} autoFocus>
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            </div>
+          );
+        }
+        if (proposal.kind === "reparent") {
+          const from = arrangedTree.units.get(proposal.fromId)?.name ?? "This branch";
+          const parent = arrangedTree.units.get(proposal.parentId)?.name ?? "that unit";
+          const impact = branchImpact(arrangedTree, proposal.fromId, (id) => kindById.get(id));
+          const below = impact.childUnits + impact.teams;
+          return (
+            <div style={S.modalBackdrop} role="presentation" onClick={close}>
+              <section
+                style={S.confirmCard}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="proposal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div style={S.panelKicker}>reporting change · nothing has changed</div>
+                <div id="proposal-title" style={S.panelTitle}>Move {from} under {parent}?</div>
+                <p style={S.confirmCopy}>
+                  {from} and everything below it will move together under {parent}.
+                </p>
+                <p style={S.confirmNote}>
+                  {below > 0 ? `${below} ${below === 1 ? "unit" : "units"} below this branch and ` : ""}
+                  {impact.people} {impact.people === 1 ? "person" : "people"} will remain together.
+                </p>
+                <div style={S.confirmActions}>
+                  <button type="button" style={S.confirmSecondary} onClick={close} autoFocus>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    style={S.confirmPrimary(false)}
+                    onClick={() => confirmReparent(proposal.fromId, proposal.parentId)}
+                  >
+                    Move branch
                   </button>
                 </div>
               </section>

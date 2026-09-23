@@ -6,6 +6,7 @@ import {
   fitScaleFor,
   layoutCompany,
   sceneBounds,
+  visualComplexity,
   zoomToRead,
 } from "../complexity";
 import { buildOrbitalTree, type OrgInput } from "../model";
@@ -35,6 +36,25 @@ const choose = (input: OrgInput) =>
   layoutCompany(buildOrbitalTree(input, { mergePassThroughRoot: false, workCountFor: () => 6 }));
 
 describe("choosing how to draw a company", () => {
+  it("increases radial looseness monotonically with visual complexity", () => {
+    const measured = [1, 2, 4, 8, 16, 32, 64, 128].map(visualComplexity);
+    expect(measured[0]).toBe(0);
+    expect(measured.at(-1)).toBe(1);
+    for (let i = 1; i < measured.length; i++) expect(measured[i]).toBeGreaterThanOrEqual(measured[i - 1]);
+
+    const representative = [
+      choose(sparrowShape()),
+      choose(demoInput()),
+      choose(deep(400, 6, 7)),
+      choose(deep(1000, 8, 17)),
+      choose(deep(2562, 11, 20260914)),
+    ].sort((a, b) => a.choice.ringZoomToRead - b.choice.ringZoomToRead);
+    for (let i = 1; i < representative.length; i++) {
+      expect(representative[i].choice.radialLooseness)
+        .toBeGreaterThanOrEqual(representative[i - 1].choice.radialLooseness);
+    }
+  });
+
   it("keeps small companies on their rings", () => {
     const sparrow = choose(sparrowShape());
     const tailoring = choose(demoInput());

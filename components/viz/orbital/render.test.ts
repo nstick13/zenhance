@@ -89,6 +89,7 @@ describe("every painter, on local geography with a detail field and thinning", (
       inFlight: null,
       // An armed merge proposal on another unit.
       relation: { unitId: scene.units[3].id, charge: 1, kind: "merge", armed: true },
+      reparent: null,
       drawn: (unit) => render.unitDrawRadius(unit, scale),
     };
     const get = () => c;

@@ -26,6 +26,7 @@ import {
 import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
 import type { Envelope } from "@/lib/orbital/envelope";
 import type { DetailField } from "@/lib/orbital/detail";
+import { metaballBridge, type ReparentOrbit } from "@/lib/orbital/relationship";
 import {
   UNIT_CULL_PX,
   drawnUnitRadius,
@@ -138,6 +139,8 @@ export type RenderCtx = {
   inFlight: ReadonlySet<string> | null;
   /** A unit being deliberately dropped onto, and how armed the proposal is. */
   relation: { unitId: string; charge: number; kind: "merge" | "move"; armed: boolean } | null;
+  /** Semantic parent annulus under a unit drag. Independent of child links. */
+  reparent: ReparentOrbit | null;
   /** How big a unit's disc draws this frame. In local geography dots swell
    *  against their present neighbours (lod.neighbourAwareRadius); on rings it
    *  is `unitDrawRadius`. Every painter and hit test reads this one number. */
@@ -332,6 +335,8 @@ export function paintUnitRings(get: CtxGetter) {
     ctx.save();
     ctx.setAttr("lineCap", "round");
     for (const unit of c.scene.units) {
+      if (c.relation?.kind === "merge" &&
+        (c.relation.unitId === unit.id || c.draggedUnitId === unit.id)) continue;
       if (c.focusBranch && !c.focusBranch.has(unit.id)) continue;
       const progress = c.unitRings.get(unit.id);
       if (!progress || progress.people === 0) continue;
@@ -842,14 +847,80 @@ export function paintRelation(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     const relation = c?.relation;
-    if (!c || !relation) return;
+    if (!c) return;
+    const inv = 1 / Math.max(c.scale, 1e-6);
+
+    // A parent orbit is a cyan geographical invitation: annulus plus the
+    // prospective connection. It is intentionally unlike the liquid, ink
+    // node-contact treatment below.
+    if (c.reparent && c.draggedUnitId) {
+      const parent = c.scene.unitById.get(c.reparent.parentId);
+      const dragged = c.scene.unitById.get(c.draggedUnitId);
+      if (parent && dragged) {
+        const centre = c.at(uid(parent.id), parent);
+        const held = c.at(uid(dragged.id), dragged);
+        ctx.save();
+        ctx.setAttr("strokeStyle", C.accent);
+        ctx.setAttr("lineCap", "round");
+        ctx.setAttr("globalAlpha", 0.12 + c.reparent.strength * 0.16);
+        ctx.setAttr("lineWidth", c.reparent.width);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, c.reparent.radius, 0, TAU, false);
+        ctx.stroke();
+        ctx.setAttr("globalAlpha", 0.75 + c.reparent.strength * 0.25);
+        ctx.setAttr("lineWidth", 2.5 * inv);
+        ctx.setLineDash([7 * inv, 6 * inv]);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, c.reparent.radius, 0, TAU, false);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.setAttr("lineWidth", 3 * inv);
+        ctx.beginPath();
+        ctx.moveTo(centre.x, centre.y);
+        ctx.lineTo(held.x, held.y);
+        ctx.stroke();
+        ctx.setAttr("fillStyle", C.accent);
+        ctx.setAttr("font", `600 ${13 * inv}px -apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif`);
+        ctx.setAttr("textAlign", "center");
+        ctx.setAttr("textBaseline", "bottom");
+        ctx.fillText(`Move branch under ${parent.name}`, held.x, held.y - c.drawn(dragged) - 10 * inv);
+        ctx.restore();
+      }
+    }
+    if (!relation) return;
     const unit = c.scene.unitById.get(relation.unitId);
     if (!unit) return;
-    const inv = 1 / Math.max(c.scale, 1e-6);
     const centre = c.at(uid(unit.id), unit);
     const r = c.drawn(unit) + 9 * inv;
     const from = -Math.PI / 2;
     ctx.save();
+
+    // The exact metaball construction from the grow study, now painted in
+    // Konva. It begins in the magnetic approach band, before full overlap.
+    if (relation.kind === "merge" && c.draggedUnitId) {
+      const source = c.scene.unitById.get(c.draggedUnitId);
+      if (source) {
+        const sourceAt = c.at(uid(source.id), source);
+        const sourceR = c.drawn(source) + 4 * inv;
+        const targetR = c.drawn(unit) + 4 * inv;
+        const bridge = metaballBridge(
+          { x: sourceAt.x, y: sourceAt.y, r: sourceR },
+          { x: centre.x, y: centre.y, r: targetR },
+          34 * inv,
+        );
+        if (bridge) {
+          ctx.setAttr("fillStyle", C.path);
+          ctx.setAttr("globalAlpha", relation.armed ? 0.26 : 0.12 + 0.12 * relation.charge);
+          ctx.beginPath();
+          ctx.moveTo(bridge.p1.x, bridge.p1.y);
+          ctx.bezierCurveTo(bridge.c1.x, bridge.c1.y, bridge.c2.x, bridge.c2.y, bridge.p3.x, bridge.p3.y);
+          ctx.lineTo(bridge.p4.x, bridge.p4.y);
+          ctx.bezierCurveTo(bridge.c3.x, bridge.c3.y, bridge.c4.x, bridge.c4.y, bridge.p2.x, bridge.p2.y);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    }
     ctx.setAttr("lineCap", "round");
     // The track, faint, so the fill reads as progress toward a question.
     ctx.setAttr("globalAlpha", 0.18);
@@ -876,7 +947,7 @@ export function paintRelation(get: CtxGetter) {
       ctx.setAttr("textAlign", "center");
       ctx.setAttr("textBaseline", "bottom");
       ctx.fillText(
-        relation.kind === "merge" ? `Release to merge into ${unit.name}` : `Release to move to ${unit.name}`,
+        relation.kind === "merge" ? `Release for options with ${unit.name}` : `Release to move to ${unit.name}`,
         centre.x,
         centre.y - r - 8 * inv,
       );

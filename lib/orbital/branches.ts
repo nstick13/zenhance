@@ -144,10 +144,14 @@ function wedgeAt(disks: Disk[], rho: number, clear: number): { lo: number; hi: n
 export type LocalLayoutOptions = {
   /** Direction of the company's first child. Default: due north. */
   startAngle?: number;
+  /** 0 = one circular sibling orbit. 1 = use all safe branch-sensitive
+   * radial variation. Always supplied from visual complexity in production. */
+  radialLooseness?: number;
 };
 
 export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {}): OrbitalScene {
   const startAngle = opts.startAngle ?? -Math.PI / 2;
+  const radialLooseness = Math.min(1, Math.max(0, opts.radialLooseness ?? 1));
   const root = tree.units.get(tree.rootId);
   const company = Math.max(1, root?.totalSeats ?? 1);
 
@@ -281,12 +285,12 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
       return { id: k, angle, distance: rho, disks: carry(childBranches[i].disks, angle, rho, angle) };
     });
 
-    // Shrink-wrap. One shared orbit is what makes the wedges provably
-    // disjoint, but it leaves a small child out on the same long stem as its
-    // biggest sibling. Draw each child in along its own direction until its
-    // branch would come within BRANCH_GAP of anything already here. Every
-    // candidate is checked against the final positions of all the others, so
-    // the result is as collision-free as the orbit it started from.
+    // Radial looseness. One shared orbit proves the wedges disjoint and is
+    // the right, calm drawing for a simple company. As visual complexity
+    // grows, branch shape is allowed to pull a child toward the nearest safe
+    // distance on its own ray. Deep/narrow branches get more of that room;
+    // broad branches stay nearer the shared orbit. Every candidate is checked
+    // against final neighbour positions, so variation remains collision-free.
     const own0: Disk = { x: 0, y: 0, f: own };
     const cell = 2 * Math.max(own, ...placed.flatMap((p) => p.disks.map((d) => d.f)));
     for (let i = 0; i < placed.length; i++) {
@@ -306,9 +310,14 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
           else inner = mid;
         }
       }
-      if (outer < child.distance) {
-        child.distance = outer;
-        child.disks = carry(local, child.angle, outer, child.angle);
+      if (outer < child.distance && radialLooseness > 0) {
+        let varied = child.distance - (child.distance - outer) * radialLooseness;
+        // The clear set along a ray need not be perfectly continuous for a
+        // hooked branch. Both endpoints are proven safe; if the interpolated
+        // point falls in a pocket, choose the nearer safe endpoint.
+        if (!clearAt(varied)) varied = radialLooseness < 0.5 ? child.distance : outer;
+        child.distance = varied;
+        child.disks = carry(local, child.angle, varied, child.angle);
       }
     }
 

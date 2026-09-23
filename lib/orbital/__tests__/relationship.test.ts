@@ -3,10 +3,16 @@ import {
   DWELL_MS,
   branchImpact,
   chargeAt,
+  interactionOrbit,
   isArmed,
+  magneticMergeTarget,
+  magneticPosition,
+  metaballBridge,
   mergeCopy,
   overlapTarget,
+  reparentOrbitTarget,
   trackRelation,
+  validateReparent,
 } from "../relationship";
 import { buildOrbitalTree } from "../model";
 
@@ -30,6 +36,82 @@ describe("finding a deliberate target", () => {
   it("reads how deep the push is: 1 at the centre, near 0 at the rim", () => {
     expect(overlapTarget(units, { x: 100, y: 0 }, radius, new Set())!.depth).toBe(1);
     expect(overlapTarget(units, { x: 128, y: 0 }, radius, new Set())!.depth).toBeLessThan(0.1);
+  });
+});
+
+describe("semantic parent orbits", () => {
+  const parents = [
+    { id: "old", x: 0, y: 0, r: 30, footprint: 45 },
+    { id: "new", x: 300, y: 0, r: 40, footprint: 55 },
+    { id: "child", x: 420, y: 0, r: 20, footprint: 25 },
+  ];
+
+  it("does not derive interaction radius from rendered connection length", () => {
+    const short = { ...parents[1], childOrbit: 120 };
+    const long = { ...parents[1], childOrbit: 900 };
+    expect(interactionOrbit(short, 1)).toEqual(interactionOrbit(long, 1));
+  });
+
+  it("proposes a different eligible parent on its annulus", () => {
+    const orbit = interactionOrbit(parents[1], 1);
+    const target = reparentOrbitTarget(
+      parents,
+      { x: parents[1].x + orbit.radius, y: parents[1].y },
+      1,
+      new Set(["dragged", "child"]),
+      "old",
+    );
+    expect(target?.parentId).toBe("new");
+    expect(target?.strength).toBeCloseTo(1);
+  });
+
+  it("rejects self, descendants, the current parent and cycles", () => {
+    const orbit = interactionOrbit(parents[2], 1);
+    expect(reparentOrbitTarget(
+      parents,
+      { x: parents[2].x + orbit.radius, y: 0 },
+      1,
+      new Set(["child"]),
+      "old",
+    )).toBeNull();
+    const parentById = new Map<string, string | null>([["root", null], ["a", "root"], ["b", "a"]]);
+    expect(validateReparent(parentById, "a", "a")).toMatch(/own parent/);
+    expect(validateReparent(parentById, "a", "b")).toMatch(/own branch/);
+    expect(validateReparent(parentById, "b", "root")).toBeNull();
+    expect(validateReparent(parentById, "b", "foreign")).toMatch(/this company/);
+  });
+});
+
+describe("magnetic merge feedback", () => {
+  it("appears before full overlap and supplies the kissing bridge", () => {
+    const target = magneticMergeTarget(
+      [{ id: "b", x: 100, y: 0 }],
+      { x: 35, y: 0 },
+      30,
+      () => 30,
+      new Set(),
+      1,
+    );
+    expect(target).not.toBeNull();
+    expect(target!.depth).toBe(0);
+    expect(metaballBridge({ x: 35, y: 0, r: 30 }, { x: 100, y: 0, r: 30 }, 30)).not.toBeNull();
+  });
+
+  it("clears on retreat and cannot arm from a quick pass", () => {
+    const near = magneticMergeTarget([{ id: "b", x: 100, y: 0 }], { x: 35, y: 0 }, 30, () => 30, new Set(), 1)!;
+    const first = trackRelation(null, near, 0);
+    expect(isArmed(trackRelation(first, near, 100))).toBe(false);
+    expect(magneticMergeTarget([{ id: "b", x: 100, y: 0 }], { x: 0, y: 0 }, 20, () => 20, new Set(), 1)).toBeNull();
+    expect(trackRelation(first, null, 110)).toBeNull();
+  });
+
+  it("uses an immediate static joined position for reduced motion", () => {
+    const target = { centre: { x: 100, y: 0 }, radius: 30, strength: 0.2 };
+    const still = magneticPosition({ x: 25, y: 0 }, target, 30, true);
+    const moving = magneticPosition({ x: 25, y: 0 }, target, 30, false);
+    expect(still).toEqual({ x: 40, y: 0 });
+    expect(moving.x).toBeGreaterThan(25);
+    expect(moving.x).toBeLessThan(40);
   });
 });
 

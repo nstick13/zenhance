@@ -72,6 +72,39 @@ describe("local branch geography", () => {
     expect(again.units.map((u) => [u.id, u.x, u.y])).toEqual(scene.units.map((u) => [u.id, u.x, u.y]));
   });
 
+  it("keeps low-complexity siblings circular, then permits monotonically more radial variation", () => {
+    const tree = buildOrbitalTree(stableDeep(400, 6, 7), { mergePassThroughRoot: false, workCountFor: () => 6 });
+    const variation = (looseness: number) => {
+      const placed = layoutBranches(tree, { radialLooseness: looseness });
+      let sum = 0;
+      for (const parent of placed.units) {
+        const lengths = parent.childIds.map((id) => {
+          const child = placed.unitById.get(id)!;
+          return Math.hypot(child.x - parent.x, child.y - parent.y);
+        });
+        if (lengths.length > 1) sum += Math.max(...lengths) - Math.min(...lengths);
+      }
+      return sum;
+    };
+    const values = [0, 0.25, 0.5, 0.75, 1].map(variation);
+    expect(values[0]).toBeCloseTo(0, 6);
+    expect(values.at(-1)).toBeGreaterThan(0);
+    for (let i = 1; i < values.length; i++) expect(values[i]).toBeGreaterThanOrEqual(values[i - 1] - 1e-6);
+  });
+
+  it("keeps every looseness level deterministic, bounded, local and collision-free", () => {
+    const input = stableDeep(1000, 8, 17);
+    const tree = buildOrbitalTree(input, { mergePassThroughRoot: false, workCountFor: () => 6 });
+    for (const looseness of [0, 0.33, 0.66, 1]) {
+      const a = layoutBranches(tree, { radialLooseness: looseness });
+      const b = layoutBranches(tree, { radialLooseness: looseness });
+      expect(a.units.map((u) => [u.id, u.x, u.y])).toEqual(b.units.map((u) => [u.id, u.x, u.y]));
+      expect(footprintOverlaps(a)).toBe(0);
+      const bounds = a.bounds!;
+      expect(Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)).toBeLessThan(1e7);
+    }
+  });
+
   it("gathers each unit's children around it, fanned away from its own parent", () => {
     for (const unit of scene.units) {
       if (!unit.parentId || unit.childIds.length === 0) continue;

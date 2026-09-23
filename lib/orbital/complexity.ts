@@ -38,6 +38,11 @@ export const MAX_ZOOM_TO_READ = 6;
 /** Local geography must fit the company at least this much larger to be
  *  worth changing how the company is drawn. */
 export const LOCAL_MUST_WIN_BY = 1.5;
+/** The zoom range over which local branches are allowed to become radially
+ * loose. Log space is deliberate: 2x→4x is the same perceptual step as
+ * 20x→40x, while a raw headcount would say nothing about the drawing. */
+export const LOOSE_FROM_ZOOM = 2;
+export const FULLY_LOOSE_ZOOM = 64;
 /** Breathing room a fitted view leaves at its edges. */
 export const FIT_MARGIN = 1.06;
 
@@ -61,9 +66,21 @@ export function zoomToRead(scene: OrbitalScene): number {
   return READABLE_SCALE / fitScaleFor(sceneBounds(scene), REFERENCE_VIEWPORT);
 }
 
+/** 0..1 visual complexity for spatial decisions. This is derived from the
+ * same fixed-viewport legibility measurement that chooses geography, never
+ * from employee count or the live browser size. */
+export function visualComplexity(ringZoomToRead: number): number {
+  if (!Number.isFinite(ringZoomToRead) || ringZoomToRead <= LOOSE_FROM_ZOOM) return 0;
+  const lo = Math.log(LOOSE_FROM_ZOOM);
+  const hi = Math.log(FULLY_LOOSE_ZOOM);
+  return Math.min(1, Math.max(0, (Math.log(ringZoomToRead) - lo) / (hi - lo)));
+}
+
 export type GeographyChoice = {
   geography: Geography;
   ringZoomToRead: number;
+  /** Bounded complexity used by local radial variation. */
+  radialLooseness: number;
   /** Only measured when the rings failed their test. */
   localZoomToRead: number | null;
 };
@@ -80,19 +97,46 @@ export function layoutCompany(
   preview?: Geography,
 ): { scene: OrbitalScene; choice: GeographyChoice } {
   if (preview === "local") {
-    const local = layoutOrbitalForest(tree, { ...options, geography: "local" });
-    return { scene: local, choice: { geography: "local", ringZoomToRead: NaN, localZoomToRead: zoomToRead(local) } };
+    // Even a forced preview keeps the real company's complexity. This makes
+    // Sparrow stay calm and circular while still exercising the local path.
+    const ring = layoutOrbitalForest(tree, options);
+    const ringZoom = zoomToRead(ring);
+    const local = layoutOrbitalForest(tree, {
+      ...options,
+      geography: "local",
+      radialLooseness: visualComplexity(ringZoom),
+    });
+    return { scene: local, choice: {
+      geography: "local",
+      ringZoomToRead: ringZoom,
+      radialLooseness: visualComplexity(ringZoom),
+      localZoomToRead: zoomToRead(local),
+    } };
   }
   const ring = layoutOrbitalForest(tree, options);
   const ringZoom = zoomToRead(ring);
   if (ringZoom <= MAX_ZOOM_TO_READ) {
-    return { scene: ring, choice: { geography: "orbital", ringZoomToRead: ringZoom, localZoomToRead: null } };
+    return { scene: ring, choice: {
+      geography: "orbital",
+      ringZoomToRead: ringZoom,
+      radialLooseness: visualComplexity(ringZoom),
+      localZoomToRead: null,
+    } };
   }
-  const local = layoutOrbitalForest(tree, { ...options, geography: "local" });
+  const local = layoutOrbitalForest(tree, {
+    ...options,
+    geography: "local",
+    radialLooseness: visualComplexity(ringZoom),
+  });
   const localZoom = zoomToRead(local);
   const geography: Geography = ringZoom / localZoom >= LOCAL_MUST_WIN_BY ? "local" : "orbital";
   return {
     scene: geography === "local" ? local : ring,
-    choice: { geography, ringZoomToRead: ringZoom, localZoomToRead: localZoom },
+    choice: {
+      geography,
+      ringZoomToRead: ringZoom,
+      radialLooseness: visualComplexity(ringZoom),
+      localZoomToRead: localZoom,
+    },
   };
 }

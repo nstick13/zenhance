@@ -164,6 +164,9 @@ export type LayoutOptions = {
   angleOverrides?: Map<string, number>;
   /** Which drawing to lay out (forest only). Default: the ring map. */
   geography?: Geography;
+  /** 0 keeps siblings on one regular orbit; 1 permits the local layout to
+   * use all collision-safe radial variation justified by branch shape. */
+  radialLooseness?: number;
 };
 
 /**

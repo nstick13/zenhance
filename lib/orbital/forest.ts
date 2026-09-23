@@ -23,7 +23,10 @@ const move = (point: Point, by: Point): Point => ({ x: point.x + by.x, y: point.
 export function layoutOrbitalForest(tree: OrbitalTree, options: LayoutOptions = {}): OrbitalScene {
   const local = options.geography === "local";
   const layoutOne = (subtree: OrbitalTree) =>
-    local ? layoutBranches(subtree, { startAngle: options.startAngle }) : layoutOrbital(subtree, options);
+    local ? layoutBranches(subtree, {
+      startAngle: options.startAngle,
+      radialLooseness: options.radialLooseness,
+    }) : layoutOrbital(subtree, options);
   const roots = visibleRootIds(tree);
   if (roots.length <= 1) {
     const solo = roots[0] ? treeForFocus(tree, roots[0]) : null;

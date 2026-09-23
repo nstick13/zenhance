@@ -54,6 +54,33 @@ Pure and tested, in `lib/orbital/`:
 `components/viz/orbital/OrbitalMap.tsx` owns camera, drags, basket and dialogs;
 `render.ts` paints. No second map engine, no lab: this is the shipped `/org`.
 
+## Refinement — complexity, semantic orbits and magnetic contact (2026-09-23)
+
+Local geography now receives a bounded **radial looseness** value from the
+same fixed-viewport zoom-to-read measurement that chooses geography. At zero,
+siblings keep one calm circular orbit. As visual complexity rises, each branch
+may use more of its own collision-safe inward range; the range itself comes
+from branch shape and depth. This is deterministic, local, collision-free and
+does not use headcount or the live browser size. Sparrow Jam and Digital
+Tailoring still choose rings normally; `?geography=local` remains an
+invented-demo-only preview.
+
+A potential parent now has a semantic interaction annulus sized from its own
+structural footprint, not from any rendered child link or final child radius.
+The current parent is ignored (ordinary movement around it is geography), and
+self/descendant/cycle targets are rejected. The strongest eligible annulus and
+prospective connection draw during a drag. Release asks **Move [branch] under
+[parent]?**; confirmation calls the workspace-scoped `moveOrgUnit`, moves the
+complete branch, and atomically removes only the moved root's stale
+`orbital_nodes` row. Descendant arrangements remain intact.
+
+Unit contact is deliberately different. The prior grow-study metaball geometry
+now paints in Konva: attraction starts before full overlap, gauges stand down,
+the carried branch follows on springs, and retreat clears the state. The dwell/
+push threshold remains, so a pass cannot arm it. Reduced motion goes straight
+to a static kissing state. An armed contact offers **Reparent branch**,
+**Merge entire branch** (disabled), and **Cancel**. No merge mutates data.
+
 ### Why wedges, not bubbles
 
 A child's orbit is sized by the **angle its branch subtends from the parent**,
@@ -89,7 +116,8 @@ length, which a test holds (30 levels grows ~3× a 10-level chain, not 2³⁰).
 ## Not wired, deliberately
 
 - **Merging.** Target detection, the gesture and the confirmation exist. The
-  dialog's **Merge entire branch** button is present but **disabled**, because
+  dialog's **Reparent branch** action is live; **Merge entire branch** is
+  present but **disabled**, because
   what happens to both units' own people and who leads the merged unit is
   undecided. Nothing about a merge touches data.
 - **Review branch** in the merge dialog: deferred by the prompt. Not built.
@@ -103,13 +131,20 @@ length, which a test holds (30 levels grows ~3× a 10-level chain, not 2³⁰).
 
 ## Verified, and not
 
-**Verified by pure tests** (402 across the suite, 248 in `lib/orbital`):
+**Verified by pure tests** (413 across the suite after this refinement):
 layout stability and locality, non-overlap at 2,562 people, chain growth,
 envelope containment, activation determinism and calibration, hierarchical
 thinning and budget, monotonic/bounded dot area, dot non-overlap at six zooms,
 local effective detail and the one-tier bound, lens invertibility, saved-angle
 round trips, insertion locality and preview-equals-commit, basket rules,
 dwell/push arming, and that a hidden unit is never painted.
+
+The refinement adds proofs for monotonic bounded radial looseness across
+representative visual-complexity fixtures; circular regularity at zero;
+determinism, locality, bounds and non-overlap at multiple looseness values;
+interaction-orbit independence from rendered connection length; valid and
+invalid reparent targeting; pre-overlap magnetic state; retreat and quick-pass
+safety; the metaball bridge; and immediate reduced-motion arrival.
 
 **Verified in a browser** on Sparrow Jam and Digital Tailoring (desktop
 1280×800 and a 375×812 phone): tap-to-pin field with detail lifting a tier;
@@ -135,6 +170,22 @@ data change, territory outline 25ms, visibility budget 0.18ms per pass (at most
 every 80ms), landing plan 0.04ms per pointer move. At ~6,000 people / 1,025
 units: layout 67ms, outline 25ms. Nothing per-frame got heavier except a
 constant-time pass over visible marks.
+
+Re-run after the refinement on the fixture's approximate 2,562-person target
+(it emitted 2,721 people / 433 units): median whole-company layout **28.1ms**
+over ten timed runs after warm-up (23.1–34.7ms), ring zoom-to-read 91.3×,
+local zoom-to-read 20.5×, radial looseness 1.0, and zero footprint overlaps.
+
+Browser QA after the refinement covered Sparrow Jam, Digital Tailoring and the
+forced local preview at desktop and 375×812. Both real demo views stayed on
+rings; forced-local Sparrow stayed circular. Mouse and tap-equivalent selection
+worked; semantic-orbit drops opened the correct confirmation on desktop and
+touch-size; cancelling left reporting structure unchanged; a quick node pass
+did not arm. Browser console errors: none. The OS reduced-motion browser path
+was not toggled because that would change a user system setting; the immediate
+motion, magnetic joined-state and reveal-skip paths are pure-tested. A sustained
+held pointer was not available through the browser harness, so the armed
+metaball modal is pure/render-tested rather than browser-observed.
 
 ## Known rough edges
 
