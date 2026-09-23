@@ -75,7 +75,23 @@ export type PlacedUnit = {
    *  true size would be sub-pixel (see lod.drawnUnitRadius). Uniform across a
    *  rung, so size keeps carrying depth and nothing else. */
   drawCeiling: number;
+  /** Local geography only: the on-screen radius the dot holds at overview,
+   *  from the headcount size index (see size.ts). Absent on the ring map,
+   *  which keeps its depth-based floors. */
+  dotPx?: number;
+  /** Local geography only: the radius of the orbit this unit's own children
+   *  sit on, and the direction it faces away from its parent. */
+  childOrbit?: number;
+  outward?: number;
+  /** Local geography only: how far this unit's own furniture — people, their
+   *  boards — reaches from its centre. What neighbours must stay clear of. */
+  footprint?: number;
+  /** Local geography only: its nearest units and their distances — what its
+   *  dot may swell against when zoomed out (lod.neighbourAwareRadius). */
+  near?: { id: string; d: number }[];
 };
+
+export type Geography = "orbital" | "local";
 
 export type PlacedSeat = {
   id: string;
@@ -134,6 +150,11 @@ export type OrbitalScene = {
   maxDepth: number;
   /** Independent rooted families. The outer boundary is visual, not a parent. */
   families?: { rootId: string; centre: Point; boundary: number; bands: Band[] }[];
+  /** Which drawing of the company this is. Absent means the ring map. */
+  geography?: Geography;
+  /** The settled structural geometry's bounding box — every unit and the
+   *  room its people need, drawn or not. What Fit and minimum zoom use. */
+  bounds?: { minX: number; minY: number; maxX: number; maxY: number };
 };
 
 export type LayoutOptions = {
@@ -141,6 +162,8 @@ export type LayoutOptions = {
   startAngle?: number;
   /** Per-unit angular override from a drag, as an absolute angle. */
   angleOverrides?: Map<string, number>;
+  /** Which drawing to lay out (forest only). Default: the ring map. */
+  geography?: Geography;
 };
 
 /**
@@ -258,7 +281,7 @@ function seatRingCapacity(unitR: number, ring: number): number {
   return Math.max(1, Math.floor(SEAT_MAX_SPAN / step) + 1);
 }
 
-function seatRingCount(unitR: number, seatCount: number): number {
+export function seatRingCount(unitR: number, seatCount: number): number {
   let remaining = seatCount;
   let rings = 0;
   while (remaining > 0 && rings < 6) {
@@ -300,7 +323,7 @@ const SEAT_ORDER: Record<SeatKind, number> = { lead: 0, member: 1, open: 2 };
  * Occupied directions are the parent (the line home) and each child cluster,
  * so seats end up wherever the unit still has room.
  */
-function widestGap(occupied: number[]): number {
+export function widestGap(occupied: number[]): number {
   if (occupied.length === 0) return 0;
   if (occupied.length === 1) return normalizeAngle(occupied[0] + Math.PI);
   const sorted = [...occupied].map(normalizeAngle).sort((a, b) => a - b);
@@ -316,6 +339,98 @@ function widestGap(occupied: number[]): number {
     }
   }
   return bestMid;
+}
+
+/**
+ * Hang a unit's people off it: the lead pinned facing `homeAngle` (toward the
+ * unit's own parent), everyone else fanned across `fanAngle` in as many seat
+ * rings as it takes. Shared by both geographies, so a person sits in the same
+ * place relative to their team whichever way the company is drawn. Returns the
+ * widest stretch of orbit the fan occupies — what the torus stands in for.
+ */
+export function placeUnitSeats(
+  tree: OrbitalTree,
+  unit: UnitNode,
+  centre: Point,
+  unitR: number,
+  fanAngle: number,
+  homeAngle: number,
+  out: { seats: PlacedSeat[]; links: Link[] },
+): number {
+  const emitSeat = (seat: Seat, angle: number, ringR: number) => {
+    const at = polar(angle, ringR);
+    const pos = { x: centre.x + at.x, y: centre.y + at.y };
+    out.seats.push({
+      id: seat.id,
+      unitId: unit.id,
+      personId: seat.personId,
+      photoUrl: seat.photoUrl ?? null,
+      name: seat.name,
+      role: seat.role,
+      kind: seat.kind,
+      shared: seat.shared,
+      allocationPct: seat.allocationPct,
+      x: pos.x,
+      y: pos.y,
+      r: SEAT_RADIUS,
+      angle,
+      work: workGridPoints(seat.workCount, pos, angle),
+    });
+    out.links.push({
+      id: `link-${seat.id}`,
+      kind: "seat",
+      sourceId: unit.id,
+      targetId: seat.id,
+      from: centre,
+      to: pos,
+      depth: unit.depth + 1,
+    });
+  };
+
+  let widestSpan = 0;
+  const all = unit.seatIds
+    .map((id) => tree.seats.get(id))
+    .filter((s): s is Seat => !!s)
+    .sort((a, b) => SEAT_ORDER[a.kind] - SEAT_ORDER[b.kind] || a.name.localeCompare(b.name));
+
+  // The lead is pinned on the side facing this unit's own parent, at every
+  // zoom (Greg, 2026-09-14). It's the answer to "who do I talk to about
+  // this node", so it never moves and it points up the chain it reports
+  // to — which is also why it's the last dot left when everything else has
+  // faded out at distance.
+  const leads = all.filter((s) => s.kind === "lead");
+  const ordered = centreOut(all.filter((s) => s.kind !== "lead"));
+
+  const leadAngles = packRing(
+    leads.length,
+    SEAT_RADIUS,
+    SEAT_GAP,
+    seatRingRadius(unitR, 0),
+    homeAngle,
+    SEAT_MAX_SPAN / 3,
+  );
+  leads.forEach((seat, i) => emitSeat(seat, leadAngles[i], seatRingRadius(unitR, 0)));
+
+  let index = 0;
+  let ring = 0;
+  while (index < ordered.length && ring < 6) {
+    const capacity = seatRingCapacity(unitR, ring);
+    const slice = ordered.slice(index, index + capacity);
+    const ringR = seatRingRadius(unitR, ring);
+    const angles = packRing(slice.length, SEAT_RADIUS, SEAT_GAP, ringR, fanAngle, SEAT_MAX_SPAN);
+    if (angles.length > 0) {
+      const span =
+        angles.length === 1
+          ? angularStep(SEAT_RADIUS, SEAT_GAP, ringR)
+          : Math.abs(angles[angles.length - 1] - angles[0]) +
+            angularStep(SEAT_RADIUS, SEAT_GAP, ringR);
+      widestSpan = Math.max(widestSpan, span);
+    }
+    slice.forEach((seat, i) => emitSeat(seat, angles[i], ringR));
+    index += capacity;
+    ring++;
+  }
+  return widestSpan;
 }
 
 export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): OrbitalScene {
@@ -499,97 +614,8 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
   const units: PlacedUnit[] = [];
   const seats: PlacedSeat[] = [];
   const links: Link[] = [];
-
-  const emitSeat = (
-    unit: UnitNode,
-    centre: Point,
-    seat: Seat,
-    angle: number,
-    ringR: number,
-  ) => {
-    const at = polar(angle, ringR);
-    const pos = { x: centre.x + at.x, y: centre.y + at.y };
-    seats.push({
-      id: seat.id,
-      unitId: unit.id,
-      personId: seat.personId,
-      photoUrl: seat.photoUrl ?? null,
-      name: seat.name,
-      role: seat.role,
-      kind: seat.kind,
-      shared: seat.shared,
-      allocationPct: seat.allocationPct,
-      x: pos.x,
-      y: pos.y,
-      r: SEAT_RADIUS,
-      angle,
-      work: workGridPoints(seat.workCount, pos, angle),
-    });
-    links.push({
-      id: `link-${seat.id}`,
-      kind: "seat",
-      sourceId: unit.id,
-      targetId: seat.id,
-      from: centre,
-      to: pos,
-      depth: unit.depth + 1,
-    });
-  };
-
-  /** Filled in as seats are placed, so the unit can report the stretch of
-   *  orbit its people occupy. */
-  const placeSeats = (
-    unit: UnitNode,
-    centre: Point,
-    fanAngle: number,
-    homeAngle: number,
-  ): number => {
-    const unitR = radiusAt(unit.depth);
-    let widestSpan = 0;
-    const all = unit.seatIds
-      .map((id) => tree.seats.get(id))
-      .filter((s): s is Seat => !!s)
-      .sort((a, b) => SEAT_ORDER[a.kind] - SEAT_ORDER[b.kind] || a.name.localeCompare(b.name));
-
-    // The lead is pinned on the side facing this unit's own parent, at every
-    // zoom (Greg, 2026-09-14). It's the answer to "who do I talk to about
-    // this node", so it never moves and it points up the chain it reports
-    // to — which is also why it's the last dot left when everything else has
-    // faded out at distance.
-    const leads = all.filter((s) => s.kind === "lead");
-    const ordered = centreOut(all.filter((s) => s.kind !== "lead"));
-
-    const leadAngles = packRing(
-      leads.length,
-      SEAT_RADIUS,
-      SEAT_GAP,
-      seatRingRadius(unitR, 0),
-      homeAngle,
-      SEAT_MAX_SPAN / 3,
-    );
-    leads.forEach((seat, i) => emitSeat(unit, centre, seat, leadAngles[i], seatRingRadius(unitR, 0)));
-
-    let index = 0;
-    let ring = 0;
-    while (index < ordered.length && ring < 6) {
-      const capacity = seatRingCapacity(unitR, ring);
-      const slice = ordered.slice(index, index + capacity);
-      const ringR = seatRingRadius(unitR, ring);
-      const angles = packRing(slice.length, SEAT_RADIUS, SEAT_GAP, ringR, fanAngle, SEAT_MAX_SPAN);
-      if (angles.length > 0) {
-        const span =
-          angles.length === 1
-            ? angularStep(SEAT_RADIUS, SEAT_GAP, ringR)
-            : Math.abs(angles[angles.length - 1] - angles[0]) +
-              angularStep(SEAT_RADIUS, SEAT_GAP, ringR);
-        widestSpan = Math.max(widestSpan, span);
-      }
-      slice.forEach((seat, i) => emitSeat(unit, centre, seat, angles[i], ringR));
-      index += capacity;
-      ring++;
-    }
-    return widestSpan;
-  };
+  const placeSeats = (unit: UnitNode, centre: Point, fanAngle: number, homeAngle: number): number =>
+    placeUnitSeats(tree, unit, centre, radiusAt(unit.depth), fanAngle, homeAngle, { seats, links });
 
   const place = (unitId: string, centre: Point, angle: number, sector: Sector) => {
     const unit = tree.units.get(unitId);

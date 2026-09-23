@@ -93,6 +93,18 @@ export function focusOrbital(
   const sourceFocus = tree.units.get(focusId);
   if (!focusedTree || !masterFocus || !sourceFocus) return null;
 
+  // Local branch geography already draws every branch round its own root, so
+  // focus re-lays nothing: the geography users have learnt stays exactly where
+  // it is, and focus is the camera plus emphasis on the branch.
+  if (master.geography === "local") {
+    return {
+      scene: master,
+      interactionScene: master,
+      branchIds: new Set(focusedTree.units.keys()),
+      breadcrumb: pathToUnit(tree, focusId),
+    };
+  }
+
   const local = layoutOrbital(focusedTree, options);
   const branchIds = new Set(focusedTree.units.keys());
   const pushed = (point: { x: number; y: number }) => ({

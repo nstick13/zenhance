@@ -50,10 +50,16 @@ export function unitRingReveal(depth: number, scale: number): number {
   return smoothstep(start, start + 0.14, scale);
 }
 
-/** Names never compete with the map at overview scale. */
-export function unitLabelVisible(drawnRadius: number, scale: number): boolean {
-  return scale >= 0.7 && drawnRadius * scale >= 28;
+/** Names never compete with the map at overview scale. `detailScale` is the
+ *  scale the unit's neighbourhood *reads* as — lifted inside the local detail
+ *  field — while the room for the name is always measured at the real one. */
+export function unitLabelVisible(drawnRadius: number, scale: number, detailScale = scale): boolean {
+  return detailScale >= 0.7 && drawnRadius * scale >= 28;
 }
+
+/** In local branch geography, a dot at least this big on screen stands out
+ *  as a landmark at overview and carries its name beneath it. */
+export const LANDMARK_LABEL_PX = 14;
 
 /** A node drawn smaller than this on screen isn't worth a draw call. Nothing
  *  reaches it while `drawnUnitRadius` is holding the floors below. */
@@ -91,12 +97,56 @@ export function screenFloorPx(depth: number): number {
 }
 
 export function drawnUnitRadius(
-  unit: { r: number; depth: number },
+  unit: { r: number; depth: number; dotPx?: number },
   scale: number,
   ceiling: number,
 ): number {
-  const floor = screenFloorPx(unit.depth) / Math.max(scale, 1e-6);
+  // Local branch geography sizes its dots by headcount (size.ts); the ring map
+  // keeps its depth floors.
+  const floor = (unit.dotPx ?? screenFloorPx(unit.depth)) / Math.max(scale, 1e-6);
   return Math.min(Math.max(unit.r, floor), Math.max(unit.r, ceiling));
+}
+
+/** Clear screen space kept between neighbouring dots when they swell. */
+export const NEIGHBOUR_AIR_PX = 2;
+
+/** The size a unit's dot would like to be at this zoom: its own disc, or the
+ *  floor it holds on screen when that disc would be too small to see. */
+export function desiredUnitRadius(unit: { r: number; depth: number; dotPx?: number }, scale: number): number {
+  return Math.max(unit.r, (unit.dotPx ?? screenFloorPx(unit.depth)) / Math.max(scale, 1e-6));
+}
+
+/**
+ * How big a unit draws in local branch geography, where dots carry headcount
+ * (Greg, 2026-09-21).
+ *
+ * A fixed share of the distance to the nearest neighbour flattens every dot to
+ * the same size at overview — a division is capped by its own children even
+ * when thinning has hidden them. Instead the room between two dots is shared
+ * in proportion to what each wants, and a neighbour only claims room in
+ * proportion to how present it is. When both fit, both get what they want;
+ * when they don't, u ≤ d·want(u)/(want(u)+want(v)) and the same for v sum to
+ * exactly d, so two present dots can never overlap — and two big neighbours
+ * (a company and its only child) both stay prominent rather than both
+ * collapsing. A hidden neighbour claims nothing, so a division whose teams are
+ * thinned away shows its full weight. A dot never draws smaller than its own
+ * laid-out disc, which the layout already keeps clear of every other.
+ */
+export function neighbourAwareRadius(
+  unit: { r: number; depth: number; dotPx?: number; near?: readonly { id: string; d: number }[] },
+  scale: number,
+  wantOf: (unitId: string) => number,
+  presenceOf: (unitId: string) => number,
+): number {
+  const want = desiredUnitRadius(unit, scale);
+  let cap = Infinity;
+  const air = NEIGHBOUR_AIR_PX / Math.max(scale, 1e-6);
+  for (const n of unit.near ?? []) {
+    const room = Math.max(0, n.d - air);
+    const theirs = presenceOf(n.id) * wantOf(n.id);
+    cap = Math.min(cap, want + theirs <= room ? want : (room * want) / Math.max(want + theirs, 1e-9));
+  }
+  return Math.min(want, Math.max(unit.r, cap));
 }
 
 /** How present a node looks. A speck held above the pixel floor shouldn't read
