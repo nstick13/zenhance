@@ -293,7 +293,9 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
     // against final neighbour positions, so variation remains collision-free.
     const own0: Disk = { x: 0, y: 0, f: own };
     const cell = 2 * Math.max(own, ...placed.flatMap((p) => p.disks.map((d) => d.f)));
-    for (let i = 0; i < placed.length; i++) {
+    // Circular orbits (the shipped map) need none of this search, and it is
+    // the most expensive thing in the walk.
+    for (let i = 0; radialLooseness > 0 && i < placed.length; i++) {
       const child = placed[i];
       const others = new DiskGrid([own0, ...placed.flatMap((p, j) => (j === i ? [] : p.disks))], cell);
       const local = childBranches[i].disks;

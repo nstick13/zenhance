@@ -40,7 +40,12 @@ import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
 import { focusOrbital } from "@/lib/orbital/focus";
 import { fitScaleFor, layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
 import { structuralEnvelope } from "@/lib/orbital/envelope";
-import { anglePlacementOffsets, applyPositionOffsets, combinePositionOffsets } from "@/lib/orbital/position";
+import {
+  anglePlacementOffsets,
+  applyPositionOffsets,
+  combinePositionOffsets,
+  type Placement,
+} from "@/lib/orbital/position";
 import {
   SEAT_RADIUS,
   WORK_RADIUS,
@@ -216,6 +221,9 @@ type DragState =
     magnet: { unitId: string; centre: Point; radius: number; strength: number } | null;
     /** Strongest semantic parent orbit under the pointer. */
     reparent: ReparentOrbit | null;
+    /** How long the hand has held still on that orbit. A reparent is a
+     *  deliberate gesture, not something an ordinary drop can trigger. */
+    reparentHold: Relation | null;
   }
   | {
     kind: "seat";
@@ -283,8 +291,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   /** A short, plain explanation after a drop that did something the user
    *  might not expect — fades on its own. */
   const [notice, setNotice] = useState<string | null>(null);
-  /** Moves to open ground this session: the saved layout can only hold an
-   *  angle, so these are not saved yet, and the map says so. */
+  /** Placements made with snaps off. Those mean nothing and are deliberately
+   *  not saved, so the map says how many will be lost on reload. */
   const [sessionPlaced, setSessionPlaced] = useState(0);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   /** Branches picked up to be carried across the map — pending UI state
@@ -315,12 +323,15 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const seeded = useMemo(() => {
     const unitParent = new Map<string, string>();
     const seatUnit = new Map<string, string>();
-    const angles = new Map<string, number>();
+    const angles = new Map<string, Placement>();
     for (const row of savedNodes) {
       if (row.nodeType === "unit") {
         if (row.angle != null) {
           const a = Number(row.angle);
-          if (Number.isFinite(a)) angles.set(row.nodeId, a);
+          const d = row.distance == null ? null : Number(row.distance);
+          if (Number.isFinite(a)) {
+            angles.set(row.nodeId, { angle: a, distance: d != null && Number.isFinite(d) ? d : null });
+          }
         }
         if (row.parentId) unitParent.set(row.nodeId, row.parentId);
       } else if (row.parentId) {
@@ -331,7 +342,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   }, [savedNodes]);
 
   const [overrides, setOverrides] = useState<StructureOverrides>(seeded.overrides);
-  const [angleOverrides, setAngleOverrides] = useState<Map<string, number>>(seeded.angles);
+  const [angleOverrides, setAngleOverrides] = useState<Map<string, Placement>>(seeded.angles);
   const [positionRevision, setPositionRevision] = useState(0);
 
   const scaleRef = useRef(scale);
@@ -1151,7 +1162,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       ctx.relation = drag?.relation
         ? { ...drag.relation, kind: drag.kind === "unit" ? "merge" : "move", armed: isArmed(drag.relation) }
         : null;
-      ctx.reparent = drag?.kind === "unit" ? drag.reparent : null;
+      ctx.reparent = drag?.kind === "unit" && drag.reparent
+        ? { ...drag.reparent, charge: chargeAt(drag.reparentHold, clock)?.charge ?? 0 }
+        : null;
 
       motionRef.current.step(dt, targetsRef.current, reduce);
       ctx.draggedUnitId = drag?.kind === "unit" ? drag.id : null;
@@ -1561,7 +1574,13 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
   // --- persistence ---------------------------------------------------------
   const persist = useCallback(
-    (rows: { nodeType: "unit" | "seat"; nodeId: string; angle: number | null; parentId: string | null }[]) => {
+    (rows: {
+      nodeType: "unit" | "seat";
+      nodeId: string;
+      angle: number | null;
+      distance?: number | null;
+      parentId: string | null;
+    }[]) => {
       startTransition(async () => {
         const result = await saveOrbitalNodes(rows);
         if (!result.ok) console.error("Failed to save orbital arrangement:", result.error);
@@ -1602,6 +1621,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         relation: null,
         magnet: null,
         reparent: null,
+        reparentHold: null,
       };
       targetsRef.current = buildTargets(s, dragRef.current);
     },
@@ -1648,6 +1668,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       !waitingInBasket?.has(unit.id) &&
       (presenceRef.current.get(unit.id) ?? 1) >= INTERACTABLE_PRESENCE);
     const source = s.unitById.get(drag.id);
+    // Moving round your own parent is geography, and the parent is the one
+    // node you are bound to pass close to. It can never be a merge target.
+    const notTargets = new Set(drag.moved);
+    if (drag.parentId) notTargets.add(drag.parentId);
     const magnet = source ? magneticMergeTarget(
       eligible,
       point,
@@ -1656,8 +1680,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         const unit = s.unitById.get(id);
         return unit ? drawnOf(unit) : 0;
       },
-      drag.moved,
+      notTargets,
       stage.scaleX(),
+      drag.magnet?.unitId ?? null,
     ) : null;
     const reparent = magnet ? null : reparentOrbitTarget(
       eligible.map((unit) => ({
@@ -1671,6 +1696,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       stage.scaleX(),
       drag.moved,
       drag.parentId,
+      (id) => {
+        const unit = s.unitById.get(id);
+        return unit ? drawnOf(unit) : 0;
+      },
     );
     return { magnet, reparent };
   }, [drawnOf]);
@@ -1712,7 +1741,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       : { magnet: null, reparent: null };
     drag.magnet = relationship.magnet;
     drag.reparent = relationship.reparent;
-    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    const beat = performance.now();
+    drag.relation = trackRelation(drag.relation, relationship.magnet, beat, pointerWorld);
+    drag.reparentHold = trackRelation(
+      drag.reparentHold,
+      relationship.reparent ? { unitId: relationship.reparent.parentId, depth: 0 } : null,
+      beat,
+      pointerWorld,
+    );
     if (relationship.magnet) {
       const source = displayed.unitById.get(drag.id);
       if (source) {
@@ -1745,8 +1781,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const s = sceneRef.current;
     if (!s || !plan || plan.kind === "none") return false;
     if (plan.kind === "free") {
-      // Open ground in a large company. The saved layout can only hold an
-      // angle, so this placement lasts for the session — and says so.
+      // Snaps off: placement that means nothing, and is deliberately not
+      // saved — Break orbits is a way to look, not a way to arrange.
       const previous = unitOffsetsRef.current.get(unitId) ?? { x: 0, y: 0 };
       unitOffsetsRef.current.set(unitId, {
         x: previous.x + plan.position.x - origin.x,
@@ -1755,19 +1791,19 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       setPositionRevision((revision) => revision + 1);
       setSessionPlaced((count) => count + 1);
       ripple(plan.position, (s.unitById.get(unitId)?.r ?? 40) * 2.6);
-      setNotice("Placed for this session. A spot off its own orbit can't be saved yet.");
       return true;
     }
     // Commit exactly what the preview showed: the unit where it landed and
     // each neighbour where it made room, as saved angles.
     ripple(plan.position, (s.unitById.get(plan.unitId)?.r ?? 40) * 2.6);
-    const landed = [{ unitId: plan.unitId, angle: plan.angle }, ...plan.displaced];
+    const landed: { unitId: string; angle: number; distance?: number }[] =
+      [{ unitId: plan.unitId, angle: plan.angle, distance: plan.distance }, ...plan.displaced];
     let cleared = false;
     for (const { unitId: id } of landed) if (unitOffsetsRef.current.delete(id)) cleared = true;
     if (cleared) setPositionRevision((revision) => revision + 1);
     setAngleOverrides((prev) => {
       const next = new Map(prev);
-      for (const { unitId: id, angle } of landed) next.set(id, angle);
+      for (const { unitId: id, angle, distance } of landed) next.set(id, { angle, distance });
       return next;
     });
     const ids = new Set(landed.map((l) => l.unitId));
@@ -1775,10 +1811,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       ...prev,
       unitParent: new Map([...(prev.unitParent ?? [])].filter(([id]) => !ids.has(id))),
     }));
-    persist(landed.map(({ unitId: id, angle }) => ({
+    persist(landed.map(({ unitId: id, angle, distance }) => ({
       nodeType: "unit" as const,
       nodeId: id,
       angle: normalizeAngle(angle),
+      distance: distance ?? null,
       // Geography never changes the organisation: the row keeps the real parent.
       parentId: baseTree.units.get(id)?.parentId ?? null,
     })));
@@ -1805,7 +1842,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
       return;
     }
-    if (drag.reparent) {
+    if (drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
+      // Held still on another parent's orbit: a deliberate reporting change,
+      // and still only a question. A drop made in passing just lands.
       if (s) targetsRef.current = buildTargets(s, null);
       setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
       return;
@@ -1864,7 +1903,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       : { magnet: null, reparent: null };
     drag.magnet = relationship.magnet;
     drag.reparent = relationship.reparent;
-    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    const beat = performance.now();
+    drag.relation = trackRelation(drag.relation, relationship.magnet, beat, world);
+    drag.reparentHold = trackRelation(
+      drag.reparentHold,
+      relationship.reparent ? { unitId: relationship.reparent.parentId, depth: 0 } : null,
+      beat,
+      world,
+    );
     if (relationship.magnet) {
       const source = displayed.unitById.get(drag.id);
       if (source) drag.current = magneticPosition(
@@ -1942,6 +1988,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         relation: null,
         magnet: null,
         reparent: null,
+        reparentHold: null,
       };
     }
     dragClientRef.current = client;
@@ -1968,7 +2015,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
       return;
     }
-    if (!cancelled && drag.reparent) {
+    if (!cancelled && drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
       if (s) targetsRef.current = buildTargets(s, null);
       setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
       return;
@@ -3037,13 +3084,13 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         <span style={S.legendHint}>
           {snapping
             ? local
-              ? "drag a unit round its parent, or onto open ground · tap open ground to look closer there"
+              ? "drag a unit anywhere its branch fits · it stays where you let go · tap open ground to look closer there"
               : "drag along a ring to adjust placement · tap open ground to look closer there · tidy up restores the calculated map"
             : "move nodes and people freely · visual only · resets on reload or tidy up"}
         </span>
-        {snapping && sessionPlaced > 0 && (
+        {!snapping && sessionPlaced > 0 && (
           <span style={S.legendHint}>
-            {sessionPlaced === 1 ? "1 move" : `${sessionPlaced} moves`} to open ground kept for this session only
+            {sessionPlaced === 1 ? "1 free placement" : `${sessionPlaced} free placements`} · not saved
           </span>
         )}
       </div>}

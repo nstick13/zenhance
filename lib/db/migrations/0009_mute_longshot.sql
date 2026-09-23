@@ -1,0 +1,1 @@
+ALTER TABLE "orbital_nodes" ADD COLUMN "distance" numeric(12, 3);

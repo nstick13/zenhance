@@ -25,12 +25,28 @@ export function savedAnglePoint(parent: Point, orbit: number, angle: number): Po
   return { x: parent.x + orbit * Math.cos(angle), y: parent.y + orbit * Math.sin(angle) };
 }
 
+/**
+ * A placement the user made: a direction, and — in local geography — how far
+ * out they let go (Greg, 2026-09-23: "a node lands exactly where the hand let
+ * go", and comes back there).
+ *
+ * `distance` is absent for a placement made before the column existed, and on
+ * the ring map, where the radius is the reporting level rather than anybody's
+ * choice. Absent means "wherever the calculated layout puts it", which is the
+ * behaviour every saved arrangement had until now — so old rows keep meaning
+ * exactly what they used to mean.
+ */
+export type Placement = { angle: number; distance?: number | null };
+
 /** Reconstruct saved same-rung placements as branch offsets, not as input to
  * the packer. Re-packing around one changed angle moves unrelated siblings
  * and often their whole subtrees. An offset keeps the calculated map stable;
  * only the chosen branch moves. The angle remains the persisted compact form.
  */
-export function anglePlacementOffsets(scene: OrbitalScene, angles: ReadonlyMap<string, number>): Map<string, Point> {
+export function anglePlacementOffsets(
+  scene: OrbitalScene,
+  angles: ReadonlyMap<string, number | Placement>,
+): Map<string, Point> {
   const own = new Map<string, Point>();
   const cumulative = new Map<string, Point>();
   const roots = new Map(scene.families?.map((family) => [family.rootId, family.centre]) ?? []);
@@ -41,7 +57,9 @@ export function anglePlacementOffsets(scene: OrbitalScene, angles: ReadonlyMap<s
   };
   for (const unit of [...scene.units].sort((a, b) => a.depth - b.depth)) {
     const inherited = unit.parentId ? cumulative.get(unit.parentId) ?? { x: 0, y: 0 } : { x: 0, y: 0 };
-    const angle = angles.get(unit.id);
+    const saved = angles.get(unit.id);
+    const placement: Placement | undefined = typeof saved === "number" ? { angle: saved } : saved;
+    const angle = placement?.angle;
     if (angle === undefined || !Number.isFinite(angle)) {
       cumulative.set(unit.id, inherited);
       continue;
@@ -56,11 +74,13 @@ export function anglePlacementOffsets(scene: OrbitalScene, angles: ReadonlyMap<s
         cumulative.set(unit.id, inherited);
         continue;
       }
-      target = savedAnglePoint(
-        { x: parent.x + inherited.x, y: parent.y + inherited.y },
-        Math.hypot(unit.x - parent.x, unit.y - parent.y),
-        angle,
-      );
+      // The distance the user released at, when they chose one; otherwise the
+      // orbit the calculated layout gives this unit.
+      const saved = placement?.distance;
+      const orbit = saved != null && Number.isFinite(saved) && saved >= 0
+        ? saved
+        : Math.hypot(unit.x - parent.x, unit.y - parent.y);
+      target = savedAnglePoint({ x: parent.x + inherited.x, y: parent.y + inherited.y }, orbit, angle);
     } else {
       const at = polar(angle, Math.hypot(unit.x - centre.x, unit.y - centre.y));
       target = { x: centre.x + at.x, y: centre.y + at.y };

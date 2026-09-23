@@ -509,7 +509,15 @@ export async function switchWorkspace(workspaceId: string): Promise<ActionResult
  * reload without quietly restructuring the company. See lib/db/schema.ts.
  */
 export async function saveOrbitalNodes(
-  rows: { nodeType: "unit" | "seat"; nodeId: string; angle: number | null; parentId: string | null }[],
+  rows: {
+    nodeType: "unit" | "seat";
+    nodeId: string;
+    angle: number | null;
+    /** How far from the parent the unit was dropped. Null leaves the unit on
+     *  whatever orbit the calculated layout gives it. */
+    distance?: number | null;
+    parentId: string | null;
+  }[],
   boardId = "default",
 ): Promise<ActionResult> {
   const { workspace } = await requireWorkspace();
@@ -520,12 +528,15 @@ export async function saveOrbitalNodes(
     if (r.nodeType !== "unit" && r.nodeType !== "seat") return fail("Invalid node type");
     if (!r.nodeId) return fail("Missing node id");
     if (r.angle !== null && !Number.isFinite(r.angle)) return fail("Invalid angle");
+    const distance = r.distance ?? null;
+    if (distance !== null && (!Number.isFinite(distance) || distance < 0)) return fail("Invalid distance");
     values.push({
       workspaceId: workspace.id,
       boardId,
       nodeType: r.nodeType,
       nodeId: r.nodeId,
       angle: r.angle === null ? null : r.angle.toFixed(6),
+      distance: distance === null ? null : distance.toFixed(3),
       parentId: r.parentId,
     });
   }
@@ -541,6 +552,7 @@ export async function saveOrbitalNodes(
       ],
       set: {
         angle: sql`excluded.angle`,
+        distance: sql`excluded.distance`,
         parentId: sql`excluded.parent_id`,
         updatedAt: new Date(),
       },

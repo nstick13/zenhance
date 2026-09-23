@@ -275,6 +275,14 @@ export const orbitalNodes = pgTable(
      *  its parent, so the two readings put a unit on the same side — see
      *  lib/orbital/position.ts `savedAnglePoint`. */
     angle: numeric("angle", { precision: 9, scale: 6 }),
+    /** How far from the parent (or, on the ring map, from the centre) the unit
+     *  was dropped, in world units. Null means "wherever the calculated layout
+     *  puts it" — the ring map never writes it, because there radius is the
+     *  reporting level and not the user's to choose. In local geography a drop
+     *  lands exactly where the hand released it, and this is the other half of
+     *  that promise: without it a reload would slide the unit back onto its
+     *  parent's orbit. */
+    distance: numeric("distance", { precision: 12, scale: 3 }),
     /** Unit this node was dropped onto: the parent for a unit, the host for
      *  a seat. Null means "wherever the org says". */
     parentId: text("parent_id"),

@@ -43,6 +43,25 @@ export const LOCAL_MUST_WIN_BY = 1.5;
  * 20x→40x, while a raw headcount would say nothing about the drawing. */
 export const LOOSE_FROM_ZOOM = 2;
 export const FULLY_LOOSE_ZOOM = 64;
+
+/**
+ * Whether children may leave their parent's circle (Greg, 2026-09-23).
+ *
+ * Radial looseness packs a company about a third tighter by drawing each
+ * child in along its own ray. Measured on the 2,562-person shape: extent
+ * 21,177 loose against 34,883 circular. The cost is that a parent's children
+ * no longer sit on one circle — 117 of 134 parents ended up with children at
+ * visibly different distances — and that is exactly what Greg saw and called
+ * out: "those orbits seem to be inconsistent, some of them quite elliptical or
+ * having the centre of the orbit not on the node". Loose layouts also produced
+ * the only three link crossings on the whole company.
+ *
+ * An orbit you can see, predict and drop onto is worth more than a third of
+ * the extent, so the shipped map is circular. The machinery stays, tested, one
+ * constant away: set this to `true` and looseness follows visual complexity
+ * again.
+ */
+export const ALLOW_RADIAL_LOOSENESS = false;
 /** Breathing room a fitted view leaves at its edges. */
 export const FIT_MARGIN = 1.06;
 
@@ -76,6 +95,10 @@ export function visualComplexity(ringZoomToRead: number): number {
   return Math.min(1, Math.max(0, (Math.log(ringZoomToRead) - lo) / (hi - lo)));
 }
 
+/** What the layout actually receives — see ALLOW_RADIAL_LOOSENESS. */
+const loosenessFor = (ringZoomToRead: number) =>
+  ALLOW_RADIAL_LOOSENESS ? visualComplexity(ringZoomToRead) : 0;
+
 export type GeographyChoice = {
   geography: Geography;
   ringZoomToRead: number;
@@ -104,12 +127,12 @@ export function layoutCompany(
     const local = layoutOrbitalForest(tree, {
       ...options,
       geography: "local",
-      radialLooseness: visualComplexity(ringZoom),
+      radialLooseness: loosenessFor(ringZoom),
     });
     return { scene: local, choice: {
       geography: "local",
       ringZoomToRead: ringZoom,
-      radialLooseness: visualComplexity(ringZoom),
+      radialLooseness: loosenessFor(ringZoom),
       localZoomToRead: zoomToRead(local),
     } };
   }
@@ -119,14 +142,14 @@ export function layoutCompany(
     return { scene: ring, choice: {
       geography: "orbital",
       ringZoomToRead: ringZoom,
-      radialLooseness: visualComplexity(ringZoom),
+      radialLooseness: loosenessFor(ringZoom),
       localZoomToRead: null,
     } };
   }
   const local = layoutOrbitalForest(tree, {
     ...options,
     geography: "local",
-    radialLooseness: visualComplexity(ringZoom),
+    radialLooseness: loosenessFor(ringZoom),
   });
   const localZoom = zoomToRead(local);
   const geography: Geography = ringZoom / localZoom >= LOCAL_MUST_WIN_BY ? "local" : "orbital";
@@ -135,7 +158,7 @@ export function layoutCompany(
     choice: {
       geography,
       ringZoomToRead: ringZoom,
-      radialLooseness: visualComplexity(ringZoom),
+      radialLooseness: loosenessFor(ringZoom),
       localZoomToRead: localZoom,
     },
   };

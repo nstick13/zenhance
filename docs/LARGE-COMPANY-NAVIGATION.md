@@ -81,6 +81,64 @@ push threshold remains, so a pass cannot arm it. Reduced motion goes straight
 to a static kissing state. An armed contact offers **Reparent branch**,
 **Merge entire branch** (disabled), and **Cancel**. No merge mutates data.
 
+## The layout engine — four laws (2026-09-23)
+
+Greg, after driving the map at scale: *"Nodes can clash, connection lines can
+criss cross, child nodes splay in apparently random directions… moving a node
+can change the location of another node even if it's far away. Moving a node
+does not always drop it where the mouse leaves it — there's this sort of
+randomly elastic behaviour."* The contract for the answer is
+[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md); `lib/orbital/__tests__/laws.test.ts`
+is where each law is held.
+
+**1. The picture is a pure function** of the company's structure and the
+placements people have made. No settling pass, no relaxation, no randomness,
+no dependence on the viewport. Proved by re-running and by reversing the input.
+
+**2. A node lands exactly where the hand let go.** `planInsertion` returns the
+pointer, unchanged, and `orbital_nodes` gained a nullable `distance` column so
+the reload is the same picture. Before this, a drop was pulled onto its
+parent's orbit and open ground could not be saved at all — which is what read
+as elastic. Where a unit cannot land, the map refuses *before* release rather
+than accepting the drop and moving it.
+
+**3. An authored placement is an obstacle.** Nothing but Tidy up moves a
+position a person chose; a landing routes around it.
+
+**4. The engine never crosses a connection or overlaps a body.** Measured on
+the 2,562-person shape, the 1,000-person shape and the demo: zero and zero.
+The laws bind the engine, not the hand — a person may deliberately drop one
+node onto another, and that placement stands.
+
+Within the laws, a drag may re-flow its parent branch; it may not touch
+anything outside it. In practice the branch travels rigidly and only the
+siblings that would be sat on slide along their own orbits.
+
+### Orbits are circles again
+
+Radial looseness (below) packed the company about a third tighter by drawing
+each child in along its own ray. It also meant 117 of 134 parents had children
+at visibly different distances — Greg read that as orbits being "inconsistent,
+some of them quite elliptical" — and it produced the only three link crossings
+on the whole company. The shipped map keeps children on one circle per parent
+(`ALLOW_RADIAL_LOOSENESS`, one constant, machinery and tests intact). The
+company is 34,883 across instead of 21,177; the orbits are legible and
+droppable, which is worth more.
+
+A parent's **interaction orbit** — the ring you drop onto to propose a
+reporting change — is a true circle centred on the node, a fixed 36 screen
+pixels out from its *drawn* edge, the same for a big unit and a small one.
+
+### Two gesture bugs, found by driving it
+
+- Dragging a unit a short way **round its own parent** opened a merge
+  proposal: the parent was an eligible magnet target, and it is the one node
+  you are bound to pass close to. The parent is now never a merge target.
+- The dwell clock ran from first contact while the hand was **still moving**,
+  so a slow drag across a unit armed a proposal. A dwell is now a *hold*: the
+  clock restarts whenever the hand travels more than a few units. A reparent
+  must be held in the same way, so an ordinary drop always just lands.
+
 ### Why wedges, not bubbles
 
 A child's orbit is sized by the **angle its branch subtends from the parent**,
@@ -124,10 +182,13 @@ length, which a test holds (30 levels grows ~3× a 10-level chain, not 2³⁰).
 - **A person move changes the map only.** Confirming writes the same map-level
   row the map has always written (`orbital_nodes`), not the assignment. Whether
   a confirmed move should edit `assignments` is Greg's call.
-- **Free placements aren't saved.** `orbital_nodes` can hold one angle per
-  unit, so a spot off a unit's own orbit — including a basket drop into open
-  ground — lasts for the session, and the map says so. Saving those needs two
-  nullable columns (x, y), which is a production database change.
+- ~~**Free placements aren't saved.**~~ **Superseded 2026-09-23 by Law 2.**
+  `orbital_nodes` gained one nullable `distance` column, so a placement is a
+  full position round its parent and any landing reloads exactly. Adding the
+  column is a schema change that reaches production when this merges; the
+  column is nullable and old rows keep their old meaning. Placements made with
+  **snaps off** are still deliberately not saved — that mode means nothing by
+  design.
 
 ## Verified, and not
 
@@ -171,10 +232,12 @@ every 80ms), landing plan 0.04ms per pointer move. At ~6,000 people / 1,025
 units: layout 67ms, outline 25ms. Nothing per-frame got heavier except a
 constant-time pass over visible marks.
 
-Re-run after the refinement on the fixture's approximate 2,562-person target
-(it emitted 2,721 people / 433 units): median whole-company layout **28.1ms**
-over ten timed runs after warm-up (23.1–34.7ms), ring zoom-to-read 91.3×,
-local zoom-to-read 20.5×, radial looseness 1.0, and zero footprint overlaps.
+Re-measured 2026-09-23 with circular orbits (2,562 people / 411 units):
+whole-company layout median **23.6ms** (18.4–45.8 over seven timed runs after
+warm-up), territory outline 28ms, landing plan 0.089ms per pointer move. At
+~6,400 people / 1,011 units: layout 64ms, outline 31ms, landing plan 0.107ms.
+Faster than the loose layout, because circular orbits skip the inward search
+entirely.
 
 Browser QA after the refinement covered Sparrow Jam, Digital Tailoring and the
 forced local preview at desktop and 375×812. Both real demo views stayed on

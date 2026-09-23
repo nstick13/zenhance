@@ -19,6 +19,16 @@ It supersedes three things below, all on `orbital-large-navigation`:
   confirmation changes `org_units.parent_id`. The carried branch stays intact,
   descendants keep their authored arrangements, and cycles are rejected again
   on the workspace-scoped server action.
+- **§3/§4 A unit now lands exactly where the hand let go** (2026-09-23), at
+  any distance from its parent, and reloads there — `orbital_nodes.distance`.
+  It is never pulled onto an orbit after release, and a spot that cannot hold
+  it is refused *before* release. Open ground is an ordinary saved landing, not
+  a session-only one.
+- **§6 A reparent must be held, not merely released on.** Dropping on another
+  parent's interaction ring in passing just places the unit; the ring fills
+  while the hand holds still, and only then does release ask. A unit's own
+  parent is never a merge or reparent target — moving round your parent is
+  geography.
 - **§5 "Dropping a person onto a different team moves them" now asks first,**
   and still changes the map only, not their membership in People and Teams.
 

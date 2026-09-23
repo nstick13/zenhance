@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chordAngle, openGap, planInsertion, type InsertionPlan } from "../insertion";
-import { anglePlacementOffsets, applyPositionOffsets } from "../position";
+import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "../position";
 import { buildOrbitalTree, type OrgInput } from "../model";
 import { layoutOrbitalForest } from "../forest";
 import { descendantIds } from "../snap";
@@ -23,11 +23,11 @@ const ring = () => layoutOrbitalForest(buildOrbitalTree(crowded(), { mergePassTh
 
 /** Commit a plan the way the map does — as saved angles on top of the
  *  arrangement already saved — and read the scene back. */
-function commit(base: OrbitalScene, saved: Map<string, number>, plan: InsertionPlan) {
+function commit(base: OrbitalScene, saved: Map<string, Placement>, plan: InsertionPlan) {
   const angles = new Map(saved);
   if (plan.kind === "orbit") {
-    angles.set(plan.unitId, plan.angle);
-    for (const d of plan.displaced) angles.set(d.unitId, d.angle);
+    angles.set(plan.unitId, { angle: plan.angle, distance: plan.distance });
+    for (const d of plan.displaced) angles.set(d.unitId, { angle: d.angle, distance: d.distance });
   }
   return applyPositionOffsets(base, anglePlacementOffsets(base, angles), new Map());
 }
@@ -113,7 +113,7 @@ describe("dragging on the ring map", () => {
   });
 
   it("carries on exactly when an arrangement is already saved", () => {
-    const saved = new Map([["a2", scene.unitById.get("a2")!.angle + 0.15]]);
+    const saved = new Map<string, Placement>([["a2", { angle: scene.unitById.get("a2")!.angle + 0.15 }]]);
     const shown = commit(scene, saved, { kind: "none", reason: "off-orbit" });
     const b1 = shown.unitById.get("b1")!;
     const plan = planInsertion({ scene: shown, base: scene, unitId: "a5", pointer: { x: b1.x, y: b1.y }, carried: new Set(["a5"]) });
@@ -168,11 +168,17 @@ describe("dragging in local branch geography", () => {
     expect(displacedAny).toBeGreaterThan(0);
   });
 
-  it("accepts open ground only where the branch's root fits without touching anything", () => {
+  it("lands on open ground exactly where it was let go, and refuses where it cannot", () => {
     const b = scene.bounds!;
     const outside = { x: b.maxX + mover.footprint! * 3, y: b.maxY + mover.footprint! * 3 };
     const carried = descendantIds(scene, mover.id);
-    expect(planInsertion({ scene, base: scene, unitId: mover.id, pointer: outside, carried }).kind).toBe("free");
+    const plan = planInsertion({ scene, base: scene, unitId: mover.id, pointer: outside, carried });
+    // Open ground is an ordinary landing now: saved, and exactly under the
+    // hand. Nothing pulls it back to its parent's orbit.
+    expect(plan.kind).toBe("orbit");
+    if (plan.kind !== "orbit") throw new Error("expected a landing");
+    expect(plan.position).toEqual(outside);
+    expect(plan.distance).toBeCloseTo(Math.hypot(outside.x - parent.x, outside.y - parent.y), 6);
     // Right on top of an unrelated unit there is no room.
     const other = scene.units.find((u) => u.depth === 5 && !carried.has(u.id) && u.parentId !== parent.id)!;
     expect(planInsertion({ scene, base: scene, unitId: mover.id, pointer: { x: other.x, y: other.y }, carried }))

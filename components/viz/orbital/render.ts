@@ -140,7 +140,7 @@ export type RenderCtx = {
   /** A unit being deliberately dropped onto, and how armed the proposal is. */
   relation: { unitId: string; charge: number; kind: "merge" | "move"; armed: boolean } | null;
   /** Semantic parent annulus under a unit drag. Independent of child links. */
-  reparent: ReparentOrbit | null;
+  reparent: (ReparentOrbit & { charge: number }) | null;
   /** How big a unit's disc draws this frame. In local geography dots swell
    *  against their present neighbours (lod.neighbourAwareRadius); on rings it
    *  is `unitDrawRadius`. Every painter and hit test reads this one number. */
@@ -858,16 +858,19 @@ export function paintRelation(get: CtxGetter) {
       const dragged = c.scene.unitById.get(c.draggedUnitId);
       if (parent && dragged) {
         const centre = c.at(uid(parent.id), parent);
-        const held = c.at(uid(dragged.id), dragged);
+        const at = c.at(uid(dragged.id), dragged);
         ctx.save();
         ctx.setAttr("strokeStyle", C.accent);
         ctx.setAttr("lineCap", "round");
-        ctx.setAttr("globalAlpha", 0.12 + c.reparent.strength * 0.16);
+        // Quiet while the hand is moving; it fills as the hand holds still,
+        // because only a held gesture asks to change reporting lines.
+        const held = c.reparent.charge;
+        ctx.setAttr("globalAlpha", 0.08 + held * 0.22);
         ctx.setAttr("lineWidth", c.reparent.width);
         ctx.beginPath();
         ctx.arc(centre.x, centre.y, c.reparent.radius, 0, TAU, false);
         ctx.stroke();
-        ctx.setAttr("globalAlpha", 0.75 + c.reparent.strength * 0.25);
+        ctx.setAttr("globalAlpha", 0.3 + held * 0.7);
         ctx.setAttr("lineWidth", 2.5 * inv);
         ctx.setLineDash([7 * inv, 6 * inv]);
         ctx.beginPath();
@@ -877,13 +880,15 @@ export function paintRelation(get: CtxGetter) {
         ctx.setAttr("lineWidth", 3 * inv);
         ctx.beginPath();
         ctx.moveTo(centre.x, centre.y);
-        ctx.lineTo(held.x, held.y);
+        ctx.lineTo(at.x, at.y);
         ctx.stroke();
         ctx.setAttr("fillStyle", C.accent);
         ctx.setAttr("font", `600 ${13 * inv}px -apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif`);
         ctx.setAttr("textAlign", "center");
         ctx.setAttr("textBaseline", "bottom");
-        ctx.fillText(`Move branch under ${parent.name}`, held.x, held.y - c.drawn(dragged) - 10 * inv);
+        if (held >= 1) {
+          ctx.fillText(`Release to move under ${parent.name}`, at.x, at.y - c.drawn(dragged) - 10 * inv);
+        }
         ctx.restore();
       }
     }

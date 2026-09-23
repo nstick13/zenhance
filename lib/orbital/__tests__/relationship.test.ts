@@ -193,3 +193,36 @@ describe("what a merge carries", () => {
     expect(copy.body).toBe("T1 has no units below it. It holds 1 person.");
   });
 });
+
+describe("a drag that is still travelling never asks a question", () => {
+  const target = { unitId: "b", depth: 0 };
+
+  it("restarts the dwell whenever the hand moves on", () => {
+    // Greg, 2026-09-23: a short drag round a unit's own parent opened a merge
+    // proposal, because the clock ran from first contact while the hand was
+    // still moving. A dwell is a hold.
+    let relation = trackRelation(null, target, 0, { x: 0, y: 0 });
+    for (let t = 100; t <= DWELL_MS * 3; t += 100) {
+      relation = trackRelation(relation, target, t, { x: t / 4, y: 0 });
+    }
+    expect(isArmed(relation)).toBe(false);
+  });
+
+  it("still arms when the hand comes to rest on the target", () => {
+    let relation = trackRelation(null, target, 0, { x: 0, y: 0 });
+    relation = trackRelation(relation, target, 50, { x: 40, y: 0 });
+    // Now held: the same spot, sampled as the clock runs past the dwell.
+    for (let t = 100; t <= DWELL_MS + 200; t += 100) {
+      relation = trackRelation(relation, target, t, { x: 41, y: 0 });
+    }
+    expect(isArmed(relation)).toBe(true);
+  });
+
+  it("treats a hand that barely trembles as still", () => {
+    let relation = trackRelation(null, target, 0, { x: 0, y: 0 });
+    for (let t = 100; t <= DWELL_MS + 200; t += 100) {
+      relation = trackRelation(relation, target, t, { x: (t / 100) % 2, y: 0 });
+    }
+    expect(isArmed(relation)).toBe(true);
+  });
+});

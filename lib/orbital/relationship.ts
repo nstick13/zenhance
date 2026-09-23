@@ -26,16 +26,35 @@ export const DWELL_MS = 900;
 export const PUSH_DEPTH = 0.65;
 const PUSH_BOOST = 2.5;
 /** A unit starts to feel another unit before their outlines overlap. Kept in
- * screen pixels by the caller so the gesture feels the same at every zoom. */
-export const MERGE_MAGNET_PX = 30;
-/** A semantic parent orbit is structural, not a measurement of where its
- * current children happened to settle. */
-export const INTERACTION_ORBIT_MIN_PX = 72;
+ * screen pixels by the caller so the gesture feels the same at every zoom.
+ * Widened by half on 2026-09-23 — Greg had to bring the units almost into
+ * contact before anything happened. */
+export const MERGE_MAGNET_PX = 45;
+/** Once engaged, the pull holds until this much further out. Without the
+ *  hysteresis a pointer resting on the boundary flickers in and out of
+ *  contact, which is the jitter Greg saw on approach. */
+export const MAGNET_RELEASE = 1.35;
+/**
+ * A semantic parent orbit is structural, not a measurement of where its
+ * current children happened to settle.
+ *
+ * The gap is measured from the node's **drawn edge** and is the same number of
+ * screen pixels for every unit, so a big unit and a small one offer the same
+ * visible ring. Halved from 72 on 2026-09-23: Greg found the rings sat too far
+ * out to read as belonging to their node.
+ */
+export const INTERACTION_ORBIT_MIN_PX = 36;
 export const INTERACTION_ORBIT_BAND_PX = 44;
+
+/** How far the hand may wander and still count as holding still, in world
+ *  units at the scale the caller works in. Roughly a fingertip. */
+export const STILL_ENOUGH = 6;
 
 export type Relation = {
   /** The unit the dragged thing is over. */
   unitId: string;
+  /** Where the hand was when this was last sampled — see trackRelation. */
+  at?: { x: number; y: number };
   /** When the overlap on this unit began — the dwell is measured from here,
    *  never summed from frames. On a slow device one long frame must not be
    *  able to turn a pass into a proposal. */
@@ -88,9 +107,12 @@ export function validateReparent(
 export function interactionOrbit(
   unit: InteractionOrbitUnit,
   scale: number,
+  /** What the unit actually draws as this frame. The ring hugs what the eye
+   *  sees, not the space the unit's people and work reserve underneath. */
+  drawnRadius = unit.r,
 ): { centre: { x: number; y: number }; radius: number; width: number } {
   const inv = 1 / Math.max(scale, 1e-6);
-  const body = Math.max(unit.r, unit.footprint ?? unit.r);
+  const body = Math.max(drawnRadius, 1);
   return {
     centre: { x: unit.x, y: unit.y },
     radius: body + INTERACTION_ORBIT_MIN_PX * inv,
@@ -106,11 +128,13 @@ export function reparentOrbitTarget(
   scale: number,
   exclude: ReadonlySet<string>,
   currentParentId: string | null,
+  /** What each unit draws as this frame, so the ring matches what is seen. */
+  drawnRadius: (unitId: string) => number = () => 0,
 ): ReparentOrbit | null {
   let best: ReparentOrbit | null = null;
   for (const unit of units) {
     if (exclude.has(unit.id) || unit.id === currentParentId) continue;
-    const orbit = interactionOrbit(unit, scale);
+    const orbit = interactionOrbit(unit, scale, Math.max(drawnRadius(unit.id), unit.r));
     const dx = point.x - unit.x;
     const dy = point.y - unit.y;
     const d = Math.hypot(dx, dy);
@@ -144,6 +168,8 @@ export function magneticMergeTarget(
   drawnRadius: (unitId: string) => number,
   exclude: ReadonlySet<string>,
   scale: number,
+  /** The unit already engaged, which keeps its hold a little longer. */
+  engagedWith: string | null = null,
 ): ({ unitId: string; depth: number; strength: number; centre: { x: number; y: number }; radius: number } | null) {
   const reach = MERGE_MAGNET_PX / Math.max(scale, 1e-6);
   let best: { unitId: string; depth: number; strength: number; centre: { x: number; y: number }; radius: number; d: number } | null = null;
@@ -153,7 +179,8 @@ export function magneticMergeTarget(
     if (r <= 0) continue;
     const d = Math.hypot(point.x - unit.x, point.y - unit.y);
     const touching = draggedRadius + r;
-    if (d > touching + reach) continue;
+    const hold = unit.id === engagedWith ? reach * MAGNET_RELEASE : reach;
+    if (d > touching + hold) continue;
     const strength = 1 - Math.max(0, d - touching) / Math.max(reach, 1e-6);
     const depth = Math.max(0, Math.min(1, (touching - d) / Math.max(touching, 1e-6)));
     const candidate = { unitId: unit.id, depth, strength, centre: { x: unit.x, y: unit.y }, radius: r, d };
@@ -183,7 +210,11 @@ export function magneticPosition(
     x: target.centre.x + dx / d * kiss,
     y: target.centre.y + dy / d * kiss,
   };
-  const pull = reducedMotion ? 1 : 0.22 + 0.58 * target.strength;
+  // Continuous from nothing at the edge of reach. A pull that started at some
+  // fixed fraction made the unit jump the instant it engaged, and flicker
+  // whenever the hand hovered on the boundary.
+  const eased = target.strength * target.strength * (3 - 2 * target.strength);
+  const pull = reducedMotion ? 1 : 0.85 * eased;
   return { x: point.x + (desired.x - point.x) * pull, y: point.y + (desired.y - point.y) * pull };
 }
 
@@ -273,11 +304,26 @@ export function trackRelation(
   previous: Relation | null,
   over: { unitId: string; depth: number } | null,
   now: number,
+  /** Where the hand is. A dwell is a *hold*: while the hand is still
+   *  travelling the clock keeps restarting, so passing across a unit on the
+   *  way somewhere else can never arm a proposal however long the journey
+   *  takes. Omit it and only the target's identity restarts the clock. */
+  at?: { x: number; y: number },
 ): Relation | null {
   if (!over) return null;
-  const since = previous && previous.unitId === over.unitId ? previous.since : now;
+  const sameTarget = previous?.unitId === over.unitId;
+  const travelled = at && previous?.at
+    ? Math.hypot(at.x - previous.at.x, at.y - previous.at.y) > STILL_ENOUGH
+    : false;
+  const since = sameTarget && !travelled ? previous!.since : now;
   const needed = over.depth >= PUSH_DEPTH ? DWELL_MS / (1 + PUSH_BOOST) : DWELL_MS;
-  return { unitId: over.unitId, since, depth: over.depth, charge: Math.min(1, Math.max(0, now - since) / needed) };
+  return {
+    unitId: over.unitId,
+    since,
+    at,
+    depth: over.depth,
+    charge: Math.min(1, Math.max(0, now - since) / needed),
+  };
 }
 
 /** The same relation, its charge read again at `now` (the pointer hasn't
