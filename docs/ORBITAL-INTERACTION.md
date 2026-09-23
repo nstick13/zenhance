@@ -1,6 +1,22 @@
 # Orbital map — interaction brief
 
-**Status:** historical interaction brief from 2026-09-15. On 2026-09-19 Greg paused the large-company interactive demo: its visual direction is not agreed. On 2026-09-20 the Northwind demo workspace was deleted from the local development database; only its shape-generator survives, as a test fixture. Visual exploration lives on Sparrow Jam (10) and Digital Tailoring (45). Points below record the prior direction; they are not a mandate to keep extending the enterprise treatment.
+**Status:** historical interaction brief from 2026-09-15. Greg paused the earlier large-company interactive demo on 2026-09-19; a new navigation direction was agreed on 2026-09-21 and is linked below. On 2026-09-20 the Northwind demo workspace was deleted from the local development database; only its shape-generator survives, as a test fixture. Visual exploration lives on Sparrow Jam (10) and Digital Tailoring (45). Points below record the prior direction; they are not a mandate to keep extending the enterprise treatment.
+
+**Next-session handoff:** the newer large-company navigation decisions and a
+ready-to-run build prompt are in
+[LARGE-COMPANY-NAVIGATION-PROMPT.md](LARGE-COMPANY-NAVIGATION-PROMPT.md).
+
+**Built 2026-09-22/23 — read [LARGE-COMPANY-NAVIGATION.md](LARGE-COMPANY-NAVIGATION.md) first.**
+It supersedes three things below, all on `orbital-large-navigation`:
+
+- **§2 "Click-away exits the current focus" is gone.** A blank tap pins the
+  local detail field and clears the selection. Focus is left by its breadcrumb,
+  the ✕ beside it, or Esc.
+- **§3 "Dropping a node on a different ring changes that unit's level" is
+  gone,** with its confirm step. Radius is only ever geography; on the ring map
+  a unit stays on its own ring, and Break orbits is the way to place freely.
+- **§5 "Dropping a person onto a different team moves them" now asks first,**
+  and still changes the map only, not their membership in People and Teams.
 
 ## Current small-company decision (2026-09-19)
 
@@ -94,13 +110,13 @@ Fully zoomed out, or when the company itself is at the centre:
 - Placing nodes near each other does nothing.
 - Deliberately pushing one node into another plays a merge animation signalling a merge is coming. Let go there to trigger the question; let go elsewhere and nothing happens. **No merge happens without that animation.**
 - A short wizard: **Merge?** → if yes, **who is the new lead?**
-- Children are not automatically merged.
-
-**Open:** where do the merged units' children end up? *Proposed:* they all move under the merged unit, still as separate units. What happens to both units' people? *Proposed:* they all end up on the merged unit, and the new lead is chosen from among them.
+- **Decision updated 2026-09-21:** a node always carries its complete descendant branch into a merge. The confirmation must state the impact in plain language and, where available, quantify the affected child units, teams and people. To merge only the selected unit, the user must cancel and reassign its child units first. No structural change is committed without confirmation.
+- A future **Review branch** action may highlight every affected descendant before confirmation. This is deliberately deferred as a feature of its own; do not include it in the current pan/zoom/large-company build. Raise it with Greg the next time a new feature or story is started.
+- What happens to the two units' directly assigned people and how the new lead is chosen still needs a separate product decision before merge is built. **As of 2026-09-23 the gesture, the target treatment and the confirmation exist; its "Merge entire branch" button is deliberately disabled until that decision is made.**
 
 ## 7. Not yet — known, don't build
 
-Create (how a new unit is added is undecided); a Miro-style connection-line tool for changing reporting lines; tidy up; grouping or encircling nodes; an admin freezing the real version while others edit in a sandbox, with permissions; several people editing at once.
+Create (how a new unit is added is undecided); the merge-confirmation **Review branch** interaction; a Miro-style connection-line tool for changing reporting lines; tidy up; grouping or encircling nodes; an admin freezing the real version while others edit in a sandbox, with permissions; several people editing at once.
 
 ## Quality bar
 

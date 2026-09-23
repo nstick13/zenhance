@@ -157,7 +157,7 @@ demo org found both within a minute of clicking. Keep seeding it before shipping
 
 ## ▶ Next build (start here)
 
-> 🔴 **Read [Scale UAT — what 2,400 people exposed](#-scale-uat--what-2400-people-exposed-2026-09-13) first** if you're picking up map work. Orbital navigation is the live open question; it is **design-first and unstarted** — talk to Greg before writing code.
+> 🔴 **Read [Scale UAT — what 2,400 people exposed](#-scale-uat--what-2400-people-exposed-2026-09-13) first** if you're picking up map work. The large-company navigation direction was agreed with Greg on 2026-09-21 and **built on 2026-09-22/23** against [LARGE-COMPANY-NAVIGATION-PROMPT.md](LARGE-COMPANY-NAVIGATION-PROMPT.md) — see **[LARGE-COMPANY-NAVIGATION.md](LARGE-COMPANY-NAVIGATION.md)** for what exists, what it decided, and what is deliberately not wired. It sits on `orbital-large-navigation`, unmerged. Three things wait on Greg: whether a confirmed person-move should edit real assignments, what a merge does to both units' people and lead, and whether free placements may be saved (two nullable columns on `orbital_nodes`).
 
 > **The through-line:** Nate's three instincts (2026-08-26) — *"make it configurable," "the load screen is uninspiring," "show who owns a value stream"* — converge on one sequence. You cannot offer "colour by discipline" or "show FTE vs contractor inside a team" until those are real fields; and the moment they are, three findings from [PRODUCT.md](PRODUCT.md)'s menu unlock for free. **The field layer is the unlock; the display config is what makes it feel personal.**
 
