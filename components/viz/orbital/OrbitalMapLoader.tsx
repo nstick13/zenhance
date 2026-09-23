@@ -36,6 +36,7 @@ export function OrbitalMapLoader(props: {
   vocabulary: Vocabulary;
   savedNodes: OrbitalNodeRow[];
   sampleWork: boolean;
+  previewGeography?: "local";
 }) {
   return <OrbitalMap {...props} />;
 }
