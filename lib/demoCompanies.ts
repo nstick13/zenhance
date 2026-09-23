@@ -26,5 +26,8 @@ export type DemoCompanyKind = keyof typeof DEMO_COMPANIES;
 export function isSampleWorkFixtureName(name: string): boolean {
   return name === "Digital Tailoring Supplies" ||
     name === "Sparrow Jam Manufacturing, OH" ||
+    // The large development fixture (lib/db/northwind.ts). Local seeding only;
+    // it has no card on the import page and cannot reach a hosted database.
+    name === "Northwind Trading Group" ||
     name === DEMO_COMPANIES.small.name;
 }

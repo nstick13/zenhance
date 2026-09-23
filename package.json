@@ -14,6 +14,7 @@
     "db:seed": "tsx lib/db/seed.ts",
     "db:scale": "tsx lib/db/scaleFixture.ts",
     "db:companies": "tsx lib/db/companies.ts",
+    "db:northwind": "tsx lib/db/northwind.ts",
     "test": "vitest run"
   },
   "dependencies": {

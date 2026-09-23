@@ -1,11 +1,12 @@
 /**
- * A **test fixture only**. This generated a demo company once; the company
- * workspace is gone from the local development database (2026-09-20). What
- * survives is the *shape* — ~2,500 people over eleven ragged rungs — because it
- * is the only thing proving the orbital layout still holds at that size, and
- * the performance bar in AGENTS.md depends on knowing that.
+ * The shape of a large company — ~2,500 people over eleven ragged rungs.
  *
- * Nothing seeds it, nothing ships it, and it never touches the database.
+ * It is the fixture every pure scale test runs on, and since 2026-09-23 it is
+ * also what `lib/db/northwind.ts` seeds into the **local** development
+ * database, so the company the tests prove things about and the company you
+ * can open at /org are the same company. Nothing here touches a database
+ * itself, and nothing seeds a hosted one: the seeder refuses any database that
+ * is not on this machine.
  */
 import { randomUUID } from "crypto";
 import type { Assignment, Discipline, OrgUnit, Person } from "@/lib/db/schema";
