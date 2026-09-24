@@ -38,6 +38,7 @@ import {
 } from "@/lib/data/podTemplateOps";
 import { getOrgSnapshot } from "@/lib/data/queries";
 import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
+import { validateReparent } from "@/lib/orbital/relationship";
 
 /**
  * Mutations. Each action resolves the tenant via requireWorkspace() and scopes
@@ -191,19 +192,40 @@ export async function deleteOrgUnit(id: string): Promise<ActionResult> {
   return { ok: true, data: undefined };
 }
 
-/** Reparent a unit (used by drag-and-drop in M4). */
+/** Reparent a complete unit branch. The root's old orbital placement is stale
+ * under its new parent, so that one advisory row is removed atomically; every
+ * descendant arrangement remains untouched. */
 export async function moveOrgUnit(
   id: string,
   parentId: string | null,
 ): Promise<ActionResult> {
   const { workspace } = await requireWorkspace();
   if (parentId === id) return fail("A unit cannot be its own parent");
-  await db
-    .update(orgUnits)
-    .set({ parentId, updatedAt: new Date() })
-    .where(and(eq(orgUnits.id, id), eq(orgUnits.workspaceId, workspace.id)));
+  const result = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: orgUnits.id, parentId: orgUnits.parentId })
+      .from(orgUnits)
+      .where(eq(orgUnits.workspaceId, workspace.id));
+    const byId = new Map(rows.map((row) => [row.id, row.parentId]));
+    const invalid = validateReparent(byId, id, parentId);
+    if (invalid) return fail(invalid);
+
+    await tx
+      .update(orgUnits)
+      .set({ parentId, updatedAt: new Date() })
+      .where(and(eq(orgUnits.id, id), eq(orgUnits.workspaceId, workspace.id)));
+    await tx
+      .delete(orbitalNodes)
+      .where(and(
+        eq(orbitalNodes.workspaceId, workspace.id),
+        eq(orbitalNodes.nodeType, "unit"),
+        eq(orbitalNodes.nodeId, id),
+      ));
+    return { ok: true, data: undefined } as ActionResult;
+  });
+  if (!result.ok) return result;
   revalidateAll();
-  return { ok: true, data: undefined };
+  return result;
 }
 
 // --- disciplines ----------------------------------------------------------

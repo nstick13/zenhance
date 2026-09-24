@@ -4,6 +4,9 @@
 export const C = {
   paper: "#fefefe",
   guide: "#b9c5ed",
+  /** The faint wash inside a large company's territory outline. Structure,
+   *  never data: it must not read as a region with meaning. */
+  territory: "#f3f5fd",
 
   unitFill: "#ffffff",
   unitStroke: "#afbbf2",

@@ -24,6 +24,9 @@ import {
   type Point,
 } from "@/lib/orbital/geometry";
 import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
+import type { Envelope } from "@/lib/orbital/envelope";
+import type { DetailField } from "@/lib/orbital/detail";
+import { metaballBridge, type ReparentOrbit } from "@/lib/orbital/relationship";
 import {
   UNIT_CULL_PX,
   drawnUnitRadius,
@@ -46,7 +49,17 @@ export type Ripple = { x: number; y: number; born: number; reach: number };
 export const RIPPLE_MS = 620;
 
 export type SnapHint =
-  | { kind: "unit"; position: Point; parentId: string; depth: number; unitId: string }
+  | {
+    kind: "unit";
+    unitId: string;
+    /** Exactly where it will land. */
+    position: Point;
+    /** The ring or orbit it is joining — a short stretch is drawn so the
+     *  landing reads as "into this line of places". Null on open ground. */
+    guide: { centre: Point; radius: number } | null;
+    /** The line home to its real parent, which a drop never changes. */
+    parentId: string | null;
+  }
   | { kind: "seat"; position: Point; unitId: string };
 
 /** One of the four bodies outside the company, and which way its money runs. */
@@ -99,7 +112,45 @@ export type RenderCtx = {
    *  copy without visibly pulsing. */
   scale: number;
   now: number;
+  /** A large company's territory outline, from settled structure only. */
+  envelope: Envelope | null;
+  /** How present a unit is, 0..1 — the visibility budget's verdict, eased so
+   *  marks fade rather than pop (lib/orbital/visibility.ts). Its people and
+   *  work are only ever as present as it is. */
+  presence: (unitId: string) => number;
+  /** How much detail a unit's neighbourhood reads at: the camera's own reveal,
+   *  lifted there by the local detail field (lib/orbital/detail.ts). */
+  revealFor: (unitId: string) => Reveal;
+  /** The camera scale the neighbourhood reads as — for anything keyed to
+   *  scale rather than to a reveal band. */
+  detailScaleFor: (unitId: string) => number;
+  /** True while a local detail field is acting anywhere. When false every
+   *  unit reads at the camera's own reveal, and painters may take the old
+   *  single-pass shortcuts. */
+  fieldActive: boolean;
+  /** The local detail field itself, eased — for its quiet marker. */
+  field: DetailField | null;
+  /** Branches in the basket, drawn where they live as placeholders: every
+   *  unit carried, and the entries themselves (which wear the badge). */
+  carriedBranch: ReadonlySet<string>;
+  carriedRoots: ReadonlySet<string>;
+  /** The branch being dragged out of the basket right now — it is in flight,
+   *  not waiting, so it draws at full strength. */
+  inFlight: ReadonlySet<string> | null;
+  /** A unit being deliberately dropped onto, and how armed the proposal is. */
+  relation: { unitId: string; charge: number; kind: "merge" | "move"; armed: boolean } | null;
+  /** Semantic parent annulus under a unit drag. Independent of child links. */
+  reparent: ReparentOrbit | null;
+  /** How big a unit's disc draws this frame. In local geography dots swell
+   *  against their present neighbours (lod.neighbourAwareRadius); on rings it
+   *  is `unitDrawRadius`. Every painter and hit test reads this one number. */
+  drawn: (unit: PlacedUnit) => number;
 };
+
+/** How far back a carried placeholder sits. Its colours stay true — only its
+ *  strength drops — so health and status still read. */
+const CARRIED_ALPHA = 0.42;
+const waiting = (c: RenderCtx, unitId: string) => c.carriedBranch.has(unitId) && !c.inFlight?.has(unitId);
 
 export type CtxGetter = () => RenderCtx | null;
 
@@ -145,9 +196,11 @@ export function ringGeometry(
   unit: PlacedUnit,
   index: number,
   scale: number,
+  /** The disc's drawn radius this frame, when the caller already has it. */
+  drawnRadius?: number,
 ) {
   const live = Math.max(scale, 1e-6);
-  const drawn = unitDrawRadius(unit, live);
+  const drawn = drawnRadius ?? unitDrawRadius(unit, live);
   const screenRadius = drawn * live;
   const widthPx = Math.min(7.5, Math.max(4.5, screenRadius * 0.13));
   const gapPx = Math.max(2.4, widthPx * 0.46);
@@ -185,8 +238,10 @@ export function paintUnitDiscs(get: CtxGetter) {
 
     ctx.save();
     for (const unit of c.scene.units) {
-      const r = unitDrawRadius(unit, scale);
+      const r = c.drawn(unit);
       if (r * scale < UNIT_CULL_PX) continue;
+      const present = c.presence(unit.id);
+      if (present <= 0.01) continue;
       const centre = c.at(uid(unit.id), unit);
       const dragged = c.draggedUnitId === unit.id;
       const hovered = c.hoveredUnitId === unit.id;
@@ -198,7 +253,8 @@ export function paintUnitDiscs(get: CtxGetter) {
 
       // A speck held above the pixel floor shouldn't read as solidly as a
       // bubble you could point at, so the faintest ones sit back into the page.
-      const contextAlpha = outsideFocus ? (onPath ? 0.55 : 0.1) : 1;
+      const placeholder = waiting(c, unit.id);
+      const contextAlpha = (outsideFocus ? (onPath ? 0.55 : 0.1) : 1) * present * (placeholder ? CARRIED_ALPHA : 1);
       ctx.setAttr("globalAlpha", (solid ? 1 : unitPresence(r * scale)) * contextAlpha);
       ctx.setAttr("fillStyle", C.unitFill);
       ctx.setAttr("strokeStyle", dragged ? C.accent : focused ? C.ink : onPath ? C.path : C.unitStroke);
@@ -234,6 +290,35 @@ export function paintUnitDiscs(get: CtxGetter) {
         ctx.stroke();
         ctx.setLineDash([]);
       }
+
+      if (placeholder && c.carriedRoots.has(unit.id)) {
+        // The entry itself: a dashed outline and a small carry badge, at full
+        // strength so the placeholder is findable while it waits.
+        ctx.setAttr("globalAlpha", present);
+        ctx.setAttr("strokeStyle", C.path);
+        ctx.setAttr("lineWidth", 2 * inv);
+        ctx.setLineDash([5 * inv, 4 * inv]);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, r + 5 * inv, 0, TAU, false);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const bx = centre.x + Math.cos(-Math.PI / 4) * (r + 5 * inv);
+        const by = centre.y + Math.sin(-Math.PI / 4) * (r + 5 * inv);
+        ctx.setAttr("fillStyle", C.path);
+        ctx.beginPath();
+        ctx.arc(bx, by, 8 * inv, 0, TAU, false);
+        ctx.fill();
+        // An arrow leaving: "picked up".
+        ctx.setAttr("strokeStyle", C.white);
+        ctx.setAttr("lineWidth", 1.8 * inv);
+        ctx.beginPath();
+        ctx.moveTo(bx - 3 * inv, by + 3 * inv);
+        ctx.lineTo(bx + 3 * inv, by - 3 * inv);
+        ctx.moveTo(bx - 0.5 * inv, by - 3 * inv);
+        ctx.lineTo(bx + 3 * inv, by - 3 * inv);
+        ctx.lineTo(bx + 3 * inv, by + 0.5 * inv);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   };
@@ -250,15 +335,20 @@ export function paintUnitRings(get: CtxGetter) {
     ctx.save();
     ctx.setAttr("lineCap", "round");
     for (const unit of c.scene.units) {
+      if (c.relation?.kind === "merge" &&
+        (c.relation.unitId === unit.id || c.draggedUnitId === unit.id)) continue;
       if (c.focusBranch && !c.focusBranch.has(unit.id)) continue;
       const progress = c.unitRings.get(unit.id);
       if (!progress || progress.people === 0) continue;
-      const drawn = unitDrawRadius(unit, c.scale);
+      const present = c.presence(unit.id);
+      if (present <= 0.01) continue;
+      const drawn = c.drawn(unit);
       // Three gauges around a two-pixel dot are not three gauges, they're a
       // smudge — and on a 400-unit map they turn the whole far view fuzzy.
       // Rings wait until the node is big enough to actually carry them.
       const legible = smoothstep(RING_MIN_PX, RING_CLEAR_PX, drawn * c.scale)
-        * unitRingReveal(unit.depth, c.scale);
+        * unitRingReveal(unit.depth, c.detailScaleFor(unit.id)) * present
+        * (waiting(c, unit.id) ? 0.6 : 1);
       if (legible <= 0.01) continue;
       const centre = c.at(uid(unit.id), unit);
       const from = -Math.PI / 2;
@@ -267,7 +357,7 @@ export function paintUnitRings(get: CtxGetter) {
         const measured = progress[key];
         if (measured === null) return;
         const value = Math.max(0, Math.min(1, measured));
-        const { radius, width } = ringGeometry(unit, i, c.scale);
+        const { radius, width } = ringGeometry(unit, i, c.scale, drawn);
         if (radius <= 0) return;
         const hovered = c.hoveredRing?.unitId === unit.id && c.hoveredRing.key === key;
         const colour = key === "delivery" ? C.delivery : key === "sprint" ? C.sprint : healthColor(value);
@@ -313,8 +403,7 @@ export function paintTorus(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const t = c.reveal.torus;
-    if (t <= 0.01) return;
+    if (!c.fieldActive && c.reveal.torus <= 0.01) return;
 
     ctx.save();
     ctx.setAttr("lineCap", "round");
@@ -322,6 +411,8 @@ export function paintTorus(get: CtxGetter) {
     ctx.setAttr("lineWidth", SEAT_RADIUS * 2);
     for (const unit of c.scene.units) {
       if (c.focusBranch && !c.focusBranch.has(unit.id)) continue;
+      const t = c.revealFor(unit.id).torus * c.presence(unit.id);
+      if (t <= 0.01) continue;
       const crowd = (c.scene.seatsByUnit.get(unit.id) ?? []).filter((s) => s.kind !== "lead");
       if (crowd.length === 0) continue;
       const centre = c.at(uid(unit.id), unit);
@@ -348,14 +439,15 @@ export function paintSeatRings(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const visible = c.reveal.people;
-    if (visible <= 0.01) return;
+    if (!c.fieldActive && c.reveal.people <= 0.01) return;
 
     ctx.save();
     ctx.setAttr("lineCap", "round");
     ctx.setAttr("lineWidth", SEAT_RING_WIDTH);
     for (const seat of c.scene.seats) {
       if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
+      const visible = c.revealFor(seat.unitId).people * c.presence(seat.unitId);
+      if (visible <= 0.01) continue;
       const progress = c.seatRings.get(seat.id);
       if (!progress || progress.total === 0) continue;
       const at = c.at(sid(seat.id), seat);
@@ -394,11 +486,12 @@ export function paintWorkCapsules(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const t = c.reveal.workCapsule;
-    if (t <= 0.01) return;
+    if (!c.fieldActive && c.reveal.workCapsule <= 0.01) return;
 
     for (const seat of c.scene.seats) {
       if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
+      const t = c.revealFor(seat.unitId).workCapsule * c.presence(seat.unitId);
+      if (t <= 0.01) continue;
       const statuses = c.workStatus.get(seat.id) ?? [];
       if (statuses.length === 0) continue;
       const live = c.at(sid(seat.id), seat);
@@ -441,13 +534,14 @@ export function paintWorkDots(get: CtxGetter) {
   return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const t = c.reveal.workDots;
-    if (t <= 0.01) return;
+    if (!c.fieldActive && c.reveal.workDots <= 0.01) return;
 
     ctx.save();
     for (const seat of c.scene.seats) {
       if (c.focusBranch && !c.focusBranch.has(seat.unitId)) continue;
       if (seat.work.length === 0) continue;
+      const t = c.revealFor(seat.unitId).workDots * c.presence(seat.unitId);
+      if (t <= 0.01) continue;
       const live = c.at(sid(seat.id), seat);
       const dx = live.x - seat.x;
       const dy = live.y - seat.y;
@@ -495,11 +589,14 @@ export function paintUnitLinks(get: CtxGetter) {
 
     for (const link of c.scene.links) {
       if (link.kind !== "unit" || onPath(link.sourceId, link.targetId)) continue;
+      // A route is only as present as the unit it leads to.
+      const present = Math.min(c.presence(link.sourceId), c.presence(link.targetId));
+      if (present <= 0.01) continue;
       const from = c.at(uid(link.sourceId), link.from);
       const to = c.at(uid(link.targetId), link.to);
       const outsideFocus = !!c.focusBranch &&
         (!c.focusBranch.has(link.sourceId) || !c.focusBranch.has(link.targetId));
-      ctx.setAttr("globalAlpha", outsideFocus ? 0.1 : 0.8);
+      ctx.setAttr("globalAlpha", (outsideFocus ? 0.1 : 0.8) * present * (waiting(c, link.targetId) ? CARRIED_ALPHA : 1));
       ctx.setAttr("lineWidth", width(link.targetId));
       ctx.beginPath();
       ctx.moveTo(from.x, from.y);
@@ -532,22 +629,30 @@ export function paintUnitLinks(get: CtxGetter) {
 /** Unit → person. Below the people band only the lead is drawn, so only its
  *  line is drawn with it. */
 export function paintSeatLinks(get: CtxGetter) {
-  return (ctx: Konva.Context, shape: Konva.Shape) => {
+  return (ctx: Konva.Context) => {
     const c = get();
     if (!c) return;
-    const people = c.reveal.people;
-    if (Math.max(people, c.reveal.lead) <= 0.01) return;
-    ctx.beginPath();
+    if (!c.fieldActive && Math.max(c.reveal.people, c.reveal.lead) <= 0.01) return;
+    ctx.save();
+    ctx.setAttr("strokeStyle", C.seatLink);
+    ctx.setAttr("lineWidth", 1.8);
+    ctx.setAttr("lineCap", "round");
     for (const seat of c.scene.seats) {
-      if (seat.kind !== "lead" && people <= 0.01) continue;
+      const reveal = c.revealFor(seat.unitId);
+      const shown = (seat.kind === "lead" ? Math.max(reveal.people, reveal.lead) : reveal.people)
+        * c.presence(seat.unitId);
+      if (shown <= 0.01) continue;
       const unit = c.scene.unitById.get(seat.unitId);
       if (!unit) continue;
       const from = c.at(uid(unit.id), unit);
       const to = c.at(sid(seat.id), seat);
+      ctx.setAttr("globalAlpha", shown);
+      ctx.beginPath();
       ctx.moveTo(from.x, from.y);
       ctx.lineTo(to.x, to.y);
+      ctx.stroke();
     }
-    ctx.strokeShape(shape);
+    ctx.restore();
   };
 }
 
@@ -561,13 +666,14 @@ export function paintReportingLines(get: CtxGetter) {
   return (ctx: Konva.Context, shape: Konva.Shape) => {
     const c = get();
     if (!c || !c.showReporting) return;
-    if (c.reveal.people <= 0.02) return;
     // Only the person under the cursor (Greg, 2026-09-14). Drawing every
     // reporting line at once on a 2,500-person org buries the map in dashes
     // and answers a question nobody asked; drawn one person at a time it
     // answers exactly the question you're pointing at.
     const focus = c.focusSeatId;
     if (!focus) return;
+    const focusSeat = c.scene.seatById.get(focus);
+    if (!focusSeat || c.revealFor(focusSeat.unitId).people <= 0.02) return;
     ctx.beginPath();
     for (const line of c.reportingLines) {
       if (line.from !== focus && line.to !== focus) continue;
@@ -638,22 +744,22 @@ export function paintPreview(get: CtxGetter) {
     const snap = c.snap;
     ctx.beginPath();
     if (snap.kind === "unit") {
-      const band = c.scene.bands.find((b) => b.depth === snap.depth);
-      const parent = c.scene.unitById.get(snap.parentId);
-      if (band && parent) {
-        ctx.arc(
-          0,
-          0,
-          band.radius,
-          parent.sector.center - parent.sector.halfSpan,
-          parent.sector.center + parent.sector.halfSpan,
-          false,
-        );
+      if (snap.guide) {
+        // A short stretch of the ring or orbit either side of the landing.
+        const { centre, radius } = snap.guide;
+        const at = Math.atan2(snap.position.y - centre.y, snap.position.x - centre.x);
+        const span = Math.min(0.5, 260 / Math.max(radius, 1));
+        ctx.moveTo(centre.x + radius * Math.cos(at - span), centre.y + radius * Math.sin(at - span));
+        ctx.arc(centre.x, centre.y, radius, at - span, at + span, false);
+      }
+      const parent = snap.parentId ? c.scene.unitById.get(snap.parentId) : undefined;
+      if (parent) {
         const at = c.at(uid(parent.id), parent);
         ctx.moveTo(at.x, at.y);
         ctx.lineTo(snap.position.x, snap.position.y);
       }
-      const r = c.scene.unitById.get(snap.unitId)?.r ?? 40;
+      const unit = c.scene.unitById.get(snap.unitId);
+      const r = unit ? c.drawn(unit) : 40;
       ctx.moveTo(snap.position.x + r, snap.position.y);
       ctx.arc(snap.position.x, snap.position.y, r, 0, TAU, false);
     } else {
@@ -668,6 +774,185 @@ export function paintPreview(get: CtxGetter) {
       ctx.arc(snap.position.x, snap.position.y, r, 0, TAU, false);
     }
     ctx.strokeShape(shape);
+  };
+}
+
+/**
+ * A large company's territory: a faint wash and a quiet dotted outline round
+ * everything it occupies (envelope.ts). Painted from settled geometry only —
+ * nothing live reaches it — so it holds perfectly still while the map moves.
+ * Pockets of open ground inside the territory stay unwashed (even-odd).
+ */
+export function paintEnvelope(get: CtxGetter) {
+  return (ctx: Konva.Context) => {
+    const c = get();
+    const envelope = c?.envelope;
+    if (!c || !envelope || envelope.rings.length === 0) return;
+    const inv = 1 / Math.max(c.scale, 1e-6);
+    ctx.save();
+    ctx.beginPath();
+    for (const ring of envelope.rings) {
+      ctx.moveTo(ring[0].x, ring[0].y);
+      for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i].x, ring[i].y);
+      ctx.closePath();
+    }
+    ctx.setAttr("fillStyle", C.territory);
+    ctx.fill("evenodd");
+    ctx.setAttr("strokeStyle", C.guide);
+    ctx.setAttr("lineWidth", 1.5 * inv);
+    ctx.setAttr("lineCap", "round");
+    ctx.setLineDash([2 * inv, 7 * inv]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  };
+}
+
+/**
+ * Where the local detail field is pinned: a faint dotted ring where its full
+ * strength ends, and a small mark at its centre — the place to tap again to
+ * let it go. Screen-sized, like the field, and as quiet as the guides.
+ */
+export function paintField(get: CtxGetter) {
+  return (ctx: Konva.Context) => {
+    const c = get();
+    const field = c?.field;
+    if (!c || !field || field.strength <= 0.01) return;
+    const inv = 1 / Math.max(c.scale, 1e-6);
+    ctx.save();
+    ctx.setAttr("globalAlpha", 0.55 * field.strength);
+    ctx.setAttr("strokeStyle", C.path);
+    ctx.setAttr("lineWidth", 1.4 * inv);
+    ctx.setLineDash([3 * inv, 6 * inv]);
+    ctx.beginPath();
+    ctx.arc(field.x, field.y, field.radiusPx * 0.45 * inv, 0, TAU, false);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.setAttr("fillStyle", C.path);
+    ctx.beginPath();
+    ctx.arc(field.x, field.y, 3 * inv, 0, TAU, false);
+    ctx.fill();
+    ctx.restore();
+  };
+}
+
+/**
+ * A relationship proposal building on its target (relationship.ts). It has to
+ * read as a different kind of thing from a landing: the landing is a light,
+ * dashed cyan outline; this is a heavy ink ring that fills round the target
+ * as the charge builds, then closes, thickens and names the question once
+ * release would ask it. No amber or red — those mean health on this map.
+ */
+export function paintRelation(get: CtxGetter) {
+  return (ctx: Konva.Context) => {
+    const c = get();
+    const relation = c?.relation;
+    if (!c) return;
+    const inv = 1 / Math.max(c.scale, 1e-6);
+
+    // A parent orbit is a cyan geographical invitation: annulus plus the
+    // prospective connection. It is intentionally unlike the liquid, ink
+    // node-contact treatment below.
+    if (c.reparent && c.draggedUnitId) {
+      const parent = c.scene.unitById.get(c.reparent.parentId);
+      const dragged = c.scene.unitById.get(c.draggedUnitId);
+      if (parent && dragged) {
+        const centre = c.at(uid(parent.id), parent);
+        const held = c.at(uid(dragged.id), dragged);
+        ctx.save();
+        ctx.setAttr("strokeStyle", C.accent);
+        ctx.setAttr("lineCap", "round");
+        ctx.setAttr("globalAlpha", 0.12 + c.reparent.strength * 0.16);
+        ctx.setAttr("lineWidth", c.reparent.width);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, c.reparent.radius, 0, TAU, false);
+        ctx.stroke();
+        ctx.setAttr("globalAlpha", 0.75 + c.reparent.strength * 0.25);
+        ctx.setAttr("lineWidth", 2.5 * inv);
+        ctx.setLineDash([7 * inv, 6 * inv]);
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, c.reparent.radius, 0, TAU, false);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.setAttr("lineWidth", 3 * inv);
+        ctx.beginPath();
+        ctx.moveTo(centre.x, centre.y);
+        ctx.lineTo(held.x, held.y);
+        ctx.stroke();
+        ctx.setAttr("fillStyle", C.accent);
+        ctx.setAttr("font", `600 ${13 * inv}px -apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif`);
+        ctx.setAttr("textAlign", "center");
+        ctx.setAttr("textBaseline", "bottom");
+        ctx.fillText(`Move branch under ${parent.name}`, held.x, held.y - c.drawn(dragged) - 10 * inv);
+        ctx.restore();
+      }
+    }
+    if (!relation) return;
+    const unit = c.scene.unitById.get(relation.unitId);
+    if (!unit) return;
+    const centre = c.at(uid(unit.id), unit);
+    const r = c.drawn(unit) + 9 * inv;
+    const from = -Math.PI / 2;
+    ctx.save();
+
+    // The exact metaball construction from the grow study, now painted in
+    // Konva. It begins in the magnetic approach band, before full overlap.
+    if (relation.kind === "merge" && c.draggedUnitId) {
+      const source = c.scene.unitById.get(c.draggedUnitId);
+      if (source) {
+        const sourceAt = c.at(uid(source.id), source);
+        const sourceR = c.drawn(source) + 4 * inv;
+        const targetR = c.drawn(unit) + 4 * inv;
+        const bridge = metaballBridge(
+          { x: sourceAt.x, y: sourceAt.y, r: sourceR },
+          { x: centre.x, y: centre.y, r: targetR },
+          34 * inv,
+        );
+        if (bridge) {
+          ctx.setAttr("fillStyle", C.path);
+          ctx.setAttr("globalAlpha", relation.armed ? 0.26 : 0.12 + 0.12 * relation.charge);
+          ctx.beginPath();
+          ctx.moveTo(bridge.p1.x, bridge.p1.y);
+          ctx.bezierCurveTo(bridge.c1.x, bridge.c1.y, bridge.c2.x, bridge.c2.y, bridge.p3.x, bridge.p3.y);
+          ctx.lineTo(bridge.p4.x, bridge.p4.y);
+          ctx.bezierCurveTo(bridge.c3.x, bridge.c3.y, bridge.c4.x, bridge.c4.y, bridge.p2.x, bridge.p2.y);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    }
+    ctx.setAttr("lineCap", "round");
+    // The track, faint, so the fill reads as progress toward a question.
+    ctx.setAttr("globalAlpha", 0.18);
+    ctx.setAttr("strokeStyle", C.ink);
+    ctx.setAttr("lineWidth", 6 * inv);
+    ctx.beginPath();
+    ctx.arc(centre.x, centre.y, r, 0, TAU, false);
+    ctx.stroke();
+    ctx.setAttr("globalAlpha", relation.armed ? 1 : 0.85);
+    ctx.setAttr("lineWidth", (relation.armed ? 8 : 6) * inv);
+    ctx.beginPath();
+    ctx.arc(centre.x, centre.y, r, from, from + Math.max(0.02, relation.charge) * TAU, false);
+    ctx.stroke();
+    if (relation.armed) {
+      // A soft inner wash: this unit is the subject of the question.
+      ctx.setAttr("globalAlpha", 0.12);
+      ctx.setAttr("fillStyle", C.ink);
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y, r - 4 * inv, 0, TAU, false);
+      ctx.fill();
+      ctx.setAttr("globalAlpha", 1);
+      ctx.setAttr("fillStyle", C.ink);
+      ctx.setAttr("font", `600 ${13 * inv}px -apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', Arial, sans-serif`);
+      ctx.setAttr("textAlign", "center");
+      ctx.setAttr("textBaseline", "bottom");
+      ctx.fillText(
+        relation.kind === "merge" ? `Release for options with ${unit.name}` : `Release to move to ${unit.name}`,
+        centre.x,
+        centre.y - r - 8 * inv,
+      );
+    }
+    ctx.restore();
   };
 }
 

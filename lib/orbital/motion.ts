@@ -77,11 +77,22 @@ export class MotionStore {
   }
 
   /** Advance every spring. Returns true while anything is still moving, so
-   *  the renderer can stop redrawing once the map has come to rest. */
-  step(dt: number, targets: Map<string, MotionTarget>): boolean {
+   *  the renderer can stop redrawing once the map has come to rest.
+   *
+   *  `instant` is for prefers-reduced-motion: everything arrives at once, so
+   *  cause and effect stay legible — a gap opens, a branch lands — without
+   *  anything travelling across the screen. */
+  step(dt: number, targets: Map<string, MotionTarget>, instant = false): boolean {
     let moving = false;
     for (const [id, target] of targets) {
       const state = this.read(id, target);
+      if (instant) {
+        state.x.value = target.x;
+        state.y.value = target.y;
+        state.scale.value = target.scale;
+        state.x.velocity = state.y.velocity = state.scale.velocity = 0;
+        continue;
+      }
       if (stepSpring(state.x, target.x, dt, TRAVEL)) moving = true;
       if (stepSpring(state.y, target.y, dt, TRAVEL)) moving = true;
       if (stepSpring(state.scale, target.scale, dt, ACCENT)) moving = true;

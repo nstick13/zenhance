@@ -12,7 +12,7 @@ export default async function OrgPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const { view } = await searchParams;
+  const { view, geography } = await searchParams;
   const { people, units, assignments, disciplines, lens, vocabulary, sampleWork } =
     await getOrgSnapshot();
   const isEmpty = units.length === 0;
@@ -105,6 +105,9 @@ export default async function OrgPage({
       vocabulary={vocabulary}
       savedNodes={savedNodes}
       sampleWork={sampleWork}
+      // Dev-only look at large-company geography on the small invented demo
+      // companies — never available on a real workspace (sampleWork is false).
+      previewGeography={sampleWork && geography === "local" ? "local" : undefined}
     />,
   );
 }

@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Konva from "konva";
 import { Circle, Group, Layer, Shape, Stage, Text } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Assignment, OrbitalNodeRow, OrgUnit, Person } from "@/lib/db/schema";
 import type { Vocabulary } from "@/lib/vocabulary";
-import { clearOrbitalNodes, saveOrbitalNodes } from "@/lib/data/actions";
+import { clearOrbitalNodes, moveOrgUnit, saveOrbitalNodes } from "@/lib/data/actions";
 import { tasksForPerson, type MockTask } from "@/lib/mock/personTasks";
 import {
   applyOverrides,
@@ -19,10 +20,26 @@ import {
   type PlacedSeat,
   type PlacedUnit,
 } from "@/lib/orbital/layout";
-import { descendantIds, snapSeat, snapUnitOnRing, type SeatSnap, type UnitSnap } from "@/lib/orbital/snap";
+import { descendantIds, snapSeat, type SeatSnap } from "@/lib/orbital/snap";
+import { planInsertion, type InsertionPlan } from "@/lib/orbital/insertion";
+import { addToBasket, carrierOf, returnFromBasket, type Basket, type BasketTree } from "@/lib/orbital/basket";
+import {
+  branchImpact,
+  chargeAt,
+  isArmed,
+  magneticMergeTarget,
+  magneticPosition,
+  mergeCopy,
+  overlapTarget,
+  reparentOrbitTarget,
+  trackRelation,
+  type ReparentOrbit,
+  type Relation,
+} from "@/lib/orbital/relationship";
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
 import { focusOrbital } from "@/lib/orbital/focus";
-import { layoutOrbitalForest } from "@/lib/orbital/forest";
+import { fitScaleFor, layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
+import { structuralEnvelope } from "@/lib/orbital/envelope";
 import { anglePlacementOffsets, applyPositionOffsets, combinePositionOffsets } from "@/lib/orbital/position";
 import {
   SEAT_RADIUS,
@@ -33,7 +50,30 @@ import {
   polar,
   type Point,
 } from "@/lib/orbital/geometry";
-import { LOD_LADDER, revealAt, smoothstep, tierAt, unitLabelVisible, unitRingReveal } from "@/lib/orbital/lod";
+import {
+  LANDMARK_LABEL_PX,
+  LOD_LADDER,
+  desiredUnitRadius,
+  neighbourAwareRadius,
+  revealAt,
+  smoothstep,
+  tierAt,
+  unitLabelVisible,
+  unitRingReveal,
+  type Reveal,
+} from "@/lib/orbital/lod";
+import {
+  INTERACTABLE_PRESENCE,
+  effectiveScale,
+  fieldInfluence,
+  fieldRadiusPx,
+  isInteractable,
+  lensDisplace,
+  lensInverse,
+  type DetailField,
+} from "@/lib/orbital/detail";
+import { markBudget, revealDelay, stepPresence, visibleUnitIds, type VisibilityUnit } from "@/lib/orbital/visibility";
+import { sizeIndex } from "@/lib/orbital/size";
 import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
 import {
   UNIT_RING_KEYS,
@@ -49,7 +89,10 @@ import {
 import { C, FONT, WORK_STATUS_FILL, healthColor } from "./theme";
 import {
   RIPPLE_MS,
+  paintEnvelope,
   paintExternalFlows,
+  paintField,
+  paintRelation,
   paintPreview,
   paintReportingLines,
   paintRipples,
@@ -85,9 +128,10 @@ import { SeatAvatar } from "./SeatAvatar";
  * - **Seats are positioned absolutely, not parented to their unit**, so a
  *   dragged stream lets its teams and people trail after it on their own
  *   springs.
- * - **Drag reads the map, not a grid**: in normal orbits, angle changes visual
- *   placement and radius may propose a level change; neither silently edits
- *   reporting structure. Breaking orbits makes all placement visual-only.
+ * - **Drag reads the map, not a grid**: ordinary movement round the current
+ *   parent changes geography only. A different parent's semantic annulus or
+ *   magnetic node contact may propose a reporting change, but only explicit
+ *   confirmation edits it. Breaking orbits makes all placement visual-only.
  */
 
 type Props = {
@@ -97,6 +141,8 @@ type Props = {
   vocabulary: Vocabulary;
   savedNodes: OrbitalNodeRow[];
   sampleWork: boolean;
+  /** Dev-only: draw an invented demo company in local branch geography. */
+  previewGeography?: "local";
 };
 
 const MAX_SCALE = 12;
@@ -128,6 +174,9 @@ const YIELD_PUSH = 0.85;
 
 type Painter = (ctx: Konva.Context, shape: Konva.Shape) => void;
 type Painters = {
+  envelope: Painter;
+  field: Painter;
+  relation: Painter;
   unitDiscs: Painter;
   unitRings: Painter;
   torus: Painter;
@@ -143,8 +192,46 @@ type Painters = {
 };
 
 type DragState =
-  | { kind: "unit"; id: string; origin: Point; current: Point; moved: Set<string>; snap: UnitSnap | null }
-  | { kind: "seat"; id: string; origin: Point; current: Point; snap: SeatSnap | null };
+  | {
+    kind: "unit";
+    id: string;
+    /** Its real parent — the line home a drop never changes. */
+    parentId: string | null;
+    origin: Point;
+    current: Point;
+    moved: Set<string>;
+    /** Where it would land now, and who would make room. */
+    plan: InsertionPlan | null;
+    /** Held by Konva under the pointer (a drag on the map) rather than led by
+     *  the pointer from the basket. */
+    grabbed: boolean;
+    /** Came out of the basket: a cancelled drop goes back into it. */
+    fromBasket: boolean;
+    /** The pointer is over the basket right now. */
+    overTray: boolean;
+    /** A unit it is deliberately on top of, and how armed that is. */
+    relation: Relation | null;
+    /** Physical node-to-node attraction, separate from the relationship
+     * clock so retreat can restore the map immediately. */
+    magnet: { unitId: string; centre: Point; radius: number; strength: number } | null;
+    /** Strongest semantic parent orbit under the pointer. */
+    reparent: ReparentOrbit | null;
+  }
+  | {
+    kind: "seat";
+    id: string;
+    origin: Point;
+    current: Point;
+    snap: SeatSnap | null;
+    /** Another team this person is deliberately on top of. */
+    relation: Relation | null;
+  };
+
+/** A relationship change waiting for a yes. Nothing has changed yet. */
+type Proposal =
+  | { kind: "merge"; fromId: string; intoId: string }
+  | { kind: "reparent"; fromId: string; parentId: string }
+  | { kind: "move"; seatId: string; toUnitId: string };
 
 type HoverState =
   | { kind: "unit"; unit: PlacedUnit; x: number; y: number }
@@ -166,7 +253,8 @@ type FocusFrame = { unitId: string };
 const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
 
-export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes, sampleWork }: Props) {
+export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes, sampleWork, previewGeography }: Props) {
+  const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const bgLayerRef = useRef<Konva.Layer | null>(null);
@@ -192,7 +280,32 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [focusFrames, setFocusFrames] = useState<FocusFrame[]>([]);
   const activeFocusId = focusFrames[focusFrames.length - 1]?.unitId ?? null;
-  const [pendingLevelChange, setPendingLevelChange] = useState<{ unitId: string; from: number; to: number } | null>(null);
+  /** A short, plain explanation after a drop that did something the user
+   *  might not expect — fades on its own. */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Moves to open ground this session: the saved layout can only hold an
+   *  angle, so these are not saved yet, and the map says so. */
+  const [sessionPlaced, setSessionPlaced] = useState(0);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  /** Branches picked up to be carried across the map — pending UI state
+   *  only, never saved (lib/orbital/basket.ts). */
+  const [basket, setBasket] = useState<Basket>([]);
+  const basketRef = useRef<Basket>([]);
+  const [trayHot, setTrayHot] = useState(false);
+  const [flashEntry, setFlashEntry] = useState<string | null>(null);
+  const trayRef = useRef<HTMLElement | null>(null);
+  /** Where the pointer is on screen during a drag — for the basket and for
+   *  panning when a held branch nears the edge. */
+  const dragClientRef = useRef<Point | null>(null);
+  /** Re-plan the current drag without a pointer event — when edge-panning
+   *  slides the world under a finger that hasn't moved. */
+  const dragFollowRef = useRef<(() => void) | null>(null);
+  const refreshViewBoxRef = useRef<((force?: boolean) => void) | null>(null);
+  const snappingRef = useRef(true);
+  const onSeatDragMoveRef = useRef<(() => void) | null>(null);
+  const deliberateTargetRef = useRef<
+    ((point: Point, exclude: ReadonlySet<string>) => { unitId: string; depth: number } | null) | null
+  >(null);
   const [openBoard, setOpenBoard] = useState<{ id: string; name: string; title: string | null } | null>(
     null,
   );
@@ -225,6 +338,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const dragRef = useRef<DragState | null>(null);
   const sceneRef = useRef<OrbitalScene | null>(null);
   const interactionSceneRef = useRef<OrbitalScene | null>(null);
+  /** The interaction scene before any saved placement — what a drop's saved
+   *  angle is measured against when it is read back. */
+  const baseInteractionRef = useRef<OrbitalScene | null>(null);
   const targetsRef = useRef<Map<string, MotionTarget>>(new Map());
   const motionRef = useRef(new MotionStore());
   const nodeRefs = useRef(new Map<string, Konva.Group>());
@@ -248,6 +364,31 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const companyRef = useRef<string | null>(null);
   const unitOffsetsRef = useRef<Map<string, Point>>(new Map());
   const seatOffsetsRef = useRef<Map<string, Point>>(new Map());
+
+  // --- the local detail field and the visibility budget ----------------------
+  // A blank tap pins a soft field of extra detail where it landed (see
+  // lib/orbital/detail.ts). React holds only *where* it is pinned — what
+  // decides which seats and labels exist. Its live strength, and every mark's
+  // presence, are eased in the frame loop and never pass through React.
+  const [pinnedField, setPinnedField] = useState<Point | null>(null);
+  const pinnedFieldRef = useRef<Point | null>(null);
+  const fieldRef = useRef<DetailField | null>(null);
+  const presenceRef = useRef(new Map<string, number>());
+  const presenceTargetRef = useRef(new Map<string, number>());
+  /** When a newly admitted mark may begin to fade in — the reveal ripples out
+   *  from where the user acted instead of popping everywhere at once. */
+  const presenceWaitRef = useRef(new Map<string, number>());
+  const visibilityKeyRef = useRef("");
+  const visibilityAtRef = useRef(0);
+  const visibilityUnitsRef = useRef<VisibilityUnit[]>([]);
+  const forcedRef = useRef<ReadonlySet<string>>(new Set());
+  const reduceMotionRef = useRef(false);
+  /** Per-frame cache of how much detail each unit's neighbourhood reads at. */
+  const detailCacheRef = useRef(new Map<string, { scale: number; reveal: Reveal }>());
+  /** Local geography: each dot's drawn radius this frame, swollen against its
+   *  present neighbours. Everything drawn or caught reads it via `drawnOf`. */
+  const drawnMapRef = useRef(new Map<string, number>());
+  const localRef = useRef(false);
 
   // --- the work each person is carrying ------------------------------------
   // Whole boards, not just what's in flight: the completion ring is only
@@ -306,10 +447,66 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   );
 
   const arrangedTree = useMemo(() => applyOverrides(baseTree, overrides), [baseTree, overrides]);
+
+  // --- the basket ------------------------------------------------------------
+  const basketTree = useMemo((): BasketTree => ({
+    parentOf: (id) => {
+      const parent = arrangedTree.units.get(id)?.parentId ?? null;
+      return parent === "orbital-root" ? null : parent;
+    },
+    nameOf: (id) => arrangedTree.units.get(id)?.name ?? "This unit",
+  }), [arrangedTree]);
+  useEffect(() => {
+    basketRef.current = basket;
+  }, [basket]);
+  /** Every unit travelling in the basket, entries and everything below them. */
+  const carriedBranch = useMemo(() => {
+    const out = new Set<string>();
+    const stack = basket.map((e) => e.unitId);
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (out.has(id)) continue;
+      out.add(id);
+      stack.push(...(arrangedTree.units.get(id)?.childIds ?? []));
+    }
+    return out;
+  }, [basket, arrangedTree]);
+  const carriedRoots = useMemo(() => new Set(basket.map((e) => e.unitId)), [basket]);
+  const kindById = useMemo(() => new Map(units.map((u) => [u.id, u.kind])), [units]);
+
+  /** Put a unit's branch in the basket, and say so plainly when the rules
+   *  change what happens. */
+  const carry = useCallback((unitId: string) => {
+    const result = addToBasket(basketRef.current, unitId, basketTree);
+    const name = basketTree.nameOf(unitId);
+    basketRef.current = result.basket;
+    setBasket(result.basket);
+    if (result.outcome === "added") {
+      setNotice(`Carrying ${name}. Pan anywhere, then drag it out of the basket to place it.`);
+    } else if (result.outcome === "absorbed") {
+      const list = result.absorbed.join(", ");
+      setNotice(`${list} ${result.absorbed.length === 1 ? "is" : "are"} now carried inside ${name}'s branch.`);
+    } else if (result.outcome === "already") {
+      setNotice(`${name} is already in the basket.`);
+      setFlashEntry(unitId);
+    } else if (result.outcome === "inside") {
+      setNotice(`${name} is already carried with ${basketTree.nameOf(result.carrierId)}'s branch.`);
+      setFlashEntry(result.carrierId);
+    } else {
+      setNotice("The company stays where it is — it is the centre of its own map.");
+    }
+  }, [basketTree]);
+  // Rings for a company they fit; local branch geography for one that has
+  // outgrown them (lib/orbital/complexity.ts). Deterministic per company.
   const masterScene = useMemo(
-    () => layoutOrbitalForest(arrangedTree),
-    [arrangedTree],
+    () => layoutCompany(arrangedTree, {}, previewGeography).scene,
+    [arrangedTree, previewGeography],
   );
+  const local = masterScene.geography === "local";
+  useEffect(() => {
+    localRef.current = local;
+    drawnMapRef.current.clear();
+  }, [local]);
   const focusedView = useMemo(
     () => activeFocusId ? focusOrbital(arrangedTree, masterScene, activeFocusId) : null,
     [arrangedTree, masterScene, activeFocusId],
@@ -331,7 +528,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     while (unit?.parentId && unit.parentId !== "orbital-root") unit = arrangedTree.units.get(unit.parentId);
     return unit?.id ?? null;
   }, [activeFocusId, arrangedTree]);
-  const guideFamilies = scene.families ?? (activeFocusId
+  // The territory outline is settled structure: it changes when geography is
+  // committed, never while anything is live.
+  const envelope = useMemo(() => (scene.geography === "local" ? structuralEnvelope(scene) : null), [scene]);
+  const guideFamilies = local ? [] : scene.families ?? (activeFocusId
     ? [{ rootId: activeFamilyRootId ?? activeFocusId, centre: { x: 0, y: 0 }, boundary: scene.extent + 82 }]
     : []);
   // The external contributor/subtractor sketch assumes a single central
@@ -364,6 +564,57 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
   const focusBranch = focusedView?.branchIds ?? null;
   const selectedUnit = selectedUnitId ? scene.unitById.get(selectedUnitId) : undefined;
+
+  // What the visibility budget weighs: each unit's share of the company, at
+  // its settled place. Hidden units keep their place; they are only unpainted.
+  useEffect(() => {
+    const company = Math.max(1, ...scene.units.filter((u) => !u.parentId).map((u) => u.totalSeats));
+    visibilityUnitsRef.current = scene.units.map((u) => ({
+      id: u.id, parentId: u.parentId, x: u.x, y: u.y, weight: sizeIndex(u.totalSeats, company),
+    }));
+    visibilityKeyRef.current = "";
+  }, [scene]);
+
+  // Shown whatever the budget: the focused unit, the selected unit with its
+  // immediate children, and the route home from each (visibility.ts adds the
+  // ancestors). Tapping a unit brings these into prominence without moving
+  // the camera.
+  useEffect(() => {
+    const forced = new Set<string>();
+    if (activeFocusId) forced.add(activeFocusId);
+    if (routeUnitId) forced.add(routeUnitId);
+    if (selectedUnitId) {
+      forced.add(selectedUnitId);
+      for (const id of scene.unitById.get(selectedUnitId)?.childIds ?? []) forced.add(id);
+    }
+    forcedRef.current = forced;
+    visibilityKeyRef.current = "";
+  }, [activeFocusId, routeUnitId, selectedUnitId, scene]);
+
+  useEffect(() => {
+    pinnedFieldRef.current = pinnedField;
+    visibilityKeyRef.current = "";
+  }, [pinnedField]);
+
+  // Touch screens get the basket along the bottom, where a thumb can reach it.
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCoarsePointer(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => {
+      reduceMotionRef.current = query.matches;
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
 
   // The focus path: the unit you clicked and each unit above it, back to the
   // company (Greg, 2026-09-15). Rebuilt against the live scene, so it follows a
@@ -485,6 +736,37 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const worldRadius = showSampleExternals && !activeFocusId
     ? outerRadius + EXTERNAL_GAP + EXTERNAL_R * 2
     : outerRadius;
+  // The whole company's settled extent — what Fit frames and what minimum
+  // zoom is measured against. On rings it is the circle it always was; in
+  // local geography, the structural bounds plus the territory outline's
+  // stand-off, whether or not every unit is currently painted.
+  const worldBounds = useMemo((): Bounds => {
+    if (!local) return { minX: -worldRadius, minY: -worldRadius, maxX: worldRadius, maxY: worldRadius };
+    const b = sceneBounds(scene);
+    const pad = (envelope?.pad ?? 0) * 1.5;
+    return { minX: b.minX - pad, minY: b.minY - pad, maxX: b.maxX + pad, maxY: b.maxY + pad };
+  }, [local, worldRadius, scene, envelope]);
+  // Where a large company opens when we can't yet tell where the viewer sits
+  // in it: the company and its first two reporting levels — the heart of
+  // the place, with the rest a pan or a Fit away. Deterministic; invents no
+  // role or location for the viewer.
+  const startBounds = useMemo((): Bounds => {
+    if (!local) return worldBounds;
+    // The settled scene, saved placements included — framing the calculated
+    // layout would open on wherever the company *would* be.
+    const top = Math.min(...scene.units.map((u) => u.depth));
+    return scene.units
+      .filter((u) => u.depth <= top + 2)
+      .reduce((b, u) => {
+        const reach = u.footprint ?? u.r;
+        return {
+          minX: Math.min(b.minX, u.x - reach),
+          minY: Math.min(b.minY, u.y - reach),
+          maxX: Math.max(b.maxX, u.x + reach),
+          maxY: Math.max(b.maxY, u.y + reach),
+        };
+      }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+  }, [local, scene, worldBounds]);
 
   const externals = useMemo(
     (): (ExternalFlow & { note: string; angle: number })[] =>
@@ -511,8 +793,15 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const visibleUnits = scene.units;
 
   // People appear at 1.75x; below that only the lead is drawn, so the seat
-  // list has to stay mounted for it even when the crowd is gone.
-  const showSeats = reveal.people > 0.015 || reveal.lead > 0.015;
+  // list has to stay mounted for it even when the crowd is gone. Inside a
+  // pinned detail field they may arrive a tier early.
+  const fieldReveal = useMemo(
+    () => (pinnedField ? revealAt(effectiveScale(scale, 1)) : null),
+    [pinnedField, scale],
+  );
+  const showSeats = Math.max(
+    reveal.people, reveal.lead, fieldReveal?.people ?? 0, fieldReveal?.lead ?? 0,
+  ) > 0.015;
 
   /**
    * Only mount the seats that are actually on screen. A 2,400-person org has
@@ -523,12 +812,25 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const seatsInView = useMemo(() => {
     if (!showSeats) return [];
     const crowd = reveal.people > 0.015;
-    const pool = crowd ? scene.seats : scene.seats.filter((s) => s.kind === "lead");
+    const leads = reveal.lead > 0.015;
+    // Whose team sits inside the pinned field, where detail runs a tier ahead.
+    const fieldReach = pinnedField ? fieldRadiusPx({ width: size.w, height: size.h }) / Math.max(scale, 1e-6) : 0;
+    const inField = (seat: PlacedSeat) => {
+      if (!pinnedField) return false;
+      const unit = scene.unitById.get(seat.unitId);
+      return !!unit && Math.hypot(unit.x - pinnedField.x, unit.y - pinnedField.y) <= fieldReach;
+    };
+    const fieldCrowd = (fieldReveal?.people ?? 0) > 0.015;
+    const fieldLeads = (fieldReveal?.lead ?? 0) > 0.015;
+    const pool = crowd
+      ? scene.seats
+      : scene.seats.filter((seat) =>
+        (seat.kind === "lead" && (leads || (fieldLeads && inField(seat)))) || (fieldCrowd && inField(seat)));
     if (!viewBox || pool.length < 220) return pool;
     return pool.filter(
       (s) => s.x >= viewBox.minX && s.x <= viewBox.maxX && s.y >= viewBox.minY && s.y <= viewBox.maxY,
     );
-  }, [scene, showSeats, reveal.people, viewBox]);
+  }, [scene, showSeats, reveal.people, reveal.lead, fieldReveal, pinnedField, scale, size, viewBox]);
 
   // --- motion targets ------------------------------------------------------
   const buildTargets = useCallback((s: OrbitalScene, drag: DragState | null) => {
@@ -539,30 +841,30 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         : null;
     const carried = drag?.kind === "unit" ? drag.moved : null;
 
-    // Who has to shuffle aside to make room for the landing.
-    const unitSnap = drag?.kind === "unit" ? drag.snap : null;
+    // Who makes room for the landing, and exactly where each will be after
+    // the drop (lib/orbital/insertion.ts). Each carries its own branch; no
+    // one else moves.
+    const plan = drag?.kind === "unit" ? drag.plan : null;
     const seatSnap = drag?.kind === "seat" ? drag.snap : null;
-    const yieldBand = unitSnap ? s.bands.find((b) => b.depth === unitSnap.depth)?.radius : undefined;
-    const yieldStep = yieldBand
-      ? angularStep(s.units.find((u) => u.depth === unitSnap!.depth)?.r ?? 40, 8, yieldBand)
-      : 0;
+    const shift = new Map<string, Point>();
+    if (plan?.kind === "orbit") {
+      for (const d of plan.displaced) {
+        const by = { x: d.position.x - d.from.x, y: d.position.y - d.from.y };
+        for (const id of descendantIds(s, d.unitId)) shift.set(id, by);
+      }
+    }
 
     for (const u of s.units) {
       const towed = carried?.has(u.id) ?? false;
       let x = u.x;
       let y = u.y;
+      const by = shift.get(u.id);
       if (towed && delta) {
         x += delta.x;
         y += delta.y;
-      } else if (unitSnap && yieldBand && u.depth === unitSnap.depth && !carried?.has(u.id)) {
-        const offset = angleDelta(unitSnap.angle, u.angle);
-        const influence = 1 - smoothstep(0, yieldStep * YIELD_REACH, Math.abs(offset));
-        if (influence > 0.001) {
-          const shifted = u.angle + (offset >= 0 ? 1 : -1) * yieldStep * YIELD_PUSH * influence;
-          const at = polar(shifted, yieldBand);
-          x = at.x;
-          y = at.y;
-        }
+      } else if (by) {
+        x += by.x;
+        y += by.y;
       }
       targets.set(uid(u.id), {
         x,
@@ -575,9 +877,13 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       const towed = carried?.has(seat.unitId) ?? false;
       let x = seat.x;
       let y = seat.y;
+      const by = shift.get(seat.unitId);
       if (towed && delta) {
         x += delta.x;
         y += delta.y;
+      } else if (by) {
+        x += by.x;
+        y += by.y;
       } else if (seatSnap && seat.unitId === seatSnap.unitId && seat.id !== seatSnap.seatId) {
         const host = s.unitById.get(seat.unitId);
         if (host) {
@@ -606,15 +912,52 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   useEffect(() => {
     sceneRef.current = scene;
     interactionSceneRef.current = interactionScene;
+    baseInteractionRef.current = projectedInteractionScene;
     focusBranchRef.current = focusBranch;
     targetsRef.current = buildTargets(scene, dragRef.current);
     motionRef.current.prune(new Set(targetsRef.current.keys()));
     dirtyRef.current = true;
-  }, [scene, interactionScene, focusBranch, buildTargets]);
+  }, [scene, interactionScene, projectedInteractionScene, focusBranch, buildTargets]);
+
+  /** Where a point is *drawn*: its place, spread a little by the local detail
+   *  field's lens. Every painter, node and hit test goes through this one
+   *  function, so what you see and what you can touch never disagree. */
+  const lensed = useCallback((p: Point): Point => {
+    const field = fieldRef.current;
+    const stage = stageRef.current;
+    if (!field || field.strength <= 0 || !stage) return p;
+    return lensDisplace(field, p, stage.scaleX());
+  }, []);
 
   const animatedAt = useCallback((key: string, fallback: Point): Point => {
     const state = motionRef.current.peek(key);
-    return state ? { x: state.x.value, y: state.y.value } : fallback;
+    return lensed(state ? { x: state.x.value, y: state.y.value } : fallback);
+  }, [lensed]);
+
+  const presenceOf = useCallback((unitId: string) => presenceRef.current.get(unitId) ?? 1, []);
+
+  /** How big a unit's disc draws right now — the one number paint, hit areas,
+   *  landmark names and drop targets all share. */
+  const drawnOf = useCallback((unit: PlacedUnit): number => {
+    const k = stageRef.current?.scaleX() ?? scaleRef.current;
+    return (localRef.current ? drawnMapRef.current.get(unit.id) : undefined) ?? unitDrawRadius(unit, k);
+  }, []);
+
+  /** How much detail a unit's neighbourhood reads at, cached for the frame. */
+  const detailFor = useCallback((unitId: string): { scale: number; reveal: Reveal } => {
+    const cache = detailCacheRef.current;
+    const known = cache.get(unitId);
+    if (known) return known;
+    const k = stageRef.current?.scaleX() ?? scaleRef.current;
+    const unit = sceneRef.current?.unitById.get(unitId);
+    const influence = unit ? fieldInfluence(fieldRef.current, unit, k) : 0;
+    const lifted = effectiveScale(k, influence);
+    const result = {
+      scale: lifted,
+      reveal: influence > 0 ? revealAt(lifted) : (renderRef.current?.reveal ?? revealAt(k)),
+    };
+    cache.set(unitId, result);
+    return result;
   }, []);
 
   // Keep the painters' view of the world current.
@@ -643,9 +986,24 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       focusBranch,
       scale: scaleRef.current,
       now: performance.now(),
+      envelope,
+      presence: presenceOf,
+      revealFor: (unitId) => detailFor(unitId).reveal,
+      detailScaleFor: (unitId) => detailFor(unitId).scale,
+      fieldActive: false,
+      field: null,
+      carriedBranch,
+      carriedRoots,
+      inFlight: null,
+      relation: null,
+      reparent: null,
+      drawn: drawnOf,
     };
     dirtyRef.current = true;
   }, [
+    carriedBranch,
+    carriedRoots,
+    envelope,
     scene,
     reveal,
     unitRings,
@@ -658,6 +1016,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     showReporting,
     focusBranch,
     animatedAt,
+    presenceOf,
+    detailFor,
+    drawnOf,
   ]);
 
   // --- the frame loop ------------------------------------------------------
@@ -690,16 +1051,143 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       ctx.focusPath = focusUnitRef.current.path;
       ctx.focusBranch = focusBranchRef.current;
       ctx.showReporting = showReportingRef.current;
+      detailCacheRef.current.clear();
+      const clock = performance.now();
+      const reduce = reduceMotionRef.current;
+      const k = stage.scaleX();
 
-      motionRef.current.step(dt, targetsRef.current);
+      // The local detail field eases toward where it is pinned. An active drag
+      // suspends it: a preview must show exactly where things will land, and
+      // a lens would bend that.
+      const pin = dragRef.current ? null : pinnedFieldRef.current;
+      const radiusPx = fieldRadiusPx({ width: stage.width(), height: stage.height() });
+      let field = fieldRef.current;
+      if (pin) {
+        const from = field ?? { x: pin.x, y: pin.y, strength: 0, radiusPx };
+        const glide = reduce ? 1 : 1 - Math.exp(-dt / 0.12);
+        field = {
+          x: from.x + (pin.x - from.x) * glide,
+          y: from.y + (pin.y - from.y) * glide,
+          strength: Math.min(1, from.strength + (reduce ? 1 : dt / 0.3)),
+          radiusPx,
+        };
+      } else if (field) {
+        const strength = Math.max(0, field.strength - (reduce ? 1 : dt / 0.25));
+        field = strength > 0 ? { ...field, strength, radiusPx } : null;
+      }
+      fieldRef.current = field;
+      ctx.fieldActive = !!field && field.strength > 0;
+      ctx.field = field;
+
+      // The visibility budget, re-spent when the view or the field moves — at
+      // most every 80ms, because a pan asks the same question sixty times a
+      // second and the answer barely changes.
+      const viewKey = `${k.toFixed(4)}|${Math.round(stage.x())}|${Math.round(stage.y())}|` +
+        `${pinnedFieldRef.current ? `${Math.round(pinnedFieldRef.current.x)},${Math.round(pinnedFieldRef.current.y)}` : "-"}|` +
+        `${stage.width()}x${stage.height()}`;
+      const stale = visibilityKeyRef.current === "";
+      if (viewKey !== visibilityKeyRef.current && (stale || clock - visibilityAtRef.current > 80)) {
+        visibilityKeyRef.current = viewKey;
+        visibilityAtRef.current = clock;
+        const w = stage.width() / k;
+        const h = stage.height() / k;
+        const view = { minX: -stage.x() / k, minY: -stage.y() / k, maxX: -stage.x() / k + w, maxY: -stage.y() / k + h };
+        const pinned = pinnedFieldRef.current;
+        const shown = visibleUnitIds({
+          units: visibilityUnitsRef.current,
+          view,
+          budget: markBudget({ width: stage.width(), height: stage.height() }),
+          scale: k,
+          field: pinned ? { x: pinned.x, y: pinned.y, strength: 1, radiusPx } : null,
+          forced: forcedRef.current,
+          branch: focusBranchRef.current,
+        });
+        const firstTime = presenceTargetRef.current.size === 0;
+        const origin = pinned ?? { x: view.minX + w / 2, y: view.minY + h / 2 };
+        for (const u of visibilityUnitsRef.current) {
+          const target = shown.has(u.id) ? 1 : 0;
+          const before = presenceTargetRef.current.get(u.id);
+          presenceTargetRef.current.set(u.id, target);
+          // Nothing fades in on first paint; the map simply opens.
+          if (firstTime || before === undefined) {
+            presenceRef.current.set(u.id, target);
+            continue;
+          }
+          if (target === 1 && before !== 1) {
+            const px = Math.hypot(u.x - origin.x, u.y - origin.y) * k;
+            presenceWaitRef.current.set(u.id, clock + revealDelay(px, reduce) * 1000);
+          }
+        }
+      }
+      for (const [id, target] of presenceTargetRef.current) {
+        const current = presenceRef.current.get(id) ?? target;
+        if (current === target) continue;
+        const wait = presenceWaitRef.current.get(id);
+        if (target > current && wait !== undefined && clock < wait) continue;
+        presenceRef.current.set(id, stepPresence(current, target, dt, reduce));
+      }
+
+      // Local geography: dots carry headcount, and each swells until it meets
+      // what its present neighbours want — so a division whose teams are
+      // thinned away shows its weight, and gives room back smoothly as they
+      // fade in. Drawn a touch inside that, as every disc is.
+      if (localRef.current && sceneRef.current) {
+        const units = sceneRef.current.units;
+        const want = new Map(units.map((u) => [u.id, desiredUnitRadius(u, k)]));
+        const map = drawnMapRef.current;
+        map.clear();
+        const present = (id: string) => presenceRef.current.get(id) ?? 1;
+        for (const u of units) {
+          map.set(u.id, neighbourAwareRadius(u, k, (id) => want.get(id) ?? 0, present) * 0.9);
+        }
+      }
+
       const drag = dragRef.current;
+      // A deliberate drop onto another unit charges while it is held there.
+      // Which unit is found on pointer events; here the charge is only read
+      // again from the clock, so a finger that stays still still arms it —
+      // and a slow frame can never arm a pass.
+      if (drag) drag.relation = chargeAt(drag.relation, clock);
+      ctx.relation = drag?.relation
+        ? { ...drag.relation, kind: drag.kind === "unit" ? "merge" : "move", armed: isArmed(drag.relation) }
+        : null;
+      ctx.reparent = drag?.kind === "unit" ? drag.reparent : null;
+
+      motionRef.current.step(dt, targetsRef.current, reduce);
       ctx.draggedUnitId = drag?.kind === "unit" ? drag.id : null;
-      const peopleOut = live.people;
-      const seatScale = peopleOut * peopleOut * (3 - 2 * peopleOut);
+      ctx.inFlight = drag?.kind === "unit" && drag.fromBasket ? drag.moved : null;
+
+      // A held branch near the edge of the map pans it, so a long move never
+      // needs a second finger. Not over the basket, which has its own edge.
+      const client = dragClientRef.current;
+      if (drag?.kind === "unit" && client && !drag.overTray) {
+        const rect = stage.container().getBoundingClientRect();
+        const edge = 44;
+        const speed = 560;
+        const lx = client.x - rect.left;
+        const ly = client.y - rect.top;
+        const push = (d: number) => (d < edge ? speed * (1 - Math.max(0, d) / edge) : 0);
+        const vx = push(lx) - push(rect.width - lx);
+        const vy = push(ly) - push(rect.height - ly);
+        if (vx !== 0 || vy !== 0) {
+          const dx = vx * dt;
+          const dy = vy * dt;
+          stage.position({ x: stage.x() + dx, y: stage.y() + dy });
+          if (drag.grabbed) {
+            // Keep the held node under the finger as the world slides past.
+            const node = nodeRefs.current.get(uid(drag.id));
+            if (node) node.position({ x: node.x() - dx / k, y: node.y() - dy / k });
+          }
+          dragFollowRef.current?.();
+          refreshViewBoxRef.current?.();
+        }
+      }
 
       for (const [key, node] of nodeRefs.current) {
         const isSeat = key.startsWith("s:");
-        const held = drag && key === (drag.kind === "unit" ? uid(drag.id) : sid(drag.id));
+        const held = drag && (drag.kind === "unit"
+          ? drag.grabbed && key === uid(drag.id)
+          : key === sid(drag.id));
         const state = motionRef.current.peek(key);
         if (!state) continue;
 
@@ -707,15 +1195,54 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
           // The node under the cursor is Konva's to position, not ours.
           motionRef.current.place(key, node.x(), node.y());
         } else {
-          node.position({ x: state.x.value, y: state.y.value });
+          node.position(lensed({ x: state.x.value, y: state.y.value }));
+        }
+
+        if (!isSeat) {
+          // A unit's handle exists exactly when its mark does: nothing faded
+          // out or too small to see keeps an invisible target, so a tap there
+          // falls through to the open ground behind it.
+          const id = key.slice(2);
+          const unit = sceneRef.current?.unitById.get(id);
+          const present = presenceRef.current.get(id) ?? 1;
+          const drawnWorld = unit ? drawnOf(unit) : 0;
+          const drawnPx = drawnWorld * k;
+          const catchable = !!held || isInteractable(present, drawnPx);
+          if (localRef.current && unit) {
+            // The handle and the name follow the dot as it swells and gives way.
+            const hit = node.findOne(".hit") as Konva.Circle | undefined;
+            if (hit && Math.abs(hit.radius() - drawnWorld) > 1e-3) hit.radius(drawnWorld);
+            const landmark = node.findOne(".landmark");
+            if (landmark) {
+              landmark.visible(drawnPx >= LANDMARK_LABEL_PX);
+              // Beneath the dot — and beneath its gauges when they show.
+              const gauged = !!ctx.unitRings.get(id)?.people &&
+                unitRingReveal(unit.depth, detailFor(id).scale) * smoothstep(5, 11, drawnPx) > 0.1;
+              const beneath = gauged ? ringGeometry(unit, UNIT_RING_KEYS.length - 1, k, drawnWorld).radius : drawnWorld;
+              landmark.y(beneath + 6 / k);
+            }
+          }
+          if (node.listening() !== catchable) node.listening(catchable);
+          const showing = !!held || present > 0.01;
+          if (node.visible() !== showing) node.visible(showing);
+          node.opacity(held ? 1 : present);
         }
 
         if (isSeat) {
           const seat = sceneRef.current?.seatById.get(key.slice(2));
+          // People read at their own team's detail — lifted inside the field —
+          // and are only ever as present as the team they sit on.
+          const rv = seat ? detailFor(seat.unitId).reveal : live;
+          const peopleOut = rv.people;
+          const seatScale = peopleOut * peopleOut * (3 - 2 * peopleOut);
+          const teamPresent = seat
+            ? (presenceRef.current.get(seat.unitId) ?? 1) *
+              (ctx.carriedBranch.has(seat.unitId) && !ctx.inFlight?.has(seat.unitId) ? 0.42 : 1)
+            : 1;
           // Below the people band the lead is the last one standing: it is
           // how you find the node's point of contact at a glance.
-          const presence = seat?.kind === "lead" ? Math.max(peopleOut, live.lead) : peopleOut;
-          const s = state.scale.value * (seat?.kind === "lead" ? Math.max(seatScale, live.lead) : seatScale);
+          const presence = (seat?.kind === "lead" ? Math.max(peopleOut, rv.lead) : peopleOut) * teamPresent;
+          const s = state.scale.value * (seat?.kind === "lead" ? Math.max(seatScale, rv.lead) : seatScale);
           node.scaleX(s);
           node.scaleY(s);
           // Everyone but the person being read steps back, so a crowded team
@@ -744,7 +1271,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     return () => {
       anim.stop();
     };
-  }, []);
+  }, [detailFor, drawnOf, lensed]);
 
   // --- camera --------------------------------------------------------------
   useEffect(() => {
@@ -779,12 +1306,16 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     [],
   );
 
+  useEffect(() => {
+    refreshViewBoxRef.current = refreshViewBox;
+  }, [refreshViewBox]);
+
   // How far out you're allowed to go has to depend on the org: a 2,500-person
   // map is forty thousand units across, and a fixed floor would strand you
   // zoomed into the middle of it, unable to see the whole thing.
   const minScale = useMemo(
-    () => Math.min(0.06, ((Math.min(size.w, size.h) || 600) / (worldRadius * 2 * 1.06)) * 0.85),
-    [size, worldRadius],
+    () => Math.min(0.06, fitScaleFor(worldBounds, { width: size.w || 600, height: size.h || 600 }) * 0.85),
+    [size, worldBounds],
   );
   const minScaleRef = useRef(minScale);
   useEffect(() => {
@@ -806,9 +1337,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     refreshViewBox(true);
   }, [refreshViewBox]);
 
+  /** Fit a box of the world to the screen. For the ring map's circle this is
+   *  exactly the old radius fit. */
   const frame = useCallback(
-    (radius: number, centre: Point = { x: 0, y: 0 }) => {
-      const fit = Math.min(size.w, size.h) / (radius * 2 * 1.06);
+    (bounds: Bounds, maxScale = MAX_SCALE) => {
+      const fit = Math.min(maxScale, fitScaleFor(bounds, { width: size.w, height: size.h }));
+      const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
       applyCamera(fit, centre, { x: size.w / 2, y: size.h / 2 });
     },
     [size, applyCamera],
@@ -863,6 +1397,17 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     });
   }, [size, animateCameraTo]);
 
+  const animateBounds = useCallback((bounds: Bounds, maxScale = 1.2) => {
+    const fit = fitScaleFor(bounds, { width: size.w, height: size.h });
+    const next = Math.min(maxScale, Math.max(minScaleRef.current, fit));
+    const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+    animateCameraTo({
+      scale: next,
+      x: size.w / 2 - centre.x * next,
+      y: size.h / 2 - centre.y * next,
+    });
+  }, [size, animateCameraTo]);
+
   useEffect(() => () => {
     if (cameraRafRef.current !== null) cancelAnimationFrame(cameraRafRef.current);
   }, []);
@@ -876,7 +1421,23 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       // twelve-rung company the latter immediately recreates the lost-context
       // problem inside the branch. Frame the centre plus two reporting rings;
       // deeper structure remains present and can be approached normally.
-      if (snapping) {
+      const focusedUnit = activeFocusId ? arrangedTree.units.get(activeFocusId) : undefined;
+      if (local && focusedUnit && focusBranch) {
+        // Local geography never moves for focus: frame the unit and its next
+        // two levels exactly where they already are.
+        const near = scene.units.filter((u) => focusBranch.has(u.id) && u.depth <= focusedUnit.depth + 2);
+        if (near.length > 0) {
+          animateBounds(near.reduce((b, u) => {
+            const reach = u.footprint ?? u.r;
+            return {
+              minX: Math.min(b.minX, u.x - reach),
+              minY: Math.min(b.minY, u.y - reach),
+              maxX: Math.max(b.maxX, u.x + reach),
+              maxY: Math.max(b.maxY, u.y + reach),
+            };
+          }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }));
+        }
+      } else if (snapping) {
         const localBand = scene.bands[Math.min(2, scene.bands.length - 1)];
         animateFrame((localBand?.outer ?? scene.extent) + 70);
       } else {
@@ -892,7 +1453,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       }
     }
     else animateCameraTo(pending);
-  }, [activeFocusId, scene, snapping, size, animateCameraTo, animateFrame]);
+  }, [activeFocusId, arrangedTree, focusBranch, local, scene, snapping, size, animateBounds, animateCameraTo, animateFrame]);
 
   const enterFocus = useCallback((unitId: string) => {
     if (unitId === activeFocusId || !arrangedTree.units.has(unitId)) return;
@@ -910,7 +1471,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!leaving) return;
     const camera = currentCamera();
     const hasParentFocus = focusFrames.length > 1;
-    const restored = hasParentFocus ? { x: 0, y: 0 } : masterScene.unitById.get(leaving.unitId);
+    // On rings a parent focus is re-laid at the origin; local geography never
+    // moves, so the parent is wherever it already is.
+    const parentFocusId = focusFrames[focusFrames.length - 2]?.unitId;
+    const restored = hasParentFocus
+      ? (local && parentFocusId ? masterScene.unitById.get(parentFocusId) : { x: 0, y: 0 })
+      : masterScene.unitById.get(leaving.unitId);
     if (restored) {
       pendingFocusCameraRef.current = {
         scale: camera.scale,
@@ -921,7 +1487,23 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     setFocusFrames((current) => current.slice(0, -1));
     setSelectedUnitId(null);
     setHover(null);
-  }, [currentCamera, focusFrames, masterScene, size]);
+  }, [currentCamera, focusFrames, local, masterScene, size]);
+
+  // Esc steps back one thing at a time: the detail field, then the selection,
+  // then one level of focus.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (proposal) setProposal(null);
+      else if (pinnedFieldRef.current) setPinnedField(null);
+      else if (selectedUnitId || routeUnitId) {
+        setSelectedUnitId(null);
+        setRouteUnitId(null);
+      } else if (activeFocusId) leaveFocus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeFocusId, leaveFocus, proposal, routeUnitId, selectedUnitId]);
 
   const focusFromBreadcrumb = useCallback((unitId: string) => {
     cameraTouched.current = true;
@@ -940,10 +1522,11 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       setRouteUnitId(null);
       return;
     }
+    const crumb = local ? masterScene.unitById.get(unitId) : undefined;
     pendingFocusCameraRef.current = {
       scale: camera.scale,
-      x: size.w / 2,
-      y: size.h / 2,
+      x: size.w / 2 - (crumb?.x ?? 0) * camera.scale,
+      y: size.h / 2 - (crumb?.y ?? 0) * camera.scale,
     };
     setFocusFrames((current) => {
       const existing = current.findIndex((entry) => entry.unitId === unitId);
@@ -953,12 +1536,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     });
     setSelectedUnitId(unitId);
     setRouteUnitId(unitId);
-  }, [activeFocusId, arrangedTree.rootId, currentCamera, masterScene, size]);
+  }, [activeFocusId, arrangedTree.rootId, currentCamera, local, masterScene, size]);
 
   useEffect(() => {
     if (cameraTouched.current || size.w === 0) return;
-    frame(worldRadius);
-  }, [frame, worldRadius, size]);
+    // A large company opens on its heart, never so close that the first thing
+    // seen is one enormous disc.
+    frame(startBounds, local ? 0.25 : MAX_SCALE);
+  }, [frame, local, startBounds, size]);
 
   const onWheel = useCallback(
     (e: KonvaEventObject<WheelEvent>) => {
@@ -1006,15 +1591,95 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       dragRef.current = {
         kind: "unit",
         id: unit.id,
+        parentId: unit.parentId,
         origin: { x: unit.x, y: unit.y },
         current: { x: unit.x, y: unit.y },
         moved: descendantIds(interactive, unit.id),
-        snap: null,
+        plan: null,
+        grabbed: true,
+        fromBasket: false,
+        overTray: false,
+        relation: null,
+        magnet: null,
+        reparent: null,
       };
       targetsRef.current = buildTargets(s, dragRef.current);
     },
     [buildTargets],
   );
+
+  /** Is a point on screen over the basket? A little generous, so a thumb at
+   *  the edge counts. */
+  const overTray = useCallback((client: Point | null): boolean => {
+    const tray = trayRef.current;
+    if (!tray || !client) return false;
+    const r = tray.getBoundingClientRect();
+    const slack = 12;
+    return client.x >= r.left - slack && client.x <= r.right + slack && client.y >= r.top - slack && client.y <= r.bottom + slack;
+  }, []);
+
+  /** The unit a drag is deliberately on top of: its centre inside a visible,
+   *  catchable disc that isn't part of what's being dragged. Never the company
+   *  itself, and never a branch waiting in the basket. */
+  const deliberateTarget = useCallback((point: Point, exclude: ReadonlySet<string>) => {
+    const s = sceneRef.current;
+    if (!s || !stageRef.current) return null;
+    const waitingInBasket = renderRef.current?.carriedBranch;
+    return overlapTarget(s.units, point, (id) => {
+      const u = s.unitById.get(id);
+      if (!u || !u.parentId || waitingInBasket?.has(id)) return 0;
+      if ((presenceRef.current.get(id) ?? 1) < INTERACTABLE_PRESENCE) return 0;
+      return drawnOf(u);
+    }, exclude);
+  }, [drawnOf]);
+
+  /** Unit drags read two deliberately different invitations: a magnetic
+   * body contact (merge/reparent choice) and a semantic annulus (reparent).
+   * Neither uses a child's rendered connection length. */
+  const unitRelationshipTargets = useCallback((
+    point: Point,
+    drag: Extract<DragState, { kind: "unit" }>,
+  ) => {
+    const s = sceneRef.current;
+    const stage = stageRef.current;
+    if (!s || !stage) return { magnet: null, reparent: null };
+    const waitingInBasket = renderRef.current?.carriedBranch;
+    const eligible = s.units.filter((unit) =>
+      !waitingInBasket?.has(unit.id) &&
+      (presenceRef.current.get(unit.id) ?? 1) >= INTERACTABLE_PRESENCE);
+    const source = s.unitById.get(drag.id);
+    const magnet = source ? magneticMergeTarget(
+      eligible,
+      point,
+      drawnOf(source),
+      (id) => {
+        const unit = s.unitById.get(id);
+        return unit ? drawnOf(unit) : 0;
+      },
+      drag.moved,
+      stage.scaleX(),
+    ) : null;
+    const reparent = magnet ? null : reparentOrbitTarget(
+      eligible.map((unit) => ({
+        id: unit.id,
+        x: unit.x,
+        y: unit.y,
+        r: unit.r,
+        footprint: unit.footprint,
+      })),
+      point,
+      stage.scaleX(),
+      drag.moved,
+      drag.parentId,
+    );
+    return { magnet, reparent };
+  }, [drawnOf]);
+  useEffect(() => {
+    deliberateTargetRef.current = deliberateTarget;
+  }, [deliberateTarget]);
+  useEffect(() => {
+    snappingRef.current = snapping;
+  }, [snapping]);
 
   const onUnitDragMove = useCallback(() => {
     const drag = dragRef.current;
@@ -1023,18 +1688,128 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!drag || drag.kind !== "unit" || !s || !displayed) return;
     const node = nodeRefs.current.get(uid(drag.id));
     if (!node) return;
-    drag.current = { x: node.x(), y: node.y() };
-    drag.snap = snapping ? snapUnitOnRing(s, drag.id, drag.current) : null;
+    const pointerWorld = { x: node.x(), y: node.y() };
+    drag.current = pointerWorld;
+    const stage = stageRef.current;
+    const pointer = stage?.getPointerPosition();
+    if (stage && pointer) {
+      const rect = stage.container().getBoundingClientRect();
+      dragClientRef.current = { x: rect.left + pointer.x, y: rect.top + pointer.y };
+    }
+    const over = overTray(dragClientRef.current);
+    if (over !== drag.overTray) {
+      drag.overTray = over;
+      setTrayHot(over);
+    }
+    // Break orbits is free placement with no gap-opening; otherwise plan the
+    // landing afresh as the pointer moves, so the gap travels with it and
+    // closes again the moment the pointer leaves every valid place. Over the
+    // basket there is no landing on the map at all.
+    // Deliberately on top of another unit, the target holds still: no gap
+    // opens, and the drop becomes a question rather than a placement.
+    const relationship = snapping && !over
+      ? unitRelationshipTargets(pointerWorld, drag)
+      : { magnet: null, reparent: null };
+    drag.magnet = relationship.magnet;
+    drag.reparent = relationship.reparent;
+    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    if (relationship.magnet) {
+      const source = displayed.unitById.get(drag.id);
+      if (source) {
+        drag.current = magneticPosition(
+          pointerWorld,
+          relationship.magnet,
+          drawnOf(source),
+          reduceMotionRef.current,
+        );
+        node.position(drag.current);
+      }
+    }
+    const onTarget = !!relationship.magnet || !!relationship.reparent;
+    drag.plan = snapping && !over && !onTarget
+      ? planInsertion({
+        scene: s,
+        base: baseInteractionRef.current ?? s,
+        unitId: drag.id,
+        pointer: drag.current,
+        carried: drag.moved,
+      })
+      : null;
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, snapping]);
+  }, [buildTargets, drawnOf, overTray, snapping, unitRelationshipTargets]);
+
+  /** Land a planned drop exactly as it was previewed. False when the plan is
+   *  not a place — the caller sends the unit home. Shared by drags on the map
+   *  and drags out of the basket, so the two can never land differently. */
+  const commitPlan = useCallback((unitId: string, origin: Point, plan: InsertionPlan | null): boolean => {
+    const s = sceneRef.current;
+    if (!s || !plan || plan.kind === "none") return false;
+    if (plan.kind === "free") {
+      // Open ground in a large company. The saved layout can only hold an
+      // angle, so this placement lasts for the session — and says so.
+      const previous = unitOffsetsRef.current.get(unitId) ?? { x: 0, y: 0 };
+      unitOffsetsRef.current.set(unitId, {
+        x: previous.x + plan.position.x - origin.x,
+        y: previous.y + plan.position.y - origin.y,
+      });
+      setPositionRevision((revision) => revision + 1);
+      setSessionPlaced((count) => count + 1);
+      ripple(plan.position, (s.unitById.get(unitId)?.r ?? 40) * 2.6);
+      setNotice("Placed for this session. A spot off its own orbit can't be saved yet.");
+      return true;
+    }
+    // Commit exactly what the preview showed: the unit where it landed and
+    // each neighbour where it made room, as saved angles.
+    ripple(plan.position, (s.unitById.get(plan.unitId)?.r ?? 40) * 2.6);
+    const landed = [{ unitId: plan.unitId, angle: plan.angle }, ...plan.displaced];
+    let cleared = false;
+    for (const { unitId: id } of landed) if (unitOffsetsRef.current.delete(id)) cleared = true;
+    if (cleared) setPositionRevision((revision) => revision + 1);
+    setAngleOverrides((prev) => {
+      const next = new Map(prev);
+      for (const { unitId: id, angle } of landed) next.set(id, angle);
+      return next;
+    });
+    const ids = new Set(landed.map((l) => l.unitId));
+    setOverrides((prev) => ({
+      ...prev,
+      unitParent: new Map([...(prev.unitParent ?? [])].filter(([id]) => !ids.has(id))),
+    }));
+    persist(landed.map(({ unitId: id, angle }) => ({
+      nodeType: "unit" as const,
+      nodeId: id,
+      angle: normalizeAngle(angle),
+      // Geography never changes the organisation: the row keeps the real parent.
+      parentId: baseTree.units.get(id)?.parentId ?? null,
+    })));
+    return true;
+  }, [baseTree, persist, ripple]);
 
   const onUnitDragEnd = useCallback(() => {
     const drag = dragRef.current;
     dragRef.current = null;
+    dragClientRef.current = null;
     setDragging(null);
+    setTrayHot(false);
     if (!drag || drag.kind !== "unit") return;
     const s = sceneRef.current;
-    const snap = drag.snap;
+    if (drag.overTray) {
+      // Into the basket: a pending carry. The unit goes home and is marked.
+      if (s) targetsRef.current = buildTargets(s, null);
+      carry(drag.id);
+      return;
+    }
+    if (isArmed(chargeAt(drag.relation, performance.now()))) {
+      // A deliberate drop onto another unit asks; nothing changes until then.
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
+      return;
+    }
+    if (drag.reparent) {
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
+      return;
+    }
     if (!snapping && s) {
       const delta = { x: drag.current.x - drag.origin.x, y: drag.current.y - drag.origin.y };
       if (Math.hypot(delta.x, delta.y) > 1) {
@@ -1046,33 +1821,180 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       }
       return;
     }
-    if (!snap || !s) {
+    if (!commitPlan(drag.id, drag.origin, drag.plan)) {
+      // Released somewhere that isn't a place: back where it came from.
       if (s) targetsRef.current = buildTargets(s, null);
+      if (drag.plan?.kind === "none" && drag.plan.reason === "off-orbit" && !local) {
+        setNotice("Rings show reporting level here, so a unit stays on its own ring. Break orbits places it anywhere.");
+      }
       return;
     }
-    const dragged = s.unitById.get(drag.id);
-    if (snap.rerungs && dragged) {
-      const focusDepth = activeFocusId ? (arrangedTree.units.get(activeFocusId)?.depth ?? 0) : 0;
-      setPendingLevelChange({
-        unitId: drag.id,
-        from: arrangedTree.units.get(drag.id)?.depth ?? dragged.depth,
-        to: focusDepth + snap.depth,
-      });
-      targetsRef.current = buildTargets(s, null);
+    // A drop that lands takes the unit out of the basket if it was in it.
+    setBasket((current) => returnFromBasket(current, drag.id));
+  }, [buildTargets, carry, commitPlan, local, snapping]);
+
+  // --- carrying out of the basket ---------------------------------------------
+  /** Screen point → world point under the live camera. */
+  const clientToWorld = useCallback((client: Point): Point | null => {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const rect = stage.container().getBoundingClientRect();
+    const k = stage.scaleX();
+    return { x: (client.x - rect.left - stage.x()) / k, y: (client.y - rect.top - stage.y()) / k };
+  }, []);
+
+  /** Re-read a drag out of the basket from where the pointer is now. It uses
+   *  the very same landing preview as a drag on the map. */
+  const followCarry = useCallback(() => {
+    const drag = dragRef.current;
+    const s = interactionSceneRef.current;
+    const displayed = sceneRef.current;
+    const client = dragClientRef.current;
+    if (!drag || drag.kind !== "unit" || !drag.fromBasket || !s || !displayed || !client) return;
+    const world = clientToWorld(client);
+    if (!world) return;
+    drag.current = world;
+    const over = overTray(client);
+    if (over !== drag.overTray) {
+      drag.overTray = over;
+      setTrayHot(over);
+    }
+    const relationship = snapping && !over
+      ? unitRelationshipTargets(world, drag)
+      : { magnet: null, reparent: null };
+    drag.magnet = relationship.magnet;
+    drag.reparent = relationship.reparent;
+    drag.relation = trackRelation(drag.relation, relationship.magnet, performance.now());
+    if (relationship.magnet) {
+      const source = displayed.unitById.get(drag.id);
+      if (source) drag.current = magneticPosition(
+        world,
+        relationship.magnet,
+        drawnOf(source),
+        reduceMotionRef.current,
+      );
+    }
+    const onTarget = !!relationship.magnet || !!relationship.reparent;
+    drag.plan = over || onTarget
+      ? null
+      : snapping
+        ? planInsertion({ scene: s, base: baseInteractionRef.current ?? s, unitId: drag.id, pointer: world, carried: drag.moved })
+        : { kind: "free", unitId: drag.id, position: world };
+    targetsRef.current = buildTargets(displayed, drag);
+  }, [buildTargets, clientToWorld, drawnOf, overTray, snapping, unitRelationshipTargets]);
+
+  useEffect(() => {
+    dragFollowRef.current = () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (drag.kind === "seat") onSeatDragMoveRef.current?.();
+      else if (drag.grabbed) onUnitDragMove();
+      else followCarry();
+    };
+  }, [followCarry, onUnitDragMove]);
+
+  /** Find a carried branch on the map: the camera glides to its placeholder
+   *  at the current zoom, and its entry lights up. */
+  const locateCarried = useCallback((unitId: string) => {
+    const unit = sceneRef.current?.unitById.get(unitId);
+    const stage = stageRef.current;
+    if (!unit || !stage) return;
+    const k = stage.scaleX();
+    cameraTouched.current = true;
+    animateCameraTo({ scale: k, x: size.w / 2 - unit.x * k, y: size.h / 2 - unit.y * k });
+    setFlashEntry(unitId);
+  }, [animateCameraTo, size]);
+
+  // Pressing an entry: a tap finds the branch; a drag carries it out.
+  const entryPressRef = useRef<{ unitId: string; start: Point; pointerId: number; dragging: boolean } | null>(null);
+
+  const pressEntry = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const unitId = event.currentTarget.dataset.unitId;
+    if (!unitId || (event.pointerType === "mouse" && event.button !== 0)) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    entryPressRef.current = { unitId, start: { x: event.clientX, y: event.clientY }, pointerId: event.pointerId, dragging: false };
+  }, []);
+
+  const moveEntry = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const press = entryPressRef.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    const client = { x: event.clientX, y: event.clientY };
+    if (!press.dragging) {
+      if (Math.hypot(client.x - press.start.x, client.y - press.start.y) < 6) return;
+      const s = sceneRef.current;
+      const interactive = interactionSceneRef.current;
+      const unit = s?.unitById.get(press.unitId);
+      if (!s || !interactive || !unit) return;
+      press.dragging = true;
+      setHover(null);
+      setDragging(uid(unit.id));
+      dragRef.current = {
+        kind: "unit",
+        id: unit.id,
+        parentId: unit.parentId,
+        origin: { x: unit.x, y: unit.y },
+        current: { x: unit.x, y: unit.y },
+        moved: descendantIds(interactive, unit.id),
+        plan: null,
+        grabbed: false,
+        fromBasket: true,
+        overTray: true,
+        relation: null,
+        magnet: null,
+        reparent: null,
+      };
+    }
+    dragClientRef.current = client;
+    followCarry();
+  }, [followCarry]);
+
+  const endEntry = useCallback((event: React.PointerEvent<HTMLElement>, cancelled: boolean) => {
+    const press = entryPressRef.current;
+    entryPressRef.current = null;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (!press.dragging) {
+      if (!cancelled) locateCarried(press.unitId);
       return;
     }
-    ripple(snap.position, (s.unitById.get(snap.unitId)?.r ?? 40) * 2.6);
-    if (unitOffsetsRef.current.delete(drag.id)) setPositionRevision((revision) => revision + 1);
-    setAngleOverrides((prev) => new Map(prev).set(drag.id, snap.angle));
-    setOverrides((prev) => ({
-      ...prev,
-      unitParent: new Map([...(prev.unitParent ?? [])].filter(([unitId]) => unitId !== drag.id)),
-    }));
-    const realParentId = baseTree.units.get(drag.id)?.parentId ?? snap.parentId;
-    persist([
-      { nodeType: "unit", nodeId: drag.id, angle: normalizeAngle(snap.angle), parentId: realParentId },
-    ]);
-  }, [activeFocusId, arrangedTree, baseTree, buildTargets, persist, ripple, snapping]);
+    const drag = dragRef.current;
+    dragRef.current = null;
+    dragClientRef.current = null;
+    setDragging(null);
+    setTrayHot(false);
+    const s = sceneRef.current;
+    if (!drag || drag.kind !== "unit") return;
+    if (!cancelled && isArmed(chargeAt(drag.relation, performance.now()))) {
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
+      return;
+    }
+    if (!cancelled && drag.reparent) {
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
+      return;
+    }
+    const landed = !cancelled && !drag.overTray && commitPlan(drag.id, drag.origin, drag.plan);
+    if (landed) {
+      setBasket((current) => returnFromBasket(current, drag.id));
+      return;
+    }
+    // Cancelled, dropped back on the basket, or no room: it stays in the
+    // basket — not back at its origin, which it never left.
+    if (s) targetsRef.current = buildTargets(s, null);
+    if (!cancelled && !drag.overTray) setNotice(`No room for ${basketTree.nameOf(drag.id)} there — it's still in the basket.`);
+  }, [basketTree, buildTargets, commitPlan, locateCarried]);
+  const releaseEntry = useCallback((event: React.PointerEvent<HTMLElement>) => endEntry(event, false), [endEntry]);
+  const cancelEntry = useCallback((event: React.PointerEvent<HTMLElement>) => endEntry(event, true), [endEntry]);
+
+  const returnEntry = useCallback((unitId: string) => {
+    setBasket((current) => returnFromBasket(current, unitId));
+  }, []);
+
+  useEffect(() => {
+    if (!flashEntry) return;
+    const timer = window.setTimeout(() => setFlashEntry(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [flashEntry]);
 
   const onSeatDragStart = useCallback((seat: PlacedSeat) => {
     setHover(null);
@@ -1083,6 +2005,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       origin: { x: seat.x, y: seat.y },
       current: { x: seat.x, y: seat.y },
       snap: null,
+      relation: null,
     };
   }, []);
 
@@ -1096,15 +2019,31 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     drag.current = { x: node.x(), y: node.y() };
     // A broken-orbits board is spatial exploration only. Even dropping a
     // person directly onto a team must not silently change their assignment.
-    drag.snap = snapping ? snapSeat(s, drag.id, drag.current) : null;
+    // On the map, a person only re-settles round their own team; moving them
+    // to another is a deliberate drop onto it, and that asks first.
+    const own = s.seatById.get(drag.id)?.unitId;
+    const target = snapping && own ? deliberateTarget(drag.current, new Set([own])) : null;
+    drag.relation = trackRelation(drag.relation, target, performance.now());
+    const onTarget = !!target;
+    const snap = snapping && !onTarget ? snapSeat(s, drag.id, drag.current) : null;
+    drag.snap = snap && !snap.moves ? snap : null;
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, snapping]);
+  }, [buildTargets, deliberateTarget, snapping]);
+  useEffect(() => {
+    onSeatDragMoveRef.current = onSeatDragMove;
+  }, [onSeatDragMove]);
 
   const onSeatDragEnd = useCallback(() => {
     const drag = dragRef.current;
     dragRef.current = null;
     setDragging(null);
     if (!drag || drag.kind !== "seat") return;
+    if (isArmed(chargeAt(drag.relation, performance.now()))) {
+      const s = sceneRef.current;
+      if (s) targetsRef.current = buildTargets(s, null);
+      setProposal({ kind: "move", seatId: drag.id, toUnitId: drag.relation!.unitId });
+      return;
+    }
     if (!drag.snap) {
       const s = sceneRef.current;
       if (!snapping && s) {
@@ -1121,15 +2060,55 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       }
       return;
     }
-    const snap = drag.snap;
-    ripple(snap.position, SEAT_RADIUS * 4.5);
-    if (seatOffsetsRef.current.delete(drag.id)) setPositionRevision((revision) => revision + 1);
+    // Settled back round their own team: nothing about them has changed.
+    ripple(drag.snap.position, SEAT_RADIUS * 4.5);
+    const s = sceneRef.current;
+    if (s) targetsRef.current = buildTargets(s, null);
+  }, [buildTargets, ripple, snapping]);
+
+  /** Yes to moving a person: exactly what the map has always done on a drop
+   *  onto a team — and no more. It moves them on this map; it does not edit
+   *  their team membership in People and Teams. Whether it should is Greg's
+   *  call (docs/ORBITAL-INTERACTION.md). */
+  const confirmMove = useCallback((seatId: string, toUnitId: string) => {
+    if (seatOffsetsRef.current.delete(seatId)) setPositionRevision((revision) => revision + 1);
     setOverrides((prev) => ({
       ...prev,
-      seatUnit: new Map(prev.seatUnit ?? []).set(drag.id, snap.unitId),
+      seatUnit: new Map(prev.seatUnit ?? []).set(seatId, toUnitId),
     }));
-    persist([{ nodeType: "seat", nodeId: drag.id, angle: null, parentId: snap.unitId }]);
-  }, [buildTargets, persist, ripple, snapping]);
+    persist([{ nodeType: "seat", nodeId: seatId, angle: null, parentId: toUnitId }]);
+    setProposal(null);
+  }, [persist]);
+  const acceptMove = useCallback(() => {
+    if (proposal?.kind === "move") confirmMove(proposal.seatId, proposal.toUnitId);
+  }, [confirmMove, proposal]);
+
+  /** Confirmed reporting-structure edit. The server re-validates tenancy and
+   * cycles, moves the branch root, and removes only that root's stale saved
+   * placement. Descendant arrangements remain authored geography. */
+  const confirmReparent = useCallback((fromId: string, parentId: string) => {
+    setProposal(null);
+    startTransition(async () => {
+      const result = await moveOrgUnit(fromId, parentId);
+      if (!result.ok) {
+        setNotice(result.error);
+        return;
+      }
+      unitOffsetsRef.current.delete(fromId);
+      setAngleOverrides((previous) => {
+        const next = new Map(previous);
+        next.delete(fromId);
+        return next;
+      });
+      setOverrides((previous) => ({
+        ...previous,
+        unitParent: new Map([...(previous.unitParent ?? [])].filter(([id]) => id !== fromId)),
+      }));
+      setPositionRevision((revision) => revision + 1);
+      setNotice("Branch moved. Its descendants and their arrangements stayed together.");
+      router.refresh();
+    });
+  }, [router]);
 
   const arranged =
     (overrides.unitParent?.size ?? 0) > 0 ||
@@ -1138,9 +2117,17 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     unitOffsetsRef.current.size > 0 ||
     seatOffsetsRef.current.size > 0;
 
+  // A notice says its piece and goes.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const resetArrangement = useCallback(() => {
     if (activeFocusId) pendingFocusCameraRef.current = "frame";
     setSnapping(true);
+    setSessionPlaced(0);
     setOverrides({});
     setAngleOverrides(new Map());
     unitOffsetsRef.current.clear();
@@ -1190,45 +2177,57 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const s = sceneRef.current;
     const stage = stageRef.current;
     if (!s || !stage) return null;
-    const rv = revealAt(stage.scaleX());
+    const live = stage.scaleX();
+    // The same presence, detail and drawn positions the painters used this
+    // frame: a mark that is faded out, or not yet revealed here, can't be hit.
+    const present = (unitId: string) => presenceOf(unitId) >= INTERACTABLE_PRESENCE;
+    // Without a field every unit reads at the camera's own detail, so whole
+    // passes can be skipped when nothing of that kind is showing anywhere.
+    const fieldOn = !!fieldRef.current && fieldRef.current.strength > 0;
+    const everywhere = revealAt(live);
 
-    if (rv.workDots > 0.2) {
-      for (const seat of s.seats) {
-        for (let i = 0; i < seat.work.length; i++) {
-          const w = seat.work[i];
-          if (Math.hypot(world.x - w.x, world.y - w.y) <= WORK_RADIUS * 2.6) {
-            return { kind: "work", seatId: seat.id, index: i };
-          }
+    if (fieldOn || everywhere.workDots > 0.2) for (const seat of s.seats) {
+      if (seat.work.length === 0 || !present(seat.unitId)) continue;
+      if (detailFor(seat.unitId).reveal.workDots <= 0.2) continue;
+      const drawn = animatedAt(sid(seat.id), seat);
+      const dx = drawn.x - seat.x;
+      const dy = drawn.y - seat.y;
+      for (let i = 0; i < seat.work.length; i++) {
+        const w = seat.work[i];
+        if (Math.hypot(world.x - (w.x + dx), world.y - (w.y + dy)) <= WORK_RADIUS * 2.6) {
+          return { kind: "work", seatId: seat.id, index: i };
         }
       }
     }
 
-    const live = stage.scaleX();
     for (const unit of s.units) {
-      const d = Math.hypot(world.x - unit.x, world.y - unit.y);
-      const opacity = unitRingReveal(unit.depth, live);
-      if (opacity <= 0.05 || unitDrawRadius(unit, live) * live < 5) continue;
+      if (!present(unit.id)) continue;
+      const at = animatedAt(uid(unit.id), unit);
+      const d = Math.hypot(world.x - at.x, world.y - at.y);
+      const opacity = unitRingReveal(unit.depth, detailFor(unit.id).scale);
+      const drawn = drawnOf(unit);
+      if (opacity <= 0.05 || drawn * live < 5) continue;
       for (let i = 0; i < UNIT_RING_KEYS.length; i++) {
         if (unitRings.get(unit.id)?.[UNIT_RING_KEYS[i]] == null) continue;
-        const g = ringGeometry(unit, i, live);
+        const g = ringGeometry(unit, i, live, drawn);
         if (Math.abs(d - g.radius) <= Math.max(g.width, 7) / 2 + 2) {
           return { kind: "ring", unitId: unit.id, ring: UNIT_RING_KEYS[i] };
         }
       }
     }
 
-    if (rv.torus > 0.2) {
-      for (const unit of s.units) {
-        const d = Math.hypot(world.x - unit.x, world.y - unit.y);
-        if (Math.abs(d - unit.seatRingRadius) > SEAT_RADIUS + 3) continue;
-        const a = Math.atan2(world.y - unit.y, world.x - unit.x);
-        if (Math.abs(angleDelta(unit.seatFanAngle, a)) <= Math.max(unit.seatFanSpan, 0.22) / 2 + 0.06) {
-          return { kind: "torus", unitId: unit.id };
-        }
+    if (fieldOn || everywhere.torus > 0.2) for (const unit of s.units) {
+      if (!present(unit.id) || detailFor(unit.id).reveal.torus <= 0.2) continue;
+      const at = animatedAt(uid(unit.id), unit);
+      const d = Math.hypot(world.x - at.x, world.y - at.y);
+      if (Math.abs(d - unit.seatRingRadius) > SEAT_RADIUS + 3) continue;
+      const a = Math.atan2(world.y - at.y, world.x - at.x);
+      if (Math.abs(angleDelta(unit.seatFanAngle, a)) <= Math.max(unit.seatFanSpan, 0.22) / 2 + 0.06) {
+        return { kind: "torus", unitId: unit.id };
       }
     }
     return null;
-  }, [unitRings]);
+  }, [animatedAt, detailFor, drawnOf, presenceOf, unitRings]);
 
   const onStagePointerMove = useCallback(() => {
     if (dragRef.current) return;
@@ -1284,21 +2283,26 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!world || !s) return;
     const hit = hitTest(world);
     if (hit?.kind !== "work") {
-      // Clicking open paper lets go of the route. A click on a unit bubbles up
-      // here too, but its target is the unit, not the stage.
+      // Open ground (Greg, 2026-09-21): let go of whatever was selected, and
+      // pin the local detail field here — it gently reveals what is there
+      // without moving the camera or diving into the hierarchy. Tapping the
+      // field's own centre again lifts it. A click on a unit bubbles up here
+      // too, but its target is the unit, not the stage. Focus is left by its
+      // breadcrumb or Esc, never by a stray tap.
       if (!hit && e.target === e.target.getStage()) {
-        if (activeFocusId) leaveFocus();
-        else {
-          setRouteUnitId(null);
-          setSelectedUnitId(null);
-        }
+        setRouteUnitId(null);
+        setSelectedUnitId(null);
+        const k = stageRef.current?.scaleX() ?? scaleRef.current;
+        const place = lensInverse(fieldRef.current, world, k);
+        const current = pinnedFieldRef.current;
+        setPinnedField(current && Math.hypot(place.x - current.x, place.y - current.y) * k < 28 ? null : place);
       }
       return;
     }
     const seat = s.seatById.get(hit.seatId);
     const task = seat?.personId ? boards.get(seat.personId)?.[hit.index] : undefined;
     if (seat && task) setOpenWork({ seat, task });
-  }, [hitTest, pointerWorld, boards, activeFocusId, leaveFocus]);
+  }, [hitTest, pointerWorld, boards, setPinnedField]);
 
   const registerNode = useCallback((key: string, node: Konva.Group | null) => {
     if (node) nodeRefs.current.set(key, node);
@@ -1311,6 +2315,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   useEffect(() => {
     const get = () => renderRef.current;
     setPainters({
+      envelope: paintEnvelope(get),
+      field: paintField(get),
+      relation: paintRelation(get),
       unitDiscs: paintUnitDiscs(get),
       unitRings: paintUnitRings(get),
       torus: paintTorus(get),
@@ -1369,6 +2376,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
               flows rather than beside them (Greg, 2026-09-14). */}
           {painters && showSampleExternals && (
             <Shape sceneFunc={painters.externalFlows} perfectDrawEnabled={false} listening={false} />
+          )}
+          {painters && envelope && (
+            <Shape sceneFunc={painters.envelope} perfectDrawEnabled={false} listening={false} />
           )}
           {guideFamilies.flatMap((family) => {
             const focused = !!activeFamilyRootId && family.rootId === activeFamilyRootId;
@@ -1451,14 +2461,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                 opacity={0.5}
                 perfectDrawEnabled={false}
               />
-              <Shape
-                sceneFunc={painters.seatLinks}
-                stroke={C.seatLink}
-                strokeWidth={1.8}
-                lineCap="round"
-                opacity={Math.max(reveal.people, reveal.lead)}
-                perfectDrawEnabled={false}
-              />
+              {/* Per-person strength: people inside the detail field can be
+                  out while those beyond it are not. */}
+              <Shape sceneFunc={painters.seatLinks} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.workCapsules} perfectDrawEnabled={false} listening={false} />
               <Shape sceneFunc={painters.workDots} perfectDrawEnabled={false} listening={false} />
               {/* The unit circles. Painted rather than React-managed because
@@ -1476,18 +2481,34 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                 perfectDrawEnabled={false}
               />
               <Shape sceneFunc={painters.ripples} perfectDrawEnabled={false} listening={false} />
+              <Shape sceneFunc={painters.field} perfectDrawEnabled={false} listening={false} />
+              <Shape sceneFunc={painters.relation} perfectDrawEnabled={false} listening={false} />
             </>
           )}
         </Layer>
 
         <Layer ref={nodeLayerRef}>
-          {visibleUnits.map((unit) => {
+          {(() => {
+            // Sized once for every label below.
+            const fieldPx = fieldRadiusPx({ width: size.w, height: size.h });
+            return visibleUnits.map((unit) => {
             // What you can grab is exactly what you can see: the handle takes
             // the disc's drawn size, not its laid-out one. Reading it from
             // React's throttled scale is fine here — the circle is invisible,
             // so a 3% step in it is a 3% step in nothing.
             const drawn = unitDrawRadius(unit, scale);
             const invScale = 1 / Math.max(scale, 0.01);
+            const detailScale = pinnedField
+              ? effectiveScale(scale, fieldInfluence({ ...pinnedField, strength: 1, radiusPx: fieldPx }, unit, scale))
+              : scale;
+            const named = unitLabelVisible(drawn, scale, detailScale);
+            // Large dots name themselves beneath; the frame loop shows or
+            // hides the name as the dot actually swells or gives way.
+            const landmark = local && !named && (unit.dotPx ?? 0) >= LANDMARK_LABEL_PX;
+            // A name beneath a dot clears its gauges when they are showing.
+            const gauged = !!unitRings.get(unit.id)?.people &&
+              unitRingReveal(unit.depth, detailScale) * smoothstep(5, 11, drawn * scale) > 0.1;
+            const beneath = gauged ? ringGeometry(unit, UNIT_RING_KEYS.length - 1, scale).radius : drawn;
             return (
               <Group
                 key={unit.id}
@@ -1514,18 +2535,22 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                   // the route rather than drawing one of zero length.
                   setRouteUnitId(unit.id === arrangedTree.rootId ? null : unit.id);
                   setSelectedUnitId(unit.id);
+                  // A carried placeholder points at its basket entry.
+                  const carrier = carrierOf(basketRef.current, unit.id, basketTree);
+                  if (carrier) setFlashEntry(carrier);
                 }}
                 onTap={() => {
                   if (pressMovedRef.current) return;
                   setRouteUnitId(unit.id === arrangedTree.rootId ? null : unit.id);
                   setSelectedUnitId(unit.id);
+                  const carrier = carrierOf(basketRef.current, unit.id, basketTree);
+                  if (carrier) setFlashEntry(carrier);
                 }}
                 onDblClick={() => enterFocus(unit.id)}
                 onDblTap={() => enterFocus(unit.id)}
               >
-                <Circle radius={drawn} fill="transparent" perfectDrawEnabled={false} />
-                {(!focusBranch || focusBranch.has(unit.id)) &&
-                  unitLabelVisible(drawn, scale) && (
+                <Circle name="hit" radius={drawn} fill="transparent" perfectDrawEnabled={false} />
+                {(!focusBranch || focusBranch.has(unit.id)) && named && (
                   <Text
                     text={unit.name}
                     x={-drawn}
@@ -1540,9 +2565,26 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                     listening={false}
                   />
                 )}
+                {(!focusBranch || focusBranch.has(unit.id)) && landmark && (
+                  <Text
+                    name="landmark"
+                    text={unit.name}
+                    x={-80 * invScale}
+                    y={beneath + 6 * invScale}
+                    width={160 * invScale}
+                    align="center"
+                    wrap="none"
+                    ellipsis
+                    fontSize={11 * invScale}
+                    fontFamily={FONT}
+                    fill={C.inkSoft}
+                    listening={false}
+                  />
+                )}
               </Group>
             );
-          })}
+            });
+          })()}
 
           {seatsInView.map((seat) => {
               const isDragged = dragging === sid(seat.id);
@@ -1608,6 +2650,15 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
       {activeFocusId && (
         <nav style={S.breadcrumb} aria-label="Focused organisation path">
+          <button
+            type="button"
+            style={S.crumbClose}
+            onClick={leaveFocus}
+            aria-label="Leave focus"
+            title="Leave focus (Esc)"
+          >
+            ×
+          </button>
           {focusBreadcrumb.map((unit, index) => (
             <span key={unit.id} style={S.crumbWrap}>
               {index > 0 && <span style={S.crumbDivider}>›</span>}
@@ -1636,20 +2687,210 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         />
       )}
 
-      {pendingLevelChange && (
-        <div style={S.modalBackdrop} role="presentation">
-          <section style={S.confirmCard} role="dialog" aria-modal="true" aria-labelledby="level-change-title">
-            <div style={S.panelKicker}>restructure proposal</div>
-            <div id="level-change-title" style={S.panelTitle}>Change this unit’s level?</div>
-            <p style={S.confirmCopy}>
-              {arrangedTree.units.get(pendingLevelChange.unitId)?.name ?? "This unit"} would move from CEO+
-              {pendingLevelChange.from} to CEO+{pendingLevelChange.to}. No change has been made: choosing its new
-              parent is still an open product decision.
-            </p>
-            <button type="button" style={S.panelAction} onClick={() => setPendingLevelChange(null)}>Cancel</button>
-          </section>
+      {notice && (
+        <div role="status" aria-live="polite" style={S.notice}>
+          {notice}
         </div>
       )}
+
+      {(basket.length > 0 || (dragging?.startsWith("u:") ?? false)) && (() => {
+        const edge = coarsePointer || size.w < 760 ? "bottom" : "right";
+        const describe = (unitId: string) => {
+          const unit = arrangedTree.units.get(unitId);
+          const kind = kindById.get(unitId);
+          let below = 0;
+          const stack = [...(unit?.childIds ?? [])];
+          while (stack.length > 0) {
+            const id = stack.pop()!;
+            below++;
+            stack.push(...(arrangedTree.units.get(id)?.childIds ?? []));
+          }
+          const people = unit?.totalSeats ?? 0;
+          const type = kind === "team" ? vocabulary.team.singular : "Unit";
+          const reach = [
+            below > 0 ? `${below} ${below === 1 ? "unit" : "units"} below` : null,
+            `${people} ${people === 1 ? "person" : "people"}`,
+          ].filter(Boolean).join(" · ");
+          return { name: unit?.name ?? "Unit", line: `${type} · ${reach}` };
+        };
+        return (
+          <aside
+            ref={trayRef}
+            aria-label="Basket — branches being carried"
+            style={S.tray(edge, trayHot, basket.length === 0)}
+          >
+            <div style={S.trayHead}>
+              <span>Basket</span>
+              {basket.length > 1 && (
+                <button type="button" style={S.trayLink} onClick={() => setBasket([])}>
+                  Return all
+                </button>
+              )}
+            </div>
+            {basket.length === 0 && (
+              <div style={S.trayEmpty}>Drop here to carry this branch across the map</div>
+            )}
+            <div style={S.trayList(edge)}>
+              {basket.map((entry) => {
+                const { name, line } = describe(entry.unitId);
+                return (
+                  <div
+                    key={entry.unitId}
+                    style={S.trayEntry(flashEntry === entry.unitId, edge)}
+                    data-unit-id={entry.unitId}
+                    onPointerDown={pressEntry}
+                    onPointerMove={moveEntry}
+                    onPointerUp={releaseEntry}
+                    onPointerCancel={cancelEntry}
+                    title="Tap to find it on the map · drag onto the map to place it"
+                  >
+                    <span aria-hidden style={S.trayGrip}>⠿</span>
+                    <span style={S.trayText}>
+                      <strong style={S.trayName}>{name}</strong>
+                      <span style={S.trayLine}>{line}</span>
+                      {entry.absorbed.length > 0 && (
+                        <span style={S.trayLine}>includes {entry.absorbed.join(", ")}</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      style={S.trayReturn(edge)}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => returnEntry(entry.unitId)}
+                      aria-label={`Return ${name} to where it lives`}
+                    >
+                      Return
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </aside>
+        );
+      })()}
+
+      {proposal && (() => {
+        const close = () => setProposal(null);
+        if (proposal.kind === "merge") {
+          const from = arrangedTree.units.get(proposal.fromId)?.name ?? "This unit";
+          const into = arrangedTree.units.get(proposal.intoId)?.name ?? "that unit";
+          const impact = branchImpact(arrangedTree, proposal.fromId, (id) => kindById.get(id));
+          const copy = mergeCopy(from, into, impact);
+          return (
+            <div style={S.modalBackdrop} role="presentation" onClick={close}>
+              <section
+                style={S.confirmCard}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="proposal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div style={S.panelKicker}>relationship change · nothing has changed</div>
+                <div id="proposal-title" style={S.panelTitle}>Move or merge &ldquo;{from}&rdquo; with &ldquo;{into}&rdquo;?</div>
+                <p style={S.confirmCopy}>{copy.body}</p>
+                <p style={S.confirmCopy}>
+                  <strong>Reparent branch</strong> moves {from} and everything below it under {into}; it does not combine the two units.
+                </p>
+                <p style={S.confirmNote}>
+                  Merging isn&rsquo;t switched on yet: what happens to both units&rsquo; own people, and who leads the
+                  merged unit, still need deciding. So this can&rsquo;t be completed here.
+                </p>
+                <div style={S.confirmActions}>
+                  <button
+                    type="button"
+                    style={S.confirmPrimary(false)}
+                    onClick={() => confirmReparent(proposal.fromId, proposal.intoId)}
+                  >
+                    Reparent branch
+                  </button>
+                  <button type="button" style={S.confirmPrimary(true)} disabled title="Needs a product decision first">
+                    Merge entire branch
+                  </button>
+                  <button type="button" style={S.confirmSecondary} onClick={close} autoFocus>
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            </div>
+          );
+        }
+        if (proposal.kind === "reparent") {
+          const from = arrangedTree.units.get(proposal.fromId)?.name ?? "This branch";
+          const parent = arrangedTree.units.get(proposal.parentId)?.name ?? "that unit";
+          const impact = branchImpact(arrangedTree, proposal.fromId, (id) => kindById.get(id));
+          const below = impact.childUnits + impact.teams;
+          return (
+            <div style={S.modalBackdrop} role="presentation" onClick={close}>
+              <section
+                style={S.confirmCard}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="proposal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div style={S.panelKicker}>reporting change · nothing has changed</div>
+                <div id="proposal-title" style={S.panelTitle}>Move {from} under {parent}?</div>
+                <p style={S.confirmCopy}>
+                  {from} and everything below it will move together under {parent}.
+                </p>
+                <p style={S.confirmNote}>
+                  {below > 0 ? `${below} ${below === 1 ? "unit" : "units"} below this branch and ` : ""}
+                  {impact.people} {impact.people === 1 ? "person" : "people"} will remain together.
+                </p>
+                <div style={S.confirmActions}>
+                  <button type="button" style={S.confirmSecondary} onClick={close} autoFocus>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    style={S.confirmPrimary(false)}
+                    onClick={() => confirmReparent(proposal.fromId, proposal.parentId)}
+                  >
+                    Move branch
+                  </button>
+                </div>
+              </section>
+            </div>
+          );
+        }
+        const seat = scene.seatById.get(proposal.seatId);
+        const person = seat?.name ?? "This person";
+        const fromTeam = seat ? arrangedTree.units.get(seat.unitId)?.name : undefined;
+        const toTeam = arrangedTree.units.get(proposal.toUnitId)?.name ?? "that team";
+        return (
+          <div style={S.modalBackdrop} role="presentation" onClick={close}>
+            <section
+              style={S.confirmCard}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="proposal-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div style={S.panelKicker}>relationship change · nothing has changed</div>
+              <div id="proposal-title" style={S.panelTitle}>Move {person} to {toTeam}?</div>
+              <p style={S.confirmCopy}>
+                {person} will show on {toTeam} on this map{fromTeam ? `, instead of ${fromTeam}` : ""}.
+              </p>
+              <p style={S.confirmNote}>
+                This changes the map only. Their team membership in People and Teams stays as it is.
+              </p>
+              <div style={S.confirmActions}>
+                <button type="button" style={S.confirmSecondary} onClick={close}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  style={S.confirmPrimary(false)}
+                  onClick={acceptMove}
+                  autoFocus
+                >
+                  Move on this map
+                </button>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
 
       {hover && (
         <OrbitalHoverCard
@@ -1749,7 +2990,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       </div>
 
       <div style={S.controls}>
-        <button type="button" style={S.button} onClick={() => frame(worldRadius)}>
+        {previewGeography && (
+          <span role="status" style={S.modeIndicator} title="Dev only: this invented company is drawn the way a large company would be">
+            Large-company preview
+          </span>
+        )}
+        <button type="button" style={S.button} onClick={() => frame(worldBounds)} title="Show the whole company">
           Fit
         </button>
         {snapping ? (
@@ -1790,25 +3036,35 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         </span>}
         <span style={S.legendHint}>
           {snapping
-            ? "drag along a ring to adjust placement · tidy up restores the calculated map"
+            ? local
+              ? "drag a unit round its parent, or onto open ground · tap open ground to look closer there"
+              : "drag along a ring to adjust placement · tap open ground to look closer there · tidy up restores the calculated map"
             : "move nodes and people freely · visual only · resets on reload or tidy up"}
         </span>
+        {snapping && sessionPlaced > 0 && (
+          <span style={S.legendHint}>
+            {sessionPlaced === 1 ? "1 move" : `${sessionPlaced} moves`} to open ground kept for this session only
+          </span>
+        )}
       </div>}
     </div>
   );
 }
 
 function snapHint(drag: DragState | null): RenderCtx["snap"] {
-  if (!drag?.snap) return null;
-  return drag.snap.kind === "unit"
-    ? {
-        kind: "unit",
-        position: drag.snap.position,
-        parentId: drag.snap.parentId,
-        depth: drag.snap.depth,
-        unitId: drag.snap.unitId,
-      }
-    : { kind: "seat", position: drag.snap.position, unitId: drag.snap.unitId };
+  if (!drag) return null;
+  if (drag.kind === "unit") {
+    const plan = drag.plan;
+    if (!plan || plan.kind === "none") return null;
+    return {
+      kind: "unit",
+      unitId: plan.unitId,
+      position: plan.position,
+      guide: plan.kind === "orbit" ? plan.guide : null,
+      parentId: drag.parentId,
+    };
+  }
+  return drag.snap ? { kind: "seat", position: drag.snap.position, unitId: drag.snap.unitId } : null;
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -2121,6 +3377,106 @@ const S = {
     maxWidth: "calc(100% - 350px)",
   },
   crumbWrap: { display: "inline-flex", alignItems: "center", gap: 4 },
+  tray: (edge: "right" | "bottom", hot: boolean, empty: boolean) => ({
+    position: "absolute" as const,
+    zIndex: 11,
+    ...(edge === "right"
+      ? { right: 12, bottom: 72, width: 240, maxHeight: "min(52%, 420px)" }
+      : { left: 12, right: 12, bottom: "calc(env(safe-area-inset-bottom, 0px) + 64px)" }),
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+    padding: 10,
+    borderRadius: 16,
+    background: hot ? "rgba(236,245,252,0.97)" : "rgba(255,255,255,0.96)",
+    border: `1.5px ${empty ? "dashed" : "solid"} ${hot ? C.accent : C.link}`,
+    boxShadow: hot ? "0 10px 28px rgba(36,191,219,0.28)" : "0 8px 24px rgba(34,43,88,0.12)",
+    font: `500 12px/1.3 ${FONT}`,
+    color: C.ink,
+    transition: "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease",
+  }),
+  trayHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    font: `700 10px ${FONT}`,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    color: C.inkSoft,
+  },
+  trayLink: {
+    minHeight: 32,
+    padding: "0 8px",
+    border: "none",
+    background: "transparent",
+    color: C.path,
+    font: `600 12px ${FONT}`,
+    cursor: "pointer",
+  },
+  trayEmpty: { color: C.inkSoft, padding: "10px 4px" },
+  trayList: (edge: "right" | "bottom") => ({
+    display: "flex",
+    flexDirection: edge === "right" ? ("column" as const) : ("row" as const),
+    gap: 8,
+    overflow: "auto" as const,
+  }),
+  trayEntry: (flash: boolean, edge: "right" | "bottom") => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 48,
+    minWidth: edge === "bottom" ? 240 : undefined,
+    padding: "6px 6px 6px 8px",
+    borderRadius: 12,
+    background: C.white,
+    border: `1px solid ${flash ? C.path : C.link}`,
+    boxShadow: flash ? `0 0 0 3px rgba(118,90,232,0.25)` : "none",
+    cursor: "grab",
+    touchAction: "none" as const,
+    userSelect: "none" as const,
+  }),
+  trayGrip: { color: C.inkSoft, fontSize: 16, lineHeight: 1 },
+  trayText: { display: "flex", flexDirection: "column" as const, minWidth: 0, flex: 1 },
+  trayName: { font: `600 13px ${FONT}`, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
+  trayLine: { color: C.inkSoft, fontSize: 11, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
+  trayReturn: (edge: "right" | "bottom") => ({
+    minHeight: edge === "bottom" ? 44 : 36,
+    minWidth: 60,
+    padding: "0 10px",
+    borderRadius: 10,
+    border: `1px solid ${C.link}`,
+    background: "rgba(255,255,255,0.9)",
+    color: C.ink,
+    font: `600 12px ${FONT}`,
+    cursor: "pointer",
+  }),
+  notice: {
+    position: "absolute" as const,
+    left: "50%",
+    bottom: 72,
+    transform: "translateX(-50%)",
+    zIndex: 12,
+    maxWidth: "min(520px, calc(100% - 32px))",
+    padding: "10px 14px",
+    borderRadius: 12,
+    background: C.ink,
+    color: C.white,
+    font: `500 13px/1.4 ${FONT}`,
+    boxShadow: "0 8px 24px rgba(34,43,88,0.18)",
+    pointerEvents: "none" as const,
+  },
+  /** The dependable way out of focus, big enough for a thumb. */
+  crumbClose: {
+    width: 40,
+    height: 40,
+    marginRight: 4,
+    border: `1px solid ${C.link}`,
+    borderRadius: 999,
+    background: "rgba(255,255,255,0.95)",
+    color: C.ink,
+    font: `500 20px/1 ${FONT}`,
+    cursor: "pointer",
+  },
   crumbDivider: { color: C.inkSoft, opacity: 0.45, font: `500 12px ${FONT}` },
   crumb: (active: boolean) => ({
     maxWidth: 170,
@@ -2157,7 +3513,7 @@ const S = {
     backdropFilter: "blur(3px)",
   },
   confirmCard: {
-    width: 340,
+    width: 380,
     maxWidth: "calc(100% - 32px)",
     padding: 20,
     borderRadius: 16,
@@ -2166,6 +3522,35 @@ const S = {
     boxShadow: "0 20px 60px rgba(34,39,46,0.22)",
   },
   confirmCopy: { margin: "10px 0 0", font: `400 13px/1.5 ${FONT}`, color: C.inkSoft },
+  confirmNote: {
+    margin: "12px 0 0",
+    padding: "8px 10px",
+    borderRadius: 10,
+    background: C.track,
+    font: `400 12px/1.45 ${FONT}`,
+    color: C.ink,
+  },
+  confirmActions: { display: "flex", gap: 8, marginTop: 18 },
+  confirmSecondary: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    border: `1px solid ${C.link}`,
+    background: C.white,
+    color: C.ink,
+    font: `600 13px ${FONT}`,
+    cursor: "pointer",
+  },
+  confirmPrimary: (disabled: boolean) => ({
+    flex: 1.4,
+    minHeight: 44,
+    borderRadius: 10,
+    border: "none",
+    background: disabled ? C.track : C.ink,
+    color: disabled ? C.inkSoft : C.white,
+    font: `600 13px ${FONT}`,
+    cursor: disabled ? "not-allowed" : "pointer",
+  }),
   hud: {
     position: "absolute" as const,
     left: "50%",

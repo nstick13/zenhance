@@ -3,6 +3,7 @@
  * common parent. `buildOrbitalTree` still uses an internal synthetic root to
  * run its existing indexes; no such node or link appears in this scene.
  */
+import { layoutBranches } from "./branches";
 import { treeForFocus } from "./focus";
 import { layoutOrbital, type LayoutOptions, type OrbitalScene, type PlacedSeat } from "./layout";
 import type { OrbitalTree } from "./model";
@@ -20,10 +21,16 @@ export function visibleRootIds(tree: OrbitalTree): string[] {
 const move = (point: Point, by: Point): Point => ({ x: point.x + by.x, y: point.y + by.y });
 
 export function layoutOrbitalForest(tree: OrbitalTree, options: LayoutOptions = {}): OrbitalScene {
+  const local = options.geography === "local";
+  const layoutOne = (subtree: OrbitalTree) =>
+    local ? layoutBranches(subtree, {
+      startAngle: options.startAngle,
+      radialLooseness: options.radialLooseness,
+    }) : layoutOrbital(subtree, options);
   const roots = visibleRootIds(tree);
   if (roots.length <= 1) {
     const solo = roots[0] ? treeForFocus(tree, roots[0]) : null;
-    const scene = layoutOrbital(solo ?? tree, options);
+    const scene = layoutOne(solo ?? tree);
     const rootId = roots[0] ?? tree.rootId;
     return {
       ...scene,
@@ -34,7 +41,7 @@ export function layoutOrbitalForest(tree: OrbitalTree, options: LayoutOptions = 
   const islands = roots.map((rootId) => {
     const subtree = treeForFocus(tree, rootId);
     if (!subtree) throw new Error(`Missing orbital root ${rootId}`);
-    const scene = layoutOrbital(subtree, options);
+    const scene = layoutOne(subtree);
     return { rootId, scene, boundary: scene.extent + BOUNDARY_PAD };
   });
 
@@ -83,6 +90,19 @@ export function layoutOrbitalForest(tree: OrbitalTree, options: LayoutOptions = 
   const seatsByUnit = new Map<string, PlacedSeat[]>();
   for (const seat of seats) seatsByUnit.set(seat.unitId, [...(seatsByUnit.get(seat.unitId) ?? []), seat]);
   const extent = Math.max(...families.map((family) => Math.hypot(family.centre.x, family.centre.y) + family.boundary));
+  // Local islands carry settled bounds; move them with their island.
+  const bounds = local
+    ? families.reduce((acc, family, i) => {
+      const b = islands[i].scene.bounds!;
+      return {
+        minX: Math.min(acc.minX, b.minX + family.centre.x),
+        minY: Math.min(acc.minY, b.minY + family.centre.y),
+        maxX: Math.max(acc.maxX, b.maxX + family.centre.x),
+        maxY: Math.max(acc.maxY, b.maxY + family.centre.y),
+      };
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+    : undefined;
   return { units, seats, links, bands: [], unitById, seatById, seatsByUnit,
-    extent, maxDepth: Math.max(...islands.map((island) => island.scene.maxDepth)), families };
+    extent, maxDepth: Math.max(...islands.map((island) => island.scene.maxDepth)), families,
+    ...(local ? { geography: "local" as const, bounds } : {}) };
 }

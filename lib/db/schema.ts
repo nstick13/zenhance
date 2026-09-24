@@ -269,7 +269,11 @@ export const orbitalNodes = pgTable(
     boardId: text("board_id").notNull().default("default"),
     nodeType: orbitalNodeType("node_type").notNull(),
     nodeId: text("node_id").notNull(),
-    /** Absolute angle in radians, measured from the centre of the map. */
+    /** Absolute angle in radians. On the ring map, measured from the centre
+     *  of the map; in local branch geography (large companies), the unit's
+     *  direction from its own parent. On the ring map a child sits outboard of
+     *  its parent, so the two readings put a unit on the same side — see
+     *  lib/orbital/position.ts `savedAnglePoint`. */
     angle: numeric("angle", { precision: 9, scale: 6 }),
     /** Unit this node was dropped onto: the parent for a unit, the host for
      *  a seat. Null means "wherever the org says". */

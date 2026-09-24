@@ -3,6 +3,28 @@ import { polar, type Point } from "./geometry";
 
 export type PositionOffsets = ReadonlyMap<string, Point>;
 
+/**
+ * What a saved angle means (Greg, 2026-09-21: saved geography must carry into
+ * the new drawing, never be silently dropped).
+ *
+ * `orbital_nodes.angle` holds one number per unit. On the ring map it is the
+ * unit's direction from the centre of the map, on its own rung. In local
+ * branch geography a unit lives on an orbit round its own parent, so the same
+ * number is read as the unit's direction *from its parent*, at its own orbit
+ * distance. On the ring map a child sits outboard of its parent, roughly along
+ * the same line from the centre: measured on the demo and 2,562-person shapes
+ * the two directions differ by a median of 7–14°, rarely past 30° and never
+ * near a right angle. So an arrangement saved on rings lands each unit on the
+ * same side of its parent when a company moves to local geography — not
+ * exactly where it was, which the two drawings could not allow anyway. For a
+ * company's own children, whose parent is the centre, the readings are
+ * identical. A drop in local geography saves the direction from the parent,
+ * so it reloads exactly.
+ */
+export function savedAnglePoint(parent: Point, orbit: number, angle: number): Point {
+  return { x: parent.x + orbit * Math.cos(angle), y: parent.y + orbit * Math.sin(angle) };
+}
+
 /** Reconstruct saved same-rung placements as branch offsets, not as input to
  * the packer. Re-packing around one changed angle moves unrelated siblings
  * and often their whole subtrees. An offset keeps the calculated map stable;
@@ -25,12 +47,25 @@ export function anglePlacementOffsets(scene: OrbitalScene, angles: ReadonlyMap<s
       continue;
     }
     const centre = centreOf(unit);
-    const radius = Math.hypot(unit.x - centre.x, unit.y - centre.y);
-    const at = polar(angle, radius);
-    const delta = {
-      x: centre.x + at.x - unit.x - inherited.x,
-      y: centre.y + at.y - unit.y - inherited.y,
-    };
+    let target: Point;
+    if (scene.geography === "local") {
+      // On its own orbit round its (possibly moved) parent — see
+      // savedAnglePoint. The company itself has no orbit and stays.
+      const parent = unit.parentId ? scene.unitById.get(unit.parentId) : undefined;
+      if (!parent) {
+        cumulative.set(unit.id, inherited);
+        continue;
+      }
+      target = savedAnglePoint(
+        { x: parent.x + inherited.x, y: parent.y + inherited.y },
+        Math.hypot(unit.x - parent.x, unit.y - parent.y),
+        angle,
+      );
+    } else {
+      const at = polar(angle, Math.hypot(unit.x - centre.x, unit.y - centre.y));
+      target = { x: centre.x + at.x, y: centre.y + at.y };
+    }
+    const delta = { x: target.x - unit.x - inherited.x, y: target.y - unit.y - inherited.y };
     own.set(unit.id, delta);
     cumulative.set(unit.id, { x: inherited.x + delta.x, y: inherited.y + delta.y });
   }
@@ -109,5 +144,18 @@ export function applyPositionOffsets(
     ...units.map((unit) => Math.hypot(unit.x, unit.y) + unit.r),
     ...seats.map((seat) => Math.hypot(seat.x, seat.y) + 18),
   );
-  return { ...scene, units, seats, links, unitById, seatById, seatsByUnit, extent };
+  // Settled bounds follow the settled placements, so Fit and minimum zoom
+  // always frame where the company actually is.
+  const bounds = scene.bounds
+    ? units.reduce((b, unit) => {
+      const reach = unit.footprint ?? unit.r;
+      return {
+        minX: Math.min(b.minX, unit.x - reach),
+        minY: Math.min(b.minY, unit.y - reach),
+        maxX: Math.max(b.maxX, unit.x + reach),
+        maxY: Math.max(b.maxY, unit.y + reach),
+      };
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+    : undefined;
+  return { ...scene, units, seats, links, unitById, seatById, seatsByUnit, extent, ...(bounds ? { bounds } : {}) };
 }
