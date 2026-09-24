@@ -83,6 +83,21 @@ the paper releases focus without moving the camera. Deep nesting can still
 wind the ancestry path through other geometry: this is not yet a branch-local
 projection or a solved large-company layout.
 
+### Next grow-study design jobs (Greg, 2026-09-20)
+
+1. **A focus lens that coexists with pan and zoom.** Explore a parallax-like
+   scroll-and-zoom interaction that magnifies the part of a detailed org map
+   under attention, as though moving a magnifying glass across it. Work out
+   what stays geographically stable, how nearby context remains legible, and
+   how the lens enters/exits without fighting ordinary wheel/pinch zoom.
+   This is a design problem to prototype, not a chosen rendering technique.
+2. **Untangle layout and snapping.** Complex, uneven organisations currently
+   produce crossing/overlapping branches; the present snapping can worsen
+   rather than resolve the tangle. Rework placement and snap behaviour together
+   so the map is clearer both when calculated and when a user moves a node.
+   Test against blank, 45-person and 1,000-person studies, including the
+   30-level branch and disconnected family, before treating it as resolved.
+
 ### The idea being tested
 Greg's framing: *"the user starts with almost nothing."* One breathing `+` in the
 middle. Click it and you create a **human** — not a company, not a value stream.

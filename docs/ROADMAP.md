@@ -159,6 +159,8 @@ demo org found both within a minute of clicking. Keep seeding it before shipping
 
 > 🔴 **Read [Scale UAT — what 2,400 people exposed](#-scale-uat--what-2400-people-exposed-2026-09-13) first** if you're picking up map work. Orbital navigation is the live open question; it is **design-first and unstarted** — talk to Greg before writing code.
 
+> **Grow-study visualisation next (Greg, 2026-09-20):** prototype a pan/zoom-compatible local magnifying lens, then revisit layout and snapping together to reduce tangling at scale. These are [recorded as design jobs in LAB.md](LAB.md#next-grow-study-design-jobs-greg-2026-09-20), not settled implementation rules or approval to merge the lab into `main`.
+
 > **The through-line:** Nate's three instincts (2026-08-26) — *"make it configurable," "the load screen is uninspiring," "show who owns a value stream"* — converge on one sequence. You cannot offer "colour by discipline" or "show FTE vs contractor inside a team" until those are real fields; and the moment they are, three findings from [PRODUCT.md](PRODUCT.md)'s menu unlock for free. **The field layer is the unlock; the display config is what makes it feel personal.**
 
 ### S1 — Look & feel + stream ownership *(shipped v0.1.23)*
