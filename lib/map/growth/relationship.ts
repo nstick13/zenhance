@@ -17,7 +17,7 @@
  * Releasing before the charge completes changes nothing. Passing over a node
  * on the way somewhere else never gets near arming it.
  */
-import type { OrbitalTree } from "./model";
+import type { OrbitalTree } from "@/lib/orbital/model";
 
 /** Hold over a target this long to arm the proposal… */
 export const DWELL_MS = 900;

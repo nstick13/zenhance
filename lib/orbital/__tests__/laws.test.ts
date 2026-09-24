@@ -18,10 +18,10 @@ import { demoInput } from "./orbitalFixture";
 import { buildOrbitalTree, type OrgInput } from "../model";
 import { layoutCompany } from "../complexity";
 import { layoutOrbitalForest } from "../forest";
-import { planInsertion } from "../insertion";
+import { planInsertion } from "@/lib/map/growth/insertion";
 import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "../position";
 import { descendantIds } from "../snap";
-import { interactionOrbit, INTERACTION_ORBIT_MIN_PX } from "../relationship";
+import { interactionOrbit, INTERACTION_ORBIT_MIN_PX } from "@/lib/map/growth/relationship";
 import { structuralEnvelope } from "../envelope";
 import type { OrbitalScene, PlacedUnit } from "../layout";
 

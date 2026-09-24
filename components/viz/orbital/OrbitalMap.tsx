@@ -21,7 +21,8 @@ import {
   type PlacedUnit,
 } from "@/lib/orbital/layout";
 import { descendantIds, snapSeat, type SeatSnap } from "@/lib/orbital/snap";
-import { planInsertion, type InsertionPlan } from "@/lib/orbital/insertion";
+import { planInsertion, type InsertionPlan } from "@/lib/map/growth/insertion";
+import { canReparentAt, decideDrop, eligibleTargets } from "@/lib/map/growth/drop";
 import { carrierOf, type BasketTree } from "@/lib/map/basket/basket";
 import { useBasket } from "./useBasket";
 import {
@@ -36,7 +37,7 @@ import {
   trackRelation,
   type ReparentOrbit,
   type Relation,
-} from "@/lib/orbital/relationship";
+} from "@/lib/map/growth/relationship";
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
 import { READABLE_SCALE } from "@/lib/orbital/complexity";
 import { focusOrbital } from "@/lib/orbital/focus";
@@ -1455,6 +1456,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const waitingInBasket = renderRef.current?.carriedBranch;
     return overlapTarget(s.units, point, (id) => {
       const u = s.unitById.get(id);
+      // A radius of 0 is how overlapTarget is told "not a target".
       if (!u || !u.parentId || waitingInBasket?.has(id)) return 0;
       if ((presenceRef.current.get(id) ?? 1) < INTERACTABLE_PRESENCE) return 0;
       return drawnOf(u);
@@ -1471,11 +1473,17 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const s = sceneRef.current;
     const stage = stageRef.current;
     if (!s || !stage) return { magnet: null, reparent: null };
-    const waitingInBasket = renderRef.current?.carriedBranch;
-    const eligible = s.units.filter((unit) =>
-      !waitingInBasket?.has(unit.id) &&
-      (presenceRef.current.get(unit.id) ?? 1) >= INTERACTABLE_PRESENCE);
     const source = s.unitById.get(drag.id);
+    // Not in the basket, and present enough to be seen — see eligibleTargets
+    // for why each exclusion is there. The dragged branch and its own parent
+    // are excluded per-call below, because `magneticMergeTarget` wants them
+    // as an explicit set rather than pre-filtered.
+    const eligible = eligibleTargets(s.units, {
+      carried: renderRef.current?.carriedBranch,
+      presenceOf: (id) => presenceRef.current.get(id) ?? 1,
+      minPresence: INTERACTABLE_PRESENCE,
+      moving: new Set(),
+    });
     // Moving round your own parent is geography, and the parent is the one
     // node you are bound to pass close to. It can never be a merge target.
     const notTargets = new Set(drag.moved);
@@ -1492,14 +1500,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       stage.scaleX(),
       drag.magnet?.unitId ?? null,
     ) : null;
-    // A parent only offers its ring when the *camera* has reached the zoom
-    // where unit names read — you have to be able to see what you are aiming
-    // at (Greg, 2026-09-24). The magnifier deliberately does not count: it
-    // lifts detail in one place, and switching a reporting-change gesture on
-    // underneath it would be a trap. Zoomed further out, dragging is pure
-    // geography and a reporting change is only reachable by dropping one node
-    // onto another and choosing it.
-    const canReparent = stage.scaleX() >= READABLE_SCALE;
+    // A parent only offers its ring once unit names read — see canReparentAt.
+    const canReparent = canReparentAt(stage.scaleX(), READABLE_SCALE);
     const reparent = magnet || !canReparent ? null : reparentOrbitTarget(
       eligible.map((unit) => ({
         id: unit.id,
@@ -1638,6 +1640,76 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     return true;
   }, [baseTree, persist, ripple]);
 
+  /**
+   * Carry out whatever a release meant.
+   *
+   * `decideDrop` decides; this applies. Shared by drags on the map and drags
+   * out of the basket so the two can never mean different things — they had
+   * already drifted once (docs/ENGINES.md § Growth). Returns whether the
+   * branch actually landed, which is the only thing the basket needs to know.
+   */
+  const applyDrop = useCallback((
+    drag: Extract<DragState, { kind: "unit" }>,
+    opts: {
+      now: number;
+      snapping: boolean;
+      cancelled?: boolean;
+      /** What to say when it finds nowhere to go. The map explains the rings;
+       *  the basket says where the branch actually went. Only one of them
+       *  should speak. */
+      say?: (offRing: boolean) => void;
+    },
+  ): boolean => {
+    const s = sceneRef.current;
+    const settle = () => { if (s) targetsRef.current = buildTargets(s, null); };
+    const outcome = decideDrop({
+      unitId: drag.id,
+      origin: drag.origin,
+      current: drag.current,
+      overTray: drag.overTray,
+      relation: drag.relation,
+      reparent: drag.reparent,
+      reparentHold: drag.reparentHold,
+      plan: drag.plan,
+    }, opts);
+    switch (outcome.kind) {
+      case "carry":
+        // Into the basket: a pending carry. The unit goes home and is marked.
+        settle();
+        carry(outcome.unitId);
+        return false;
+      case "merge":
+        // A deliberate drop onto another unit asks; nothing changes until then.
+        settle();
+        setProposal({ kind: "merge", fromId: outcome.fromId, intoId: outcome.intoId });
+        return false;
+      case "reparent":
+        // Held still on another parent's orbit: a deliberate reporting change,
+        // and still only a question.
+        settle();
+        setProposal({ kind: "reparent", fromId: outcome.fromId, parentId: outcome.parentId });
+        return false;
+      case "free": {
+        const previous = unitOffsetsRef.current.get(outcome.unitId) ?? { x: 0, y: 0 };
+        unitOffsetsRef.current.set(outcome.unitId, {
+          x: previous.x + outcome.delta.x,
+          y: previous.y + outcome.delta.y,
+        });
+        setPositionRevision((revision) => revision + 1);
+        return false;
+      }
+      case "place":
+        return commitPlan(outcome.unitId, drag.origin, outcome.plan);
+      case "return":
+        settle();
+        if (opts.say) opts.say(outcome.offRing);
+        else if (outcome.offRing && !local) {
+          setNotice("Rings show reporting level here, so a unit stays on its own ring. Break orbits places it anywhere.");
+        }
+        return false;
+    }
+  }, [buildTargets, carry, commitPlan, local]);
+
   const onUnitDragEnd = useCallback(() => {
     const drag = dragRef.current;
     dragRef.current = null;
@@ -1645,48 +1717,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     setDragging(null);
     setTrayHot(false);
     if (!drag || drag.kind !== "unit") return;
-    const s = sceneRef.current;
-    if (drag.overTray) {
-      // Into the basket: a pending carry. The unit goes home and is marked.
-      if (s) targetsRef.current = buildTargets(s, null);
-      carry(drag.id);
-      return;
-    }
-    if (isArmed(chargeAt(drag.relation, performance.now()))) {
-      // A deliberate drop onto another unit asks; nothing changes until then.
-      if (s) targetsRef.current = buildTargets(s, null);
-      setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
-      return;
-    }
-    if (drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
-      // Held still on another parent's orbit: a deliberate reporting change,
-      // and still only a question. A drop made in passing just lands.
-      if (s) targetsRef.current = buildTargets(s, null);
-      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
-      return;
-    }
-    if (!snapping && s) {
-      const delta = { x: drag.current.x - drag.origin.x, y: drag.current.y - drag.origin.y };
-      if (Math.hypot(delta.x, delta.y) > 1) {
-        const previous = unitOffsetsRef.current.get(drag.id) ?? { x: 0, y: 0 };
-        unitOffsetsRef.current.set(drag.id, { x: previous.x + delta.x, y: previous.y + delta.y });
-        setPositionRevision((revision) => revision + 1);
-      } else {
-        targetsRef.current = buildTargets(s, null);
-      }
-      return;
-    }
-    if (!commitPlan(drag.id, drag.origin, drag.plan)) {
-      // Released somewhere that isn't a place: back where it came from.
-      if (s) targetsRef.current = buildTargets(s, null);
-      if (drag.plan?.kind === "none" && drag.plan.reason === "off-orbit" && !local) {
-        setNotice("Rings show reporting level here, so a unit stays on its own ring. Break orbits places it anywhere.");
-      }
-      return;
-    }
-    // A drop that lands takes the unit out of the basket if it was in it.
-    settle(drag.id);
-  }, [buildTargets, carry, commitPlan, local, settle, snapping, setTrayHot]);
+    if (applyDrop(drag, { now: performance.now(), snapping })) settle(drag.id);
+  }, [applyDrop, settle, snapping, setTrayHot]);
 
   // --- carrying out of the basket ---------------------------------------------
   /** Screen point → world point under the live camera. */
@@ -1811,32 +1843,20 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       dragRef.current = null;
       dragClientRef.current = null;
       setDragging(null);
-      const s = sceneRef.current;
       if (!drag || drag.kind !== "unit") return null;
-      const settled = () => { if (s) targetsRef.current = buildTargets(s, null); };
-
-      // A deliberate, held contact is a relationship change, not a placement.
-      if (!cancelled && isArmed(chargeAt(drag.relation, performance.now()))) {
-        settled();
-        setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
-        return { landed: false, unitId: drag.id };
-      }
-      if (!cancelled && drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
-        settled();
-        setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
-        return { landed: false, unitId: drag.id };
-      }
-
-      const landed = !cancelled && !drag.overTray && commitPlan(drag.id, drag.origin, drag.plan);
-      if (landed) return { landed: true, unitId: drag.id };
-
-      // Cancelled, dropped back on the tray, or no room: it stays in the
-      // basket — not back at its origin, which it never actually left.
-      settled();
-      if (!cancelled && !drag.overTray) setNotice(noRoom(drag.id));
-      return { landed: false, unitId: drag.id };
+      // The same decision as a drag on the map. It used to be a second copy
+      // of this tree, and the two had drifted.
+      const landed = applyDrop(drag, {
+        now: performance.now(),
+        snapping,
+        cancelled,
+        // A carried branch that finds nowhere to go stays in the basket —
+        // not back at its origin, which it never actually left.
+        say: () => { if (!cancelled && !drag.overTray) setNotice(noRoom(drag.id)); },
+      });
+      return { landed, unitId: drag.id };
     };
-  }, [buildTargets, commitPlan, followCarry, locateCarried, noRoom]);
+  }, [applyDrop, followCarry, locateCarried, noRoom, snapping]);
 
   const onSeatDragStart = useCallback((seat: PlacedSeat) => {
     setHover(null);

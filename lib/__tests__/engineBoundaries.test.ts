@@ -71,8 +71,9 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/orbital/avatar.ts": "runtime",
 
   // 2. Growth — add, merge, re-parent.
-  "lib/orbital/insertion.ts": "growth",
-  "lib/orbital/relationship.ts": "growth",
+  "lib/map/growth/insertion.ts": "growth",
+  "lib/map/growth/relationship.ts": "growth",
+  "lib/map/growth/drop.ts": "growth",
 
   // 6. Basket — carrying a node a long way.
   "lib/map/basket/basket.ts": "basket",

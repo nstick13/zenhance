@@ -57,18 +57,38 @@ model the other five are being moved toward. Its contract is
 Still trapped in `OrbitalMap.tsx`: ~80 lines of scene assembly (`masterScene`,
 `projectedScene`, `interactionScene`, `envelope`).
 
-### 2. Growth — adding, merging, re-parenting
-`lib/orbital/insertion.ts` (landing + who makes room) · `relationship.ts`
-(harmless move vs. relationship change, magnetic merge, cycle guards, proposal
-copy) · `app/lab/grow/` (`GrowLab.tsx`, `visualRules.ts` — **the creation half**)
+### 2. Growth — adding, merging, re-parenting ✅ **extracted 2026-09-24**
+**Pure:** `lib/map/growth/drop.ts` — **what it means when you let go**, plus
+which units a drag may aim at and whether a reporting change is offerable at
+this zoom. 25 tests. · `insertion.ts` (landing + who makes room) ·
+`relationship.ts` (harmless move vs. relationship change, magnetic merge,
+cycle guards, proposal copy).
+**Glue:** `applyDrop` in `OrbitalMap.tsx` — one place carries out whatever a
+release meant.
 
-Still trapped in `OrbitalMap.tsx`: ~465 lines — `onUnitDragStart/Move/End`,
+**The decision existed twice and had drifted.** `onUnitDragEnd` (a node
+dragged on the map) and the basket's drag-out handler implemented the same
+five-way tree separately. Neither had a test, and they did not agree: with
+snaps off, a node from the basket committed through the planner — rippling
+and counting as placed — while the same node on the map had its delta applied
+raw. **That difference is preserved and tested, not silently resolved**:
+unifying it changes how Break orbits feels, which is Greg's call. See the
+warning block in `drop.ts`.
+
+Still in `OrbitalMap.tsx`: the drag *plumbing* — `onUnitDragStart/Move`,
 `deliberateTarget`, `unitRelationshipTargets`, `commitPlan`, `onSeatDrag*`,
-`confirmMove`, `confirmReparent`.
+`confirmMove`, `confirmReparent`. It reads stage, scene and presence refs
+every frame, so it belongs with `runtime`, not in a pure module.
 
-**This engine exists twice.** The shipped Konva map can rearrange but cannot
-create; `GrowLab.tsx` (3,320 lines of SVG) can create but is a lab. Converging
-them is Phase 3, and it is the only way the grow flow reaches a customer.
+**The creation half still lives elsewhere.** The shipped map can rearrange but
+cannot create; `GrowLab.tsx` (3,320 lines of SVG) can create but is a lab.
+Converging them is Phase 3, and it is the only way the grow flow reaches a
+customer. `drop.ts` is the shape its creation drops should land in.
+
+**Noticed while extracting, not fixed:** Break orbits is a one-way door. Its
+button becomes a static "Whiteboard mode" label, and the only way back to
+snapped orbits is Tidy up — which discards every placement. Pre-existing;
+left alone because changing it is a feel decision.
 
 ### 3. Work — work at a human level ✅ **extracted 2026-09-24**
 **Pure:** `lib/map/work/board.ts` — what a board summarises to, what counts as
@@ -174,7 +194,7 @@ and it is worth doing slowly.
 |---|---|---|
 | 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
 | 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
-| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera, basket, work, signal done** 2026-09-24; growth next |
+| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **five of six done** 2026-09-24 — camera, basket, work, signal, growth. Layout is a move, not a refactor |
 | 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
 
 **Camera, as built (2026-09-24):** `OrbitalMap.tsx` 3,869 → 3,687 lines; 182

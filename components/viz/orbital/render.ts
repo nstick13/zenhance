@@ -26,7 +26,7 @@ import {
 import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
 import type { Envelope } from "@/lib/orbital/envelope";
 import type { DetailField } from "@/lib/orbital/detail";
-import { metaballBridge, type ReparentOrbit } from "@/lib/orbital/relationship";
+import { metaballBridge, type ReparentOrbit } from "@/lib/map/growth/relationship";
 import {
   UNIT_CULL_PX,
   drawnUnitRadius,

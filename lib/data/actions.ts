@@ -38,7 +38,7 @@ import {
 } from "@/lib/data/podTemplateOps";
 import { getOrgSnapshot } from "@/lib/data/queries";
 import { buildCanvasMap } from "@/lib/canvas/buildCanvasMap";
-import { validateReparent } from "@/lib/orbital/relationship";
+import { validateReparent } from "@/lib/map/growth/relationship";
 
 /**
  * Mutations. Each action resolves the tenant via requireWorkspace() and scopes
