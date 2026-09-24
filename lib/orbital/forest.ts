@@ -26,6 +26,7 @@ export function layoutOrbitalForest(tree: OrbitalTree, options: LayoutOptions = 
     local ? layoutBranches(subtree, {
       startAngle: options.startAngle,
       radialLooseness: options.radialLooseness,
+      fan: options.fan,
     }) : layoutOrbital(subtree, options);
   const roots = visibleRootIds(tree);
   if (roots.length <= 1) {

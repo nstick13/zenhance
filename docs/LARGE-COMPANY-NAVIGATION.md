@@ -195,6 +195,51 @@ wide and bodies at least 1.5, whatever the company's spread. Measured with a
 branch dragged eight company-widths out: **32 separate territories before, one
 after**.
 
+### The river (2026-09-24, later)
+
+Greg, looking at it again: the fans could be tightened *"considerably — half
+if possible"*; the company's first child was too close and clashed with it;
+that child's children *"splay too much… let's instead have them splay tightly
+just like their children"*; and the map should read *"master/centre on the
+left and the detail toward the right"*. Plus a rule of his own: *"the larger
+the company, counter-intuitively, the smaller the splay."*
+
+What that took:
+
+- **The company faces east** (`startAngle` 0, was due north) and nothing is
+  spread evenly round a circle any more. The old "holding node" treatment —
+  where the company's only child took the whole circle and the company tucked
+  into a pocket beside it — is gone. That treatment was what made the first
+  child's children splay evenly, and it is what put the company on top of it.
+- **The fan narrows as the company grows**, `fanFor`: 100° at the small end,
+  46° at the large. Same measurement that chooses the geography, so a company
+  always gets the same fan.
+- **A tight fan is a preference, not a cage.** Holding a branch inside a
+  narrow slice means pushing it out until it subtends that little, and for a
+  branch carrying half the company that means the horizon — the first attempt
+  put the company's divisions 16,000–24,000 units out with nothing in between.
+  So the tight fan is tried first and widened a step at a time, only while
+  widening keeps the orbit from running away (`ORBIT_TOLERANCE`, `FAN_LADDER`).
+  A lone child competes with nobody and only has to clear its parent.
+- **The company's trunk is measured against what hangs off it**
+  (`ROOT_TRUNK_SHARE`). Cleared by the usual 46 units, the company and its one
+  child read as a single blot at the whole-company view — 363 units apart
+  while that child's own children stood 16,000 out. The trunk is now 30% of
+  the child's own orbit, and the variation pass is not allowed to pull it back.
+
+Measured on the 2,562-person shape: median fan **57°**, down from 102° before
+this pass; zero crossings; zero overlaps. Layout costs more, because a node
+may try three fans before settling: 56ms for 411 units, 139ms for 1,011.
+
+The cost is room. A map that runs one way cannot pack like one that spreads
+round a circle, and the company went from 40,252 across to 74,128. That is a
+deliberate trade — a branch's direction now tells you where you are — but it
+broke the rule that chose the geography, because local geography no longer
+fits a large company better than the rings do. Hence `RINGS_HOPELESS`: past
+30× zoom-to-read the rings have not merely lost on points, they have stopped
+working, and local geography needs only to be better rather than better by
+half.
+
 ### What this changed about which map a company gets
 
 Smaller units mean smaller companies, so the zoom-to-read calibration moved.
@@ -207,8 +252,8 @@ Re-measured on the reference screen:
 | 150 people, 5 levels | 3.9× | — | rings |
 | 400 people, 7 levels | 7.7× | 11.7× | rings |
 | 1,000 people, 8 levels | 20.9× | 17.7× | **rings** (was local) |
-| 2,562 people, 11 levels | 73.2× | 38.9× | local |
-| ~6,000 people, 13 levels | 200.9× | 65.1× | local |
+| 2,562 people, 11 levels | 73.2× | 59.8× | local (rings hopeless) |
+| ~6,000 people, 13 levels | 200.9× | 134.4× | local (rings hopeless) |
 
 The 1,000-person company now stays on rings: local geography no longer fits it
 1.5× better, because tighter fans cost room. Worth watching — it is the shape

@@ -24,6 +24,7 @@
  *   2,562 people, 12 levels         91×                 5.1× better    local
  *   ~6,000 people, 13 levels        229×                6.1× better    local
  */
+import { fanFor } from "./branches";
 import { layoutOrbitalForest } from "./forest";
 import type { Geography, OrbitalScene } from "./layout";
 import type { LayoutOptions } from "./layout";
@@ -38,6 +39,20 @@ export const MAX_ZOOM_TO_READ = 6;
 /** Local geography must fit the company at least this much larger to be
  *  worth changing how the company is drawn. */
 export const LOCAL_MUST_WIN_BY = 1.5;
+/**
+ * Past this, the ring map is not "less good" — it has stopped working, and
+ * the margin test stops being the right question.
+ *
+ * The guard above exists so a company does not change drawing for a marginal
+ * gain. But a company needing seventy times zoom to read a name on its rings
+ * cannot be navigated on them at any margin, and since 2026-09-24 the local
+ * drawing is deliberately *less* compact — tight fans that run one way, so a
+ * branch's direction tells you where you are (Greg: "master/centre on the
+ * left and the detail toward the right"). It buys legibility of structure,
+ * not area. So above this line, local geography needs only to be better, not
+ * better by half.
+ */
+export const RINGS_HOPELESS = 30;
 /** The zoom range over which local branches are allowed to become radially
  * loose. Log space is deliberate: 2x→4x is the same perceptual step as
  * 20x→40x, while a raw headcount would say nothing about the drawing. */
@@ -98,6 +113,12 @@ export function visualComplexity(ringZoomToRead: number): number {
 const loosenessFor = (ringZoomToRead: number) =>
   ALLOW_RADIAL_LOOSENESS ? visualComplexity(ringZoomToRead) : 0;
 
+/** Everything the local layout takes from the same one measurement. */
+const localOptions = (ringZoom: number) => ({
+  radialLooseness: loosenessFor(ringZoom),
+  fan: fanFor(visualComplexity(ringZoom)),
+});
+
 export type GeographyChoice = {
   geography: Geography;
   ringZoomToRead: number;
@@ -126,7 +147,7 @@ export function layoutCompany(
     const local = layoutOrbitalForest(tree, {
       ...options,
       geography: "local",
-      radialLooseness: loosenessFor(ringZoom),
+      ...localOptions(ringZoom),
     });
     return { scene: local, choice: {
       geography: "local",
@@ -148,10 +169,11 @@ export function layoutCompany(
   const local = layoutOrbitalForest(tree, {
     ...options,
     geography: "local",
-    radialLooseness: loosenessFor(ringZoom),
+    ...localOptions(ringZoom),
   });
   const localZoom = zoomToRead(local);
-  const geography: Geography = ringZoom / localZoom >= LOCAL_MUST_WIN_BY ? "local" : "orbital";
+  const margin = ringZoom > RINGS_HOPELESS ? 1 : LOCAL_MUST_WIN_BY;
+  const geography: Geography = ringZoom / localZoom >= margin ? "local" : "orbital";
   return {
     scene: geography === "local" ? local : ring,
     choice: {

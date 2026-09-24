@@ -71,18 +71,49 @@ const WEDGE_GAP = 0.05;
  *  children have angular room to be pulled inward (see the variation pass).
  *  Spent only when variation is on. */
 const ORBIT_SLACK = 0.35;
-/** A unit's children fan away from its parent, never round behind it.
- *  Tightened from 200° on 2026-09-24 (Greg: children should "fan out more
- *  tightly, rather than splaying in such a way that they are equidistantly
- *  distributed around the parent node"). The company itself is the exception
- *  — it has no parent to face away from, so it uses the whole circle.
+/**
+ * How wide a unit's children may fan, away from its own parent (Greg,
+ * 2026-09-24: "those angles can be tightened up considerably — half if
+ * possible").
  *
- *  Tighter fans cost extent, because the same branches have to fit a smaller
- *  angle: measured on the 2,562-person shape, 200° gives 36,024 across and a
- *  median fan of 102°, 170° gives 40,252 and 87°, 150° gives 44,355 and 77°.
- *  170° is where the fans read as fans without pushing the company so wide
- *  that local geography stops being worth choosing. */
-export const FAN_MAX = 170 * DEG;
+ * It narrows as the company grows, which is his rule and is less strange than
+ * it sounds: *"the larger the company, counter-intuitively, the smaller the
+ * splay, and the tighter it must follow the 'try to be on the opposite side
+ * as the parent' rule."* A small company can afford to open out, because
+ * there is nothing else competing for the screen. A large one reads far
+ * better as a river system — everything flowing one way, away from the
+ * centre — than as a shrub, because the direction a branch runs in is then
+ * telling you where you are.
+ *
+ * Measured from the whole-company legibility figure the geography choice
+ * already uses, so the same company always gets the same fan.
+ */
+export const FAN_SMALL = 100 * DEG;
+export const FAN_LARGE = 46 * DEG;
+export const fanFor = (complexity: number): number =>
+  FAN_SMALL + (FAN_LARGE - FAN_SMALL) * Math.min(1, Math.max(0, complexity));
+/** The fan a layout uses when nobody says (small companies, tests). */
+export const FAN_MAX = FAN_SMALL;
+/** A fan never opens past this: children stay on the far side from their own
+ *  parent, whatever it costs. */
+export const FAN_WIDE = 190 * DEG;
+/** How far the company stands off its only child, as a share of that child's
+ *  own orbit — so the trunk of the river is on the same scale as the branches
+ *  it feeds, and the two read as two places. */
+const ROOT_TRUNK_SHARE = 0.3;
+/** Widening steps tried, tightest first, as multiples of the preferred fan. */
+const FAN_LADDER = [1, 1.6, 2.6];
+/**
+ * How much further out a tight fan may push a child before the tightness
+ * stops being worth it.
+ *
+ * Measured on the 2,562-person shape, against a median fan of 102° before
+ * this pass: 1.45 gives 78° and a company 50,008 across; 2.0 gives 61° and
+ * 65,082; 2.4 gives 56° and 69,658; 4.0 gives 54° and 76,078 — the curve
+ * flattens because past a point the branches simply cannot be held any
+ * tighter. 2.4 is roughly the halving Greg asked for, at the knee.
+ */
+const ORBIT_TOLERANCE = 2.4;
 /** How much of the distance to its nearest neighbour a dot may swell into when
  *  zoomed out — two neighbours at this share still leave a tenth clear. */
 const CEILING_SHARE = 0.45;
@@ -165,15 +196,19 @@ function wedgeAt(disks: Disk[], rho: number, clear: number): { lo: number; hi: n
 }
 
 export type LocalLayoutOptions = {
-  /** Direction of the company's first child. Default: due north. */
+  /** Which way the company faces. East by default, so the map reads
+   *  master-on-the-left and detail to the right (Greg, 2026-09-24). */
   startAngle?: number;
+  /** How wide a fan may open. See `fanFor`. */
+  fan?: number;
   /** 0 = one circular sibling orbit. 1 = use all safe branch-sensitive
    * radial variation. Always supplied from visual complexity in production. */
   radialLooseness?: number;
 };
 
 export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {}): OrbitalScene {
-  const startAngle = opts.startAngle ?? -Math.PI / 2;
+  const startAngle = opts.startAngle ?? 0;
+  const fan = Math.max(10 * DEG, Math.min(TAU, opts.fan ?? FAN_MAX));
   const radialLooseness = Math.min(1, Math.max(0, opts.radialLooseness ?? 1));
   const root = tree.units.get(tree.rootId);
   const company = Math.max(1, root?.totalSeats ?? 1);
@@ -214,7 +249,7 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
     return disks.map((d) => ({ x: ox + d.x * cos - d.y * sin, y: oy + d.x * sin + d.y * cos, f: d.f }));
   };
 
-  const build = (id: string, wholeCircle = false): Branch => {
+  const build = (id: string): Branch => {
     const unit = tree.units.get(id)!;
     const kids = kidsOf(unit);
     const own = footprint.get(id)!;
@@ -227,81 +262,89 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
       return branch;
     }
 
-    // A company with a single child is a holding node: drawn honestly it
-    // would squeeze the whole organisation into one fan with the company off
-    // at its foot. The child takes the whole circle instead, and the company
-    // sits beside it in the widest gap its children leave.
-    if (isRoot && kids.length === 1) {
-      const only = build(kids[0], true);
-      const pocketGrid = new DiskGrid(only.disks, 2 * Math.max(...only.disks.map((d) => d.f)));
-      const nearest = own + footprint.get(kids[0])! + BRANCH_GAP;
-      // Look all the way round the child for the closest pocket the company
-      // fits into without touching anything. Directions are tried outward
-      // from straight behind, so a tie keeps the first — the calmest — one.
-      let gapDir = Math.PI;
-      let distance = Infinity;
-      for (let step = 0; step < 72; step++) {
-        const dir = Math.PI + (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * (TAU / 72);
-        for (let d = nearest; d < distance; d *= 1.03) {
-          const at = polar(dir, d);
-          if (pocketGrid.clear({ x: at.x, y: at.y, f: own }, BRANCH_GAP)) {
-            distance = d;
-            gapDir = dir;
-            break;
-          }
-        }
-      }
-      only.parentDir = gapDir;
-      const angle = startAngle;
-      const facing = angle + Math.PI - gapDir;
-      children.set(kids[0], { angle, distance, facing });
-      const branch = {
-        disks: [{ x: 0, y: 0, f: own }, ...carry(only.disks, angle, distance, facing)],
-        children,
-        parentDir: Math.PI,
-        orbit: distance,
-      };
-      branches.set(id, branch);
-      return branch;
-    }
-
     const childBranches = kids.map((k) => build(k));
-    const available = isRoot || wholeCircle ? TAU : FAN_MAX;
-    const around = isRoot || wholeCircle;
+    // One child competes with nobody for angle: it only has to clear its
+    // parent, and pushing it out until its whole branch subtends less than a
+    // fan would send it a very long way for no gain. This is what keeps the
+    // company's first child — which carries the entire organisation — beside
+    // the company rather than out at the horizon.
     const clear = own + BRANCH_GAP / 2;
-    const fits = (rho: number) => {
+    const fitsIn = (rho: number, within: number) => {
       const wedges: { lo: number; hi: number }[] = [];
-      let total = WEDGE_GAP * (around ? kids.length : kids.length - 1);
+      let total = WEDGE_GAP * (kids.length - 1);
       for (const b of childBranches) {
         const w = wedgeAt(b.disks, rho, clear);
         if (!w) return null;
         wedges.push(w);
         total += w.hi - w.lo;
       }
-      return total <= available ? { wedges, total } : null;
+      return total <= within ? { wedges, total } : null;
     };
 
-    // Smallest orbit that clears this unit and lets the wedges sit side by
-    // side: grow until it fits, then bisect back down to the edge.
-    let low = own + Math.min(...kids.map((k) => footprint.get(k)!)) + BRANCH_GAP;
-    let high = low;
-    let fit = fits(high);
-    for (let i = 0; i < 60 && !fit; i++) {
-      low = high;
-      high *= 1.6;
-      fit = fits(high);
-    }
-    if (!fit) throw new Error(`Orbit for ${id} did not converge`);
-    for (let i = 0; i < 28 && high - low > 0.5; i++) {
-      const mid = (low + high) / 2;
-      const attempt = fits(mid);
-      if (attempt) {
-        high = mid;
-        fit = attempt;
-      } else {
-        low = mid;
+    /** Smallest orbit that clears this unit and lets the wedges sit side by
+     *  side inside `within`: grow until it fits, then bisect back to the edge. */
+    const orbitFor = (within: number) => {
+      let low = own + Math.min(...kids.map((k) => footprint.get(k)!)) + BRANCH_GAP;
+      let high = low;
+      let fit = fitsIn(high, within);
+      for (let i = 0; i < 60 && !fit; i++) {
+        low = high;
+        high *= 1.6;
+        fit = fitsIn(high, within);
+      }
+      if (!fit) return null;
+      for (let i = 0; i < 28 && high - low > 0.5; i++) {
+        const mid = (low + high) / 2;
+        const attempt = fitsIn(mid, within);
+        if (attempt) {
+          high = mid;
+          fit = attempt;
+        } else {
+          low = mid;
+        }
+      }
+      return { rho: high, fit, allowed: within };
+    };
+
+    // A tight fan is a *preference*, not a cage. Holding one child's branch
+    // inside a narrow slice means pushing it out until it subtends that
+    // little from here, and for a branch carrying half the company that means
+    // the horizon. So the tight fan is tried first and widened, a step at a
+    // time, only while widening keeps the orbit from running away — which is
+    // Greg's "some variance is needed since this needs to work spatially".
+    // One child competes with nobody, so it only has to clear its parent.
+    const widest = kids.length === 1 ? TAU : FAN_WIDE;
+    const loosest = orbitFor(widest);
+    if (!loosest) throw new Error(`Orbit for ${id} did not converge`);
+    let chosen = loosest;
+    if (kids.length > 1) {
+      for (const share of FAN_LADDER) {
+        const within = Math.min(widest, fan * share);
+        const attempt = orbitFor(within);
+        if (attempt && attempt.rho <= loosest.rho * ORBIT_TOLERANCE) {
+          chosen = attempt;
+          break;
+        }
       }
     }
+    // The company and its first child are a special case of scale. A lone
+    // child only has to clear its parent, which for a chain is right — but
+    // the company's one child carries the entire organisation, and its own
+    // children stand tens of thousands of units away. Cleared by 46 units,
+    // the two read as one blot at the whole-company view, which is what Greg
+    // saw: "the immediate child of the master/center node is too close to the
+    // center and clashes with the central node." So the company's trunk is
+    // measured against what hangs off it.
+    if (isRoot && kids.length === 1) {
+      const trunk = (branches.get(kids[0])?.orbit ?? 0) * ROOT_TRUNK_SHARE;
+      if (trunk > chosen.rho) chosen = { ...chosen, rho: trunk };
+    }
+
+    // The angle the chosen fan actually allows, which is what the variation
+    // pass may spend its slack from.
+    const available = chosen.allowed;
+    let { fit } = chosen;
+    const high = chosen.rho;
     // Leave a little angular slack before laying the wedges out. At the
     // minimum orbit the wedges exactly fill the fan, so no child has room to
     // come inward — coming inward widens the angle a branch subtends, and
@@ -309,13 +352,16 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
     // every child a slot wider than it needs, and that slack is what variable
     // connection lengths are spent from.
     const rho = high * (1 + ORBIT_SLACK * radialLooseness);
-    fit = fits(rho) ?? fit;
+    fit = fitsIn(rho, available) ?? fit;
 
-    // Lay the wedges edge to edge: centred on "straight ahead" for a branch,
-    // spread evenly round the whole circle for the company.
-    const gap = around ? WEDGE_GAP + (TAU - fit.total) / kids.length : WEDGE_GAP;
+    // Wedges edge to edge, centred on "straight ahead" — which for the
+    // company is `startAngle`, and for everyone else is away from their own
+    // parent. Nothing is spread evenly round a circle any more (Greg,
+    // 2026-09-24: the first child's children "splay too much… let's instead
+    // have them splay tightly just like their children").
+    const gap = WEDGE_GAP;
     const span = fit.wedges.reduce((sum, w) => sum + (w.hi - w.lo), 0) + gap * (kids.length - 1);
-    let cursor = around ? startAngle - (fit.wedges[0].hi - fit.wedges[0].lo) / 2 : -span / 2;
+    let cursor = -span / 2;
     const placed = kids.map((k, i) => {
       const w = fit!.wedges[i];
       const angle = cursor - w.lo;
@@ -340,7 +386,10 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
     // The fan's unused angle, shared equally: each child may widen into its
     // own share and no further, so two neighbours can never both claim it.
     const slotExtra = Math.max(0, available - fit.total) / kids.length;
-    for (let i = 0; radialLooseness > 0 && i < placed.length; i++) {
+    // The company's trunk is a deliberate distance, not a packing outcome, so
+    // the variation pass must not pull it back in.
+    const varying = radialLooseness > 0 && !(isRoot && kids.length === 1);
+    for (let i = 0; varying && i < placed.length; i++) {
       const child = placed[i];
       const others = new DiskGrid([own0, ...placed.flatMap((p, j) => (j === i ? [] : p.disks))], cell);
       const local = childBranches[i].disks;
@@ -442,7 +491,9 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
       place(k, childAt, facing + spot.facing, true);
     });
   };
-  place(tree.rootId, { x: 0, y: 0 }, 0, false);
+  // The company faces `startAngle` — east by default — and everything grows
+  // away from it from there.
+  place(tree.rootId, { x: 0, y: 0 }, startAngle, false);
 
   // --- how far each dot may swell when zoomed out --------------------------
   // Bounded by the nearest other unit, so an inflated dot can never swallow a

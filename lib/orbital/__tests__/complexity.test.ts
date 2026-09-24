@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  LOCAL_MUST_WIN_BY,
   MAX_ZOOM_TO_READ,
   REFERENCE_VIEWPORT,
   fitScaleFor,
+  RINGS_HOPELESS,
   layoutCompany,
   sceneBounds,
   visualComplexity,
@@ -71,7 +71,12 @@ describe("choosing how to draw a company", () => {
     expect(big.choice.geography).toBe("local");
     expect(big.scene.geography).toBe("local");
     expect(big.choice.ringZoomToRead).toBeGreaterThan(MAX_ZOOM_TO_READ);
-    expect(big.choice.ringZoomToRead / big.choice.localZoomToRead!).toBeGreaterThanOrEqual(LOCAL_MUST_WIN_BY);
+    // Past RINGS_HOPELESS the rings have stopped working at any margin, and
+    // the local drawing is deliberately less compact since 2026-09-24 —
+    // tight fans that run one way. It has only to be better, not better by
+    // half.
+    expect(big.choice.ringZoomToRead).toBeGreaterThan(RINGS_HOPELESS);
+    expect(big.choice.ringZoomToRead).toBeGreaterThan(big.choice.localZoomToRead!);
   });
 
   it("stays on rings when local geography would not genuinely fit better", () => {

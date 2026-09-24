@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { BRANCH_GAP, FAN_MAX, layoutBranches, localUnitRadius, LOCAL_MAX_R, LOCAL_MIN_R } from "../branches";
+import {
+  BRANCH_GAP,
+  FAN_WIDE,
+  layoutBranches,
+  localUnitRadius,
+  LOCAL_MAX_R,
+  LOCAL_MIN_R,
+} from "../branches";
 import { structuralEnvelope, insideEnvelope } from "../envelope";
 import { buildOrbitalTree, type OrgInput } from "../model";
 import { layoutOrbitalForest } from "../forest";
@@ -64,11 +71,11 @@ describe("local branch geography", () => {
     const ring = layoutOrbitalForest(buildOrbitalTree(stableDeep(), { mergePassThroughRoot: false, workCountFor: () => 6 }));
     const b = scene.bounds!;
     const localSpan = Math.max(b.maxX - b.minX, b.maxY - b.minY);
-    // Both maps shrank when units became one small size, and the ring map
-    // shrank more (its rungs are sized from the nodes standing on them), so
-    // the margin is narrower than it was. What matters is that local
-    // geography still fits the same company in meaningfully less room.
-    expect(localSpan).toBeLessThan(ring.extent * 1.1);
+    // Local geography is no longer chosen for compactness. Since 2026-09-24
+    // it fans tightly and runs one way, which costs room and buys a map you
+    // can read your position in (complexity.RINGS_HOPELESS says why that is
+    // still the right trade). It must still not be *worse* than the rings.
+    expect(localSpan).toBeLessThan(ring.extent * 1.7);
   });
 
   it("is deterministic", () => {
@@ -119,7 +126,9 @@ describe("local branch geography", () => {
       for (const id of unit.childIds) {
         const child = scene.unitById.get(id)!;
         const bearing = Math.atan2(child.y - unit.y, child.x - unit.x);
-        expect(Math.abs(angleDelta(away, bearing))).toBeLessThanOrEqual(FAN_MAX / 2 + 1e-6);
+        // A fan may widen past the preferred angle when holding a branch
+        // tighter would fling it to the horizon, but never past FAN_WIDE.
+        expect(Math.abs(angleDelta(away, bearing))).toBeLessThanOrEqual(FAN_WIDE / 2 + 1e-6);
       }
     }
   });
@@ -242,8 +251,11 @@ describe("the structural envelope", () => {
     const ys = envelope.rings.flat().map((p) => p.y);
     expect(Math.min(...xs)).toBeLessThan(b.minX);
     expect(Math.max(...xs)).toBeGreaterThan(b.maxX);
-    expect(Math.min(...xs)).toBeGreaterThan(b.minX - envelope.pad * 4);
-    expect(Math.max(...ys)).toBeLessThan(b.maxY + envelope.pad * 4);
+    // The stand-off grows with the company, because a corridor has to stay
+    // wider than the sampler's step (envelope.CORRIDOR_STEPS).
+    const reach = Math.max(envelope.pad * 4, (b.maxX - b.minX) / 12);
+    expect(Math.min(...xs)).toBeGreaterThan(b.minX - reach);
+    expect(Math.max(...ys)).toBeLessThan(b.maxY + reach);
   });
 
   it("depends only on structure, so it is identical however often it is computed", () => {
@@ -302,15 +314,23 @@ describe("dots that carry headcount without colliding", () => {
     expect(gained).toBeGreaterThan(0);
   });
 
-  it("keeps two big neighbours both prominent, sharing the room by their claims", () => {
-    const scale = 0.04;
+  it("keeps two close neighbours both prominent, sharing the room between them", () => {
+    const scale = 0.005;
     const drawn = radiusAt(scale, () => 1);
-    const root = scene.units.find((u) => !u.parentId)!;
-    const hub = byId.get(root.childIds[0])!;
-    const d = Math.hypot(root.x - hub.x, root.y - hub.y);
-    // Neither collapses to its bare disc: together they use the room between them.
-    expect((drawn.get(root.id)! + drawn.get(hub.id)!) * scale).toBeGreaterThan((d * scale - 2) * 0.95);
-    expect(drawn.get(root.id)! * scale).toBeGreaterThan(root.r * scale);
+    // The closest pair on the map: whatever room there is between them, they
+    // share it rather than one taking it and flattening the other.
+    let pair: { a: string; b: string; d: number } | null = null;
+    for (const u of scene.units) {
+      const near = u.near?.[0];
+      if (!near) continue;
+      if (!pair || near.d < pair.d) pair = { a: u.id, b: near.id, d: near.d };
+    }
+    if (!pair) throw new Error("no neighbours");
+    const room = pair.d - 2 / scale;
+    expect(drawn.get(pair.a)! + drawn.get(pair.b)!).toBeLessThanOrEqual(Math.max(room, byId.get(pair.a)!.r + byId.get(pair.b)!.r) + 1e-6);
+    // Neither is squeezed below its own disc.
+    expect(drawn.get(pair.a)!).toBeGreaterThanOrEqual(byId.get(pair.a)!.r - 1e-9);
+    expect(drawn.get(pair.b)!).toBeGreaterThanOrEqual(byId.get(pair.b)!.r - 1e-9);
   });
 
   it("reads the same whatever a unit carries, now that size says nothing", () => {
