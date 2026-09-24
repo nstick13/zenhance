@@ -78,8 +78,12 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/map/basket/basket.ts": "basket",
   "lib/map/basket/tray.ts": "basket",
 
+  // 3. Work — how work reads at a human level.
+  "lib/map/work/board.ts": "work",
+
   // 4. Signal — what a node is telling you.
-  "lib/orbital/progress.ts": "signal",
+  "lib/map/signal/progress.ts": "signal",
+  "lib/map/signal/rings.ts": "signal",
 };
 
 /** Everything below the engines. Any engine may import these. */

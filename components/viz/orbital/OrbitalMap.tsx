@@ -8,6 +8,7 @@ import type { Assignment, OrbitalNodeRow, OrgUnit, Person } from "@/lib/db/schem
 import type { Vocabulary } from "@/lib/vocabulary";
 import { clearOrbitalNodes, moveOrgUnit, saveOrbitalNodes } from "@/lib/data/actions";
 import { tasksForPerson, type MockTask } from "@/lib/mock/personTasks";
+import { boardTeams, boardsFor, statusRing } from "@/lib/map/work/board";
 import {
   applyOverrides,
   buildOrbitalTree,
@@ -95,14 +96,12 @@ import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
 import {
   UNIT_RING_KEYS,
   UNIT_RING_LABELS,
-  personVitals,
-  seatProgress,
-  unitProgress,
   type PersonVitals,
   type SeatProgress,
   type UnitProgress,
   type UnitRingKey,
-} from "@/lib/orbital/progress";
+} from "@/lib/map/signal/progress";
+import { healthSource, seatRingsFor, unitRingsFor, vitalsFor } from "@/lib/map/signal/rings";
 import { C, FONT, WORK_STATUS_FILL, healthColor } from "./theme";
 import {
   RIPPLE_MS,
@@ -410,12 +409,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   // Whole boards, not just what's in flight: the completion ring is only
   // meaningful against everything someone holds, and it's what makes the
   // texture of work read at a glance.
-  const boards = useMemo(() => {
-    const tags = units.map((u) => u.name);
-    const map = new Map<string, MockTask[]>();
-    if (sampleWork) for (const p of people) map.set(p.id, tasksForPerson(p, tags));
-    return map;
-  }, [people, units, sampleWork]);
+  const boards = useMemo(
+    () => boardsFor(people, units.map((u) => u.name), tasksForPerson, sampleWork),
+    [people, units, sampleWork],
+  );
 
   const allocationByPerson = useMemo(() => {
     const map = new Map<string, number>();
@@ -426,14 +423,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     return map;
   }, [assignments]);
 
-  const vitals = useMemo(() => {
-    const now = new Date();
-    const map = new Map<string, PersonVitals>();
-    for (const p of people) {
-      map.set(p.id, personVitals(p, allocationByPerson.get(p.id) ?? 100, now));
-    }
-    return map;
-  }, [people, allocationByPerson]);
+  const vitals = useMemo(
+    () => vitalsFor(people, allocationByPerson, new Date()),
+    [people, allocationByPerson],
+  );
 
   // --- the org, folded into orbits ----------------------------------------
   const baseTree = useMemo(
@@ -624,49 +617,30 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   }, [scene, routeUnitId]);
 
   // --- what the rings say --------------------------------------------------
-  const seatRings = useMemo(() => {
-    const map = new Map<string, SeatProgress>();
-    for (const seat of scene.seats) {
-      map.set(seat.id, seatProgress(seat.personId ? (boards.get(seat.personId) ?? []) : []));
-    }
-    return map;
-  }, [scene, boards]);
+  const seatRings = useMemo(() => seatRingsFor(scene.seats, boards), [scene, boards]);
 
   const workStatus = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const seat of scene.seats) {
-      const tasks = seat.personId ? (boards.get(seat.personId) ?? []) : [];
-      map.set(
-        seat.id,
-        tasks.map((t) => t.status),
-      );
+      map.set(seat.id, statusRing(seat.personId ? (boards.get(seat.personId) ?? []) : []));
     }
     return map;
   }, [scene, boards]);
 
   /** A unit's rings cover its whole branch, not just the people sitting on
    *  it — "overall work item completedness for an entire team". */
-  const unitRings = useMemo(() => {
-    const map = new Map<string, UnitProgress>();
-    const gather = (unitId: string): { tasks: MockTask[]; health: number | null }[] => {
-      const unit = scene.unitById.get(unitId);
-      if (!unit) return [];
-      const own = (scene.seatsByUnit.get(unitId) ?? [])
-        .filter((s) => s.personId)
-        .map((s) => ({
-          tasks: boards.get(s.personId!) ?? [],
-          // The schema has no explicit health observation yet. Demo fixtures
-          // may illustrate it; a real org must not infer it from defaults.
-          health: sampleWork ? (vitals.get(s.personId!)?.wellbeing ?? null) : null,
-        }));
-      return unit.childIds.reduce<{ tasks: MockTask[]; health: number | null }[]>(
-        (acc, childId) => acc.concat(gather(childId)),
-        own,
-      );
-    };
-    for (const unit of scene.units) map.set(unit.id, unitProgress(gather(unit.id)));
-    return map;
-  }, [scene, boards, vitals, sampleWork]);
+  const unitRings = useMemo(
+    () => unitRingsFor(
+      scene.units.map((u) => u.id),
+      {
+        childrenOf: (id) => scene.unitById.get(id)?.childIds ?? [],
+        seatsOf: (id) => scene.seatsByUnit.get(id) ?? [],
+      },
+      boards,
+      healthSource(sampleWork, vitals),
+    ),
+    [scene, boards, vitals, sampleWork],
+  );
 
   /** Payroll running through each branch — the one money flow the schema
    *  records. A shared person contributes their allocated share to each unit
@@ -2009,14 +1983,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
   /** The units the opened person actually sits on — the board flavours its
    *  cards with these, so handing it the whole org would be a lie. */
-  const boardTeamNames = useMemo(() => {
-    if (!openBoard) return [];
-    const names = scene.seats
-      .filter((s) => s.personId === openBoard.id)
-      .map((s) => scene.unitById.get(s.unitId)?.name)
-      .filter((n): n is string => !!n);
-    return names.length > 0 ? [...new Set(names)] : ["General"];
-  }, [openBoard, scene]);
+  const boardTeamNames = useMemo(
+    () => openBoard
+      ? boardTeams(scene.seats, (id) => scene.unitById.get(id)?.name, openBoard.id)
+      : [],
+    [openBoard, scene],
+  );
 
   const screenOf = useCallback((world: Point): Point => {
     const stage = stageRef.current;

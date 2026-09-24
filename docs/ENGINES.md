@@ -70,29 +70,39 @@ Still trapped in `OrbitalMap.tsx`: ~465 lines — `onUnitDragStart/Move/End`,
 create; `GrowLab.tsx` (3,320 lines of SVG) can create but is a lab. Converging
 them is Phase 3, and it is the only way the grow flow reaches a customer.
 
-### 3. Work — work at a human level
-`lib/mock/personTasks.ts` · `lib/orbital/progress.ts` (the work-backed rings) ·
-`components/viz/PersonTaskBoard.tsx` · `render.ts` `paintWorkCapsules` /
-`paintWorkDots` · `geometry.ts`'s work-dot grid and capsule sizing
+### 3. Work — work at a human level ✅ **extracted 2026-09-24**
+**Pure:** `lib/map/work/board.ts` — what a board summarises to, what counts as
+in flight, the column split, which teams a board is flavoured with, and the
+all-or-nothing rule for sample work. 16 tests.
+**Also work:** `components/viz/PersonTaskBoard.tsx` · `render.ts`
+`paintWorkCapsules` / `paintWorkDots` · `theme.ts` `WORK_STATUS_FILL`.
 
-Still trapped in `OrbitalMap.tsx`: the `workStatus` memo, the work panel, and
-the work half of `hitTest`.
+**Not work, deliberately:** the work *dimensions* (`WORK_CAPSULE_*`,
+`SEAT_RING_STEP`) stay in `lib/orbital/geometry.ts`. Layout has to reserve
+room for a person's furniture before anything is drawn — a ring whose spacing
+ignored the capsules would overlap them. Those are layout's numbers; work
+reads them.
 
-**Known gap:** the data is mock throughout. There is no tracker integration, and
-the UI says so.
+**Known gap:** the data is invented throughout (`lib/mock/personTasks.ts`).
+There is no tracker integration, and the UI says so on every panel.
 
-### 4. Signal — what a node is telling you
-`lib/orbital/progress.ts` (nullable, source-backed rings) · `detail.ts`
-(semantic tiers, the local field) · `lod.ts` (the zoom ladder) ·
-`theme.ts` `healthColor` · `render.ts` `paintUnitRings` / `paintSeatRings`
+### 4. Signal — what a node is telling you ✅ **extracted 2026-09-24**
+**Pure:** `lib/map/signal/progress.ts` (the arithmetic — ratios, wellbeing
+thresholds, nullable source-backed rings) · `rings.ts` (the gathering — which
+people a unit speaks for, and which numbers are allowed to exist). 38 tests.
+**Also signal:** `theme.ts` `healthColor` · `render.ts` `paintUnitRings` /
+`paintSeatRings`.
 
-Still trapped in `OrbitalMap.tsx`: the `unitRings` / `seatRings` / `vitals`
-memos (~100 lines) and the card UI — `OrbitalUnitCard`, `OrbitalHoverCard`,
-`Meter` (~310 lines).
+Still in `OrbitalMap.tsx`: the card UI — `OrbitalUnitCard`,
+`OrbitalHoverCard`, `Meter` (~310 lines). Presentational, and it moves with
+the rest of the component's chrome rather than on its own.
 
-`progress.ts` is deliberately listed under both Work and Signal. It is the seam
-between them, and when Phase 2 splits it, the split runs along "is this fact
-about the work, or about the node carrying it?"
+**How Work and Signal were split.** `progress.ts` used to serve both, which
+would have been a sibling import. The line is Greg's own wording: Work is
+*how work is displayed at a human level* — capsules, dots, the board. Signal
+is *what information a node should show* — and that includes its delivery and
+sprint rings, because those are the node speaking, not the work. Both read
+`lib/mock/personTasks`, which sits below them, so neither imports the other.
 
 ### 5. Camera — pan, zoom, focus ✅ **extracted 2026-09-24**
 **Pure:** `lib/map/camera/viewport.ts` (fits, cull box, wheel zoom, easing,
@@ -164,7 +174,7 @@ and it is worth doing slowly.
 |---|---|---|
 | 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
 | 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
-| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera + basket done** 2026-09-24; work next |
+| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera, basket, work, signal done** 2026-09-24; growth next |
 | 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
 
 **Camera, as built (2026-09-24):** `OrbitalMap.tsx` 3,869 → 3,687 lines; 182

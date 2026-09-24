@@ -40,7 +40,7 @@ import {
   type SeatProgress,
   type UnitProgress,
   type UnitRingKey,
-} from "@/lib/orbital/progress";
+} from "@/lib/map/signal/progress";
 import { C, WORK_STATUS_FILL, healthColor } from "./theme";
 
 export type Ripple = { x: number; y: number; born: number; reach: number };
