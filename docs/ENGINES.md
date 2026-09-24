@@ -115,15 +115,22 @@ wearing camera clothes, and it can wait for the layout move.
 `lod.ts` and `detail.ts` sit here rather than in Signal because zoom and the
 pinned field are their only inputs. Signal and Work *read* them.
 
-### 6. Basket — carrying a node a long way
-`lib/orbital/basket.ts`
+### 6. Basket — carrying a node a long way ✅ **extracted 2026-09-24**
+**Pure:** `lib/map/basket/basket.ts` (what may be carried — a unit travels
+with its branch, an ancestor absorbs its descendants, the company refuses) ·
+`tray.ts` (the tray hit test with its thumb-sized slack, tap-versus-drag, the
+carried-branch walk, and the sentence said for each of the five outcomes).
+28 tests.
+**Glue:** `components/viz/orbital/useBasket.ts` — the tray, the flash timer,
+the press handlers.
 
-Still trapped in `OrbitalMap.tsx`: ~240 lines — `carry`, `carriedBranch`,
-`followCarry`, `overTray`, `locateCarried`, `pressEntry` / `moveEntry` /
-`endEntry` / `returnEntry`, and the tray `<aside>`.
-
-Smallest complete engine — pure core, handlers and UI — which is why it is the
-second extraction, not the last. It is the cheapest honest proof of the pattern.
+**The seam with Growth.** Dragging an entry out ends in an ordinary drop, and
+a drop is growth's business. Basket and Growth are siblings, so neither may
+import the other. `useBasket` therefore reports *intent* —
+`beginCarryDrag` / `onCarryMove` / `endCarryDrag` / `locate` — and the map
+wires those to the drag machinery. Those four callbacks are the join, and
+when growth is extracted they move into `runtime` instead of the component.
+This is the shape every remaining extraction should copy.
 
 ### 0. Runtime — the floor
 `lib/orbital/motion.ts` (springs) · `visibility.ts` (mark budget + thinning) ·
@@ -157,7 +164,7 @@ and it is worth doing slowly.
 |---|---|---|
 | 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
 | 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
-| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera done** 2026-09-24; basket next |
+| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera + basket done** 2026-09-24; work next |
 | 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
 
 **Camera, as built (2026-09-24):** `OrbitalMap.tsx` 3,869 → 3,687 lines; 182

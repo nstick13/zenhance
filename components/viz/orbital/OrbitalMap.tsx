@@ -21,7 +21,8 @@ import {
 } from "@/lib/orbital/layout";
 import { descendantIds, snapSeat, type SeatSnap } from "@/lib/orbital/snap";
 import { planInsertion, type InsertionPlan } from "@/lib/orbital/insertion";
-import { addToBasket, carrierOf, returnFromBasket, type Basket, type BasketTree } from "@/lib/orbital/basket";
+import { carrierOf, type BasketTree } from "@/lib/map/basket/basket";
+import { useBasket } from "./useBasket";
 import {
   branchImpact,
   chargeAt,
@@ -306,13 +307,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
    *  not saved, so the map says how many will be lost on reload. */
   const [sessionPlaced, setSessionPlaced] = useState(0);
   const [proposal, setProposal] = useState<Proposal | null>(null);
-  /** Branches picked up to be carried across the map — pending UI state
-   *  only, never saved (lib/orbital/basket.ts). */
-  const [basket, setBasket] = useState<Basket>([]);
-  const basketRef = useRef<Basket>([]);
-  const [trayHot, setTrayHot] = useState(false);
-  const [flashEntry, setFlashEntry] = useState<string | null>(null);
-  const trayRef = useRef<HTMLElement | null>(null);
   /** Where the pointer is on screen during a drag — for the basket and for
    *  panning when a held branch nears the edge. */
   const dragClientRef = useRef<Point | null>(null);
@@ -478,46 +472,37 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     },
     nameOf: (id) => arrangedTree.units.get(id)?.name ?? "This unit",
   }), [arrangedTree]);
-  useEffect(() => {
-    basketRef.current = basket;
-  }, [basket]);
-  /** Every unit travelling in the basket, entries and everything below them. */
-  const carriedBranch = useMemo(() => {
-    const out = new Set<string>();
-    const stack = basket.map((e) => e.unitId);
-    while (stack.length > 0) {
-      const id = stack.pop()!;
-      if (out.has(id)) continue;
-      out.add(id);
-      stack.push(...(arrangedTree.units.get(id)?.childIds ?? []));
-    }
-    return out;
-  }, [basket, arrangedTree]);
-  const carriedRoots = useMemo(() => new Set(basket.map((e) => e.unitId)), [basket]);
+
+  // The basket engine. Rules in lib/map/basket/basket.ts, tray arithmetic in
+  // tray.ts, both pure and tested. See docs/ENGINES.md § Basket — including
+  // why the drag-out callbacks below are a seam with Growth, not a shortcut.
+  const childrenOf = useCallback(
+    (id: string) => arrangedTree.units.get(id)?.childIds ?? [],
+    [arrangedTree],
+  );
+  const {
+    basket, basketRef, carriedBranch, carriedRoots,
+    trayRef, trayHot, setTrayHot, flashEntry, flash, isOverTray,
+    carry, returnEntry, returnAll, settle, noRoom,
+    pressEntry, moveEntry, releaseEntry, cancelEntry,
+  } = useBasket({
+    tree: basketTree,
+    childrenOf,
+    say: setNotice,
+    beginCarryDrag: (unitId) => beginCarryDragRef.current?.(unitId) ?? false,
+    onCarryMove: (client) => { dragClientRef.current = client; followCarryRef.current?.(); },
+    endCarryDrag: (cancelled) => endCarryDragRef.current?.(cancelled) ?? null,
+    locate: (unitId) => locateCarriedRef.current?.(unitId),
+  });
+
+  // Created below, after the drag machinery exists. The basket reports
+  // intent; the map decides what a drop means (that is Growth's job).
+  const beginCarryDragRef = useRef<((unitId: string) => boolean) | null>(null);
+  const followCarryRef = useRef<(() => void) | null>(null);
+  const endCarryDragRef = useRef<((cancelled: boolean) => { landed: boolean; unitId: string } | null) | null>(null);
+  const locateCarriedRef = useRef<((unitId: string) => void) | null>(null);
   const kindById = useMemo(() => new Map(units.map((u) => [u.id, u.kind])), [units]);
 
-  /** Put a unit's branch in the basket, and say so plainly when the rules
-   *  change what happens. */
-  const carry = useCallback((unitId: string) => {
-    const result = addToBasket(basketRef.current, unitId, basketTree);
-    const name = basketTree.nameOf(unitId);
-    basketRef.current = result.basket;
-    setBasket(result.basket);
-    if (result.outcome === "added") {
-      setNotice(`Carrying ${name}. Pan anywhere, then drag it out of the basket to place it.`);
-    } else if (result.outcome === "absorbed") {
-      const list = result.absorbed.join(", ");
-      setNotice(`${list} ${result.absorbed.length === 1 ? "is" : "are"} now carried inside ${name}'s branch.`);
-    } else if (result.outcome === "already") {
-      setNotice(`${name} is already in the basket.`);
-      setFlashEntry(unitId);
-    } else if (result.outcome === "inside") {
-      setNotice(`${name} is already carried with ${basketTree.nameOf(result.carrierId)}'s branch.`);
-      setFlashEntry(result.carrierId);
-    } else {
-      setNotice("The company stays where it is — it is the centre of its own map.");
-    }
-  }, [basketTree]);
   // Rings for a company they fit; local branch geography for one that has
   // outgrown them (lib/orbital/complexity.ts). Deterministic per company.
   const masterScene = useMemo(
@@ -1487,16 +1472,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     [buildTargets],
   );
 
-  /** Is a point on screen over the basket? A little generous, so a thumb at
-   *  the edge counts. */
-  const overTray = useCallback((client: Point | null): boolean => {
-    const tray = trayRef.current;
-    if (!tray || !client) return false;
-    const r = tray.getBoundingClientRect();
-    const slack = 12;
-    return client.x >= r.left - slack && client.x <= r.right + slack && client.y >= r.top - slack && client.y <= r.bottom + slack;
-  }, []);
-
   /** The unit a drag is deliberately on top of: its centre inside a visible,
    *  catchable disc that isn't part of what's being dragged. Never the company
    *  itself, and never a branch waiting in the basket. */
@@ -1592,7 +1567,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       const rect = stage.container().getBoundingClientRect();
       dragClientRef.current = { x: rect.left + pointer.x, y: rect.top + pointer.y };
     }
-    const over = overTray(dragClientRef.current);
+    const over = isOverTray(dragClientRef.current);
     if (over !== drag.overTray) {
       drag.overTray = over;
       setTrayHot(over);
@@ -1639,7 +1614,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       })
       : null;
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, drawnOf, overTray, snapping, unitRelationshipTargets]);
+  }, [buildTargets, drawnOf, isOverTray, snapping, unitRelationshipTargets, setTrayHot]);
 
   /** Land a planned drop exactly as it was previewed. False when the plan is
    *  not a place — the caller sends the unit home. Shared by drags on the map
@@ -1736,8 +1711,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       return;
     }
     // A drop that lands takes the unit out of the basket if it was in it.
-    setBasket((current) => returnFromBasket(current, drag.id));
-  }, [buildTargets, carry, commitPlan, local, snapping]);
+    settle(drag.id);
+  }, [buildTargets, carry, commitPlan, local, settle, snapping, setTrayHot]);
 
   // --- carrying out of the basket ---------------------------------------------
   /** Screen point → world point under the live camera. */
@@ -1760,7 +1735,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const world = clientToWorld(client);
     if (!world) return;
     drag.current = world;
-    const over = overTray(client);
+    const over = isOverTray(client);
     if (over !== drag.overTray) {
       drag.overTray = over;
       setTrayHot(over);
@@ -1794,7 +1769,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         ? planInsertion({ scene: s, base: baseInteractionRef.current ?? s, unitId: drag.id, pointer: world, carried: drag.moved })
         : { kind: "free", unitId: drag.id, position: world };
     targetsRef.current = buildTargets(displayed, drag);
-  }, [buildTargets, clientToWorld, drawnOf, overTray, snapping, unitRelationshipTargets]);
+  }, [buildTargets, clientToWorld, drawnOf, isOverTray, snapping, unitRelationshipTargets, setTrayHot]);
 
   useEffect(() => {
     dragFollowRef.current = () => {
@@ -1814,31 +1789,25 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     if (!unit || !stage) return;
     const k = stage.scaleX();
     markTouched();
-    animateCameraTo({ scale: k, x: size.w / 2 - unit.x * k, y: size.h / 2 - unit.y * k });
-    setFlashEntry(unitId);
-  }, [animateCameraTo, size, markTouched]);
+    animateCameraTo(centreOn(unit, k, { width: size.w, height: size.h }));
+    flash(unitId);
+  }, [animateCameraTo, size, markTouched, flash]);
 
-  // Pressing an entry: a tap finds the branch; a drag carries it out.
-  const entryPressRef = useRef<{ unitId: string; start: Point; pointerId: number; dragging: boolean } | null>(null);
-
-  const pressEntry = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const unitId = event.currentTarget.dataset.unitId;
-    if (!unitId || (event.pointerType === "mouse" && event.button !== 0)) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    entryPressRef.current = { unitId, start: { x: event.clientX, y: event.clientY }, pointerId: event.pointerId, dragging: false };
-  }, []);
-
-  const moveEntry = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    const press = entryPressRef.current;
-    if (!press || press.pointerId !== event.pointerId) return;
-    const client = { x: event.clientX, y: event.clientY };
-    if (!press.dragging) {
-      if (Math.hypot(client.x - press.start.x, client.y - press.start.y) < 6) return;
+  /**
+   * The basket ↔ growth seam (docs/ENGINES.md § Basket).
+   *
+   * The basket reports *intent* — this press became a drag, the pointer
+   * moved, the drag ended. What a drop **means** is growth's business, and
+   * the two are sibling engines that must not import each other. So the
+   * basket calls these, and these speak to the drag machinery. When growth
+   * is extracted, this is the join that moves into `runtime`.
+   */
+  useEffect(() => {
+    beginCarryDragRef.current = (unitId) => {
       const s = sceneRef.current;
       const interactive = interactionSceneRef.current;
-      const unit = s?.unitById.get(press.unitId);
-      if (!s || !interactive || !unit) return;
-      press.dragging = true;
+      const unit = s?.unitById.get(unitId);
+      if (!s || !interactive || !unit) return false;
       setHover(null);
       setDragging(uid(unit.id));
       dragRef.current = {
@@ -1857,58 +1826,43 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         reparent: null,
         reparentHold: null,
       };
-    }
-    dragClientRef.current = client;
-    followCarry();
-  }, [followCarry]);
+      return true;
+    };
 
-  const endEntry = useCallback((event: React.PointerEvent<HTMLElement>, cancelled: boolean) => {
-    const press = entryPressRef.current;
-    entryPressRef.current = null;
-    if (!press || press.pointerId !== event.pointerId) return;
-    if (!press.dragging) {
-      if (!cancelled) locateCarried(press.unitId);
-      return;
-    }
-    const drag = dragRef.current;
-    dragRef.current = null;
-    dragClientRef.current = null;
-    setDragging(null);
-    setTrayHot(false);
-    const s = sceneRef.current;
-    if (!drag || drag.kind !== "unit") return;
-    if (!cancelled && isArmed(chargeAt(drag.relation, performance.now()))) {
-      if (s) targetsRef.current = buildTargets(s, null);
-      setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
-      return;
-    }
-    if (!cancelled && drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
-      if (s) targetsRef.current = buildTargets(s, null);
-      setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
-      return;
-    }
-    const landed = !cancelled && !drag.overTray && commitPlan(drag.id, drag.origin, drag.plan);
-    if (landed) {
-      setBasket((current) => returnFromBasket(current, drag.id));
-      return;
-    }
-    // Cancelled, dropped back on the basket, or no room: it stays in the
-    // basket — not back at its origin, which it never left.
-    if (s) targetsRef.current = buildTargets(s, null);
-    if (!cancelled && !drag.overTray) setNotice(`No room for ${basketTree.nameOf(drag.id)} there — it's still in the basket.`);
-  }, [basketTree, buildTargets, commitPlan, locateCarried]);
-  const releaseEntry = useCallback((event: React.PointerEvent<HTMLElement>) => endEntry(event, false), [endEntry]);
-  const cancelEntry = useCallback((event: React.PointerEvent<HTMLElement>) => endEntry(event, true), [endEntry]);
+    followCarryRef.current = followCarry;
+    locateCarriedRef.current = locateCarried;
 
-  const returnEntry = useCallback((unitId: string) => {
-    setBasket((current) => returnFromBasket(current, unitId));
-  }, []);
+    endCarryDragRef.current = (cancelled) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      dragClientRef.current = null;
+      setDragging(null);
+      const s = sceneRef.current;
+      if (!drag || drag.kind !== "unit") return null;
+      const settled = () => { if (s) targetsRef.current = buildTargets(s, null); };
 
-  useEffect(() => {
-    if (!flashEntry) return;
-    const timer = window.setTimeout(() => setFlashEntry(null), 1600);
-    return () => window.clearTimeout(timer);
-  }, [flashEntry]);
+      // A deliberate, held contact is a relationship change, not a placement.
+      if (!cancelled && isArmed(chargeAt(drag.relation, performance.now()))) {
+        settled();
+        setProposal({ kind: "merge", fromId: drag.id, intoId: drag.relation!.unitId });
+        return { landed: false, unitId: drag.id };
+      }
+      if (!cancelled && drag.reparent && isArmed(chargeAt(drag.reparentHold, performance.now()))) {
+        settled();
+        setProposal({ kind: "reparent", fromId: drag.id, parentId: drag.reparent.parentId });
+        return { landed: false, unitId: drag.id };
+      }
+
+      const landed = !cancelled && !drag.overTray && commitPlan(drag.id, drag.origin, drag.plan);
+      if (landed) return { landed: true, unitId: drag.id };
+
+      // Cancelled, dropped back on the tray, or no room: it stays in the
+      // basket — not back at its origin, which it never actually left.
+      settled();
+      if (!cancelled && !drag.overTray) setNotice(noRoom(drag.id));
+      return { landed: false, unitId: drag.id };
+    };
+  }, [buildTargets, commitPlan, followCarry, locateCarried, noRoom]);
 
   const onSeatDragStart = useCallback((seat: PlacedSeat) => {
     setHover(null);
@@ -2464,14 +2418,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
                   setSelectedUnitId(unit.id);
                   // A carried placeholder points at its basket entry.
                   const carrier = carrierOf(basketRef.current, unit.id, basketTree);
-                  if (carrier) setFlashEntry(carrier);
+                  if (carrier) flash(carrier);
                 }}
                 onTap={() => {
                   if (pressMovedRef.current) return;
                   setRouteUnitId(unit.id === arrangedTree.rootId ? null : unit.id);
                   setSelectedUnitId(unit.id);
                   const carrier = carrierOf(basketRef.current, unit.id, basketTree);
-                  if (carrier) setFlashEntry(carrier);
+                  if (carrier) flash(carrier);
                 }}
                 onDblClick={() => enterFocus(unit.id)}
                 onDblTap={() => enterFocus(unit.id)}
@@ -2649,7 +2603,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
             <div style={S.trayHead}>
               <span>Basket</span>
               {basket.length > 1 && (
-                <button type="button" style={S.trayLink} onClick={() => setBasket([])}>
+                <button type="button" style={S.trayLink} onClick={returnAll}>
                   Return all
                 </button>
               )}

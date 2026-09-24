@@ -75,7 +75,8 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/orbital/relationship.ts": "growth",
 
   // 6. Basket — carrying a node a long way.
-  "lib/orbital/basket.ts": "basket",
+  "lib/map/basket/basket.ts": "basket",
+  "lib/map/basket/tray.ts": "basket",
 
   // 4. Signal — what a node is telling you.
   "lib/orbital/progress.ts": "signal",
