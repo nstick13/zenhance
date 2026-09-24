@@ -172,8 +172,15 @@ export function layoutCompany(
     ...localOptions(ringZoom),
   });
   const localZoom = zoomToRead(local);
-  const margin = ringZoom > RINGS_HOPELESS ? 1 : LOCAL_MUST_WIN_BY;
-  const geography: Geography = ringZoom / localZoom >= margin ? "local" : "orbital";
+  // Past RINGS_HOPELESS there is nothing left to compare: a company needing
+  // seventy times zoom to read a name on its rings cannot be navigated on
+  // them at any margin, and the local drawing is deliberately not competing
+  // on area — it spends room on short connections and tight fans so that
+  // where a branch runs tells you where you are. Below that line the margin
+  // still guards against changing drawing for a marginal gain.
+  const geography: Geography = ringZoom > RINGS_HOPELESS
+    ? "local"
+    : ringZoom / localZoom >= LOCAL_MUST_WIN_BY ? "local" : "orbital";
   return {
     scene: geography === "local" ? local : ring,
     choice: {
