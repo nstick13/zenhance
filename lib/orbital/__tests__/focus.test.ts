@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { focusOrbital, pathToUnit, treeForFocus } from "../focus";
+import { focusOrbital } from "../focus";
+import { pathToUnit, treeForFocus } from "../model";
 import { layoutOrbital } from "../layout";
 import { buildOrbitalTree } from "../model";
 

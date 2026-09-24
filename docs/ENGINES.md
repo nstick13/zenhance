@@ -1,0 +1,203 @@
+# The six engines
+
+The map is one product, but it is six separable machines. This file names them,
+says which files each one owns, and fixes the rule that keeps them apart. It is
+the contract `lib/__tests__/engineBoundaries.test.ts` enforces — if you move a
+file or add an import, that test is what will tell you off.
+
+Greg named these on 2026-09-24. The names are his, and they are the names we
+use in conversation, in commits, and in code.
+
+| # | Engine | The one question it answers |
+|---|---|---|
+| 1 | **Layout** | Where does every node sit? |
+| 2 | **Growth** | How does someone add, merge or re-parent a node? |
+| 3 | **Work** | How is work shown at a human level? |
+| 4 | **Signal** | What is a node telling you? (team health, the health rings) |
+| 5 | **Camera** | What happens when you pan, zoom or focus? |
+| 6 | **Basket** | How do you carry a node a long way? |
+
+## The rule
+
+Dependencies run one way only:
+
+```
+layout  →  camera  →  runtime  →  { growth, basket, signal, work }
+```
+
+An engine may import from anything to its **left**. It may never import from
+anything to its right, and never from a sibling in the braces. `runtime` is the
+seventh thing — not an engine, the floor they all stand on: the frame loop,
+picking, motion, presence and the mark budget.
+
+Two consequences worth saying out loud:
+
+- **Growth, Basket, Signal and Work must not import each other.** When two of
+  them need the same fact, that fact belongs in `layout`, `camera` or `runtime`.
+- **Nothing below `runtime` may import React or Konva.** The bar for "isolated"
+  is the one `lib/orbital/` already meets: drivable in a test with no React, no
+  Konva, and no database. That property is why the pure layer has 443 passing
+  tests and the renderer has almost none.
+
+## Where each engine lives today
+
+Physical moves into `lib/map/<engine>/` are Phase 2 (see *Status* below). Today
+the engines are *groupings of existing files*, and the boundary test knows the
+grouping. Read this column as "these files are that engine", not as a path.
+
+### 1. Layout — where every node sits
+`lib/orbital/` `geometry.ts` · `layout.ts` · `branches.ts` · `complexity.ts` ·
+`forest.ts` · `position.ts` · `envelope.ts` · `size.ts` · `model.ts` · `snap.ts`
+
+~2,400 lines, pure, well tested. **This engine is already isolated** — it is the
+model the other five are being moved toward. Its contract is
+[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md) and its laws are held by
+`lib/orbital/__tests__/laws.test.ts`.
+
+Still trapped in `OrbitalMap.tsx`: ~80 lines of scene assembly (`masterScene`,
+`projectedScene`, `interactionScene`, `envelope`).
+
+### 2. Growth — adding, merging, re-parenting
+`lib/orbital/insertion.ts` (landing + who makes room) · `relationship.ts`
+(harmless move vs. relationship change, magnetic merge, cycle guards, proposal
+copy) · `app/lab/grow/` (`GrowLab.tsx`, `visualRules.ts` — **the creation half**)
+
+Still trapped in `OrbitalMap.tsx`: ~465 lines — `onUnitDragStart/Move/End`,
+`deliberateTarget`, `unitRelationshipTargets`, `commitPlan`, `onSeatDrag*`,
+`confirmMove`, `confirmReparent`.
+
+**This engine exists twice.** The shipped Konva map can rearrange but cannot
+create; `GrowLab.tsx` (3,320 lines of SVG) can create but is a lab. Converging
+them is Phase 3, and it is the only way the grow flow reaches a customer.
+
+### 3. Work — work at a human level
+`lib/mock/personTasks.ts` · `lib/orbital/progress.ts` (the work-backed rings) ·
+`components/viz/PersonTaskBoard.tsx` · `render.ts` `paintWorkCapsules` /
+`paintWorkDots` · `geometry.ts`'s work-dot grid and capsule sizing
+
+Still trapped in `OrbitalMap.tsx`: the `workStatus` memo, the work panel, and
+the work half of `hitTest`.
+
+**Known gap:** the data is mock throughout. There is no tracker integration, and
+the UI says so.
+
+### 4. Signal — what a node is telling you
+`lib/orbital/progress.ts` (nullable, source-backed rings) · `detail.ts`
+(semantic tiers, the local field) · `lod.ts` (the zoom ladder) ·
+`theme.ts` `healthColor` · `render.ts` `paintUnitRings` / `paintSeatRings`
+
+Still trapped in `OrbitalMap.tsx`: the `unitRings` / `seatRings` / `vitals`
+memos (~100 lines) and the card UI — `OrbitalUnitCard`, `OrbitalHoverCard`,
+`Meter` (~310 lines).
+
+`progress.ts` is deliberately listed under both Work and Signal. It is the seam
+between them, and when Phase 2 splits it, the split runs along "is this fact
+about the work, or about the node carrying it?"
+
+### 5. Camera — pan, zoom, focus
+`lib/orbital/focus.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds` ·
+`lod.ts` · `detail.ts`
+
+Still trapped in `OrbitalMap.tsx`: **~265 lines** — `refreshViewBox`,
+`minScale`, `applyCamera`, `frame`, `currentCamera`, `animateCameraTo`,
+`animateFrame`, `animateBounds`, `enterFocus`, `leaveFocus`,
+`focusFromBreadcrumb`, `onWheel`.
+
+`lod.ts` and `detail.ts` sit here rather than in Signal because zoom and the
+pinned field are their only inputs. Signal and Work *read* them.
+
+### 6. Basket — carrying a node a long way
+`lib/orbital/basket.ts`
+
+Still trapped in `OrbitalMap.tsx`: ~240 lines — `carry`, `carriedBranch`,
+`followCarry`, `overTray`, `locateCarried`, `pressEntry` / `moveEntry` /
+`endEntry` / `returnEntry`, and the tray `<aside>`.
+
+Smallest complete engine — pure core, handlers and UI — which is why it is the
+second extraction, not the last. It is the cheapest honest proof of the pattern.
+
+### 0. Runtime — the floor
+`lib/orbital/motion.ts` (springs) · `visibility.ts` (mark budget + thinning) ·
+`components/viz/orbital/render.ts` (per-frame painters) · `theme.ts` ·
+`SeatAvatar.tsx` · `lib/orbital/avatar.ts`
+
+Still trapped in `OrbitalMap.tsx`: the **270-line frame loop**, `hitTest`,
+`buildTargets`, `presenceOf`, `drawnOf`, `detailFor`, `registerNode`.
+
+## The knot, stated plainly
+
+`components/viz/orbital/OrbitalMap.tsx` is **3,869 lines** holding **59 refs,
+25 states, 31 memos, 50 callbacks and 29 effects**. One `useEffect` — the frame
+loop — is 270 lines and touches **33 different refs** spanning all six engines.
+
+That single function is the reason the engines are hard to separate. It is not
+an accident and it should not be naively distributed: a per-frame loop that
+reads one object is fast, and six hooks each doing their own pass is not. On an
+entry-level iPad from five years ago that difference is the whole product.
+
+**So the frame loop stays whole, in `runtime`.** It is the one place allowed to
+touch every engine. Each engine hands it a small read-only "what to paint this
+frame" object and never reaches back in. Every extraction in Phase 2 has to
+decide who owns each of those 33 refs; that decision is where the bugs will be,
+and it is worth doing slowly.
+
+## Status
+
+| Phase | What | State |
+|---|---|---|
+| 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
+| 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
+| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | not started |
+| 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
+
+Phase 2's order is deliberate. **Camera** first: most self-contained, mutates no
+org data, and everything depends on it. **Basket** second: smallest complete
+engine, so the pattern is proved cheaply. **Growth** late: biggest, riskiest, and
+it needs the other five steady underneath it. **Layout** last only because it is
+already done — what remains is a move, not a refactor.
+
+One engine per branch, squash-merged to `next`. The map must never be broken for
+longer than a single merge.
+
+## Currently unreferenced, kept on purpose
+
+Retiring the Canvas and Radial maps (2026-09-24) left these pure modules with no
+caller. They are kept because they are small, tested, and name things the
+roadmap still wants — not because anyone forgot them. **If you are about to
+build money flow, findings or the lens into the orbital map, start here.**
+
+- `lib/canvas/myView.ts` — "my view" filtering
+- `lib/canvas/moneyFlow.ts` · `allocationFlow.ts` · `lineRouting.ts` — the
+  money-flow overlay's maths, orphaned when `MoneyFlow.tsx` went
+- `lib/analytics/findings.ts` · `allocation.ts` · `gaps.ts` · `rollup.ts` — the
+  findings rail's maths, orphaned when `RadialOrg.tsx` went
+
+`lib/analytics/findingsPolicy.ts` is **not** in this list: the settings UI and
+the `findings_policy` table still use it.
+
+Revisit this list at the analytics design pass. Deleting any of it is fine — it
+is all in git — but it should be a decision, not a drift.
+
+## Getting retired work back
+
+Nothing from the 2026-09-24 clean-up was lost. Every deleted branch tip is a tag:
+
+```bash
+git tag -l 'archive/*'
+git show archive/<branch-name>
+git checkout -b recover archive/<branch-name>
+```
+
+`archive/wip/*` tags are snapshots of **uncommitted** work found in three stale
+worktrees, captured before those worktrees were retired. The largest,
+`archive/wip/codex-fd1e-orbital-map`, holds 39 files and 5,993 insertions — an
+earlier state of the large-company-navigation work that is now on `next` in a
+later form. Kept in case something was dropped along the way.
+
+The two retired maps live in the history of `next`:
+
+```bash
+git log --oneline --diff-filter=D -- components/viz/OrgCanvas.tsx
+git show e0d2e5c^:components/viz/OrgCanvas.tsx
+git show e0d2e5c^:components/viz/RadialOrg.tsx
+```

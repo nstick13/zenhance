@@ -10,7 +10,7 @@ import {
 import { structuralEnvelope, insideEnvelope } from "../envelope";
 import { buildOrbitalTree, type OrgInput } from "../model";
 import { layoutOrbitalForest } from "../forest";
-import { treeForFocus } from "../focus";
+import { treeForFocus } from "../model";
 import { unitDiscRadius, type OrbitalScene } from "../layout";
 import { UNIT_RADIUS, angleDelta } from "../geometry";
 import { desiredUnitRadius, neighbourAwareRadius } from "../lod";

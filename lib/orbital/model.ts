@@ -358,3 +358,65 @@ export function applyOverrides(tree: OrbitalTree, overrides: StructureOverrides)
   recomputeDerived(next);
   return next;
 }
+
+/** The chain of units from the company down to `unitId`, company first.
+ * Cycle-guarded: a corrupt parent chain returns what it walked, not a hang. */
+export function pathToUnit(tree: OrbitalTree, unitId: string): UnitNode[] {
+  const path: UnitNode[] = [];
+  const seen = new Set<string>();
+  let unit = tree.units.get(unitId);
+  while (unit && !seen.has(unit.id)) {
+    path.unshift(unit);
+    seen.add(unit.id);
+    unit = unit.parentId ? tree.units.get(unit.parentId) : undefined;
+  }
+  return path;
+}
+
+/** A focused unit temporarily behaves as the company without changing the
+ * company. IDs, seats and real child relationships remain intact; only depth
+ * and the focused root's local parent are rebased for layout.
+ *
+ * Lives here rather than in `focus.ts` because it is a tree operation, not a
+ * camera one: `forest.ts` needs it to lay out each real root separately, and
+ * layout must not depend on the camera. (2026-09-24 — the engine boundary
+ * test caught the inversion.) */
+export function treeForFocus(tree: OrbitalTree, focusId: string): OrbitalTree | null {
+  const focus = tree.units.get(focusId);
+  if (!focus) return null;
+
+  const branchIds = new Set<string>();
+  const stack = [focusId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (branchIds.has(id)) continue;
+    const unit = tree.units.get(id);
+    if (!unit) continue;
+    branchIds.add(id);
+    stack.push(...unit.childIds);
+  }
+
+  const units = new Map<string, UnitNode>();
+  const seats = new Map<string, Seat>();
+  let maxDepth = 0;
+  for (const id of branchIds) {
+    const unit = tree.units.get(id)!;
+    const depth = unit.depth - focus.depth;
+    maxDepth = Math.max(maxDepth, depth);
+    const childIds = unit.childIds.filter((childId) => branchIds.has(childId));
+    const seatIds = unit.seatIds.filter((seatId) => tree.seats.has(seatId));
+    units.set(id, {
+      ...unit,
+      parentId: id === focusId ? null : unit.parentId,
+      depth,
+      childIds,
+      seatIds,
+    });
+    for (const seatId of seatIds) {
+      const seat = tree.seats.get(seatId);
+      if (seat) seats.set(seatId, { ...seat });
+    }
+  }
+
+  return { rootId: focusId, units, seats, maxDepth };
+}

@@ -4,9 +4,8 @@
  * run its existing indexes; no such node or link appears in this scene.
  */
 import { layoutBranches } from "./branches";
-import { treeForFocus } from "./focus";
 import { layoutOrbital, type LayoutOptions, type OrbitalScene, type PlacedSeat } from "./layout";
-import type { OrbitalTree } from "./model";
+import { treeForFocus, type OrbitalTree } from "./model";
 import type { Point } from "./geometry";
 
 const ISLAND_GAP = 220;
