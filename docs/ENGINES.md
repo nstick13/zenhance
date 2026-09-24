@@ -36,7 +36,7 @@ Two consequences worth saying out loud:
   them need the same fact, that fact belongs in `layout`, `camera` or `runtime`.
 - **Nothing below `runtime` may import React or Konva.** The bar for "isolated"
   is the one `lib/orbital/` already meets: drivable in a test with no React, no
-  Konva, and no database. That property is why the pure layer has 443 passing
+  Konva, and no database. That property is why the pure layer has 493 passing
   tests and the renderer has almost none.
 
 ## Where each engine lives today
@@ -94,14 +94,23 @@ memos (~100 lines) and the card UI — `OrbitalUnitCard`, `OrbitalHoverCard`,
 between them, and when Phase 2 splits it, the split runs along "is this fact
 about the work, or about the node carrying it?"
 
-### 5. Camera — pan, zoom, focus
-`lib/orbital/focus.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds` ·
-`lod.ts` · `detail.ts`
+### 5. Camera — pan, zoom, focus ✅ **extracted 2026-09-24**
+**Pure:** `lib/map/camera/viewport.ts` (fits, cull box, wheel zoom, easing,
+the zoom floor) · `focusStack.ts` (the focus stack and the breadcrumb rule).
+47 tests, no React, no Konva.
+**Glue:** `components/viz/orbital/useCamera.ts` — the stage, the size, the
+animation frame, and the one clamped write to Konva. It returns *functions*,
+never raw refs: handing a ref out for outside mutation makes the component's
+lifecycle impossible to reason about, and the React compiler rejects it.
+**Also camera:** `lib/orbital/focus.ts` (scene projection) · `lod.ts` ·
+`detail.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds`.
 
-Still trapped in `OrbitalMap.tsx`: **~265 lines** — `refreshViewBox`,
-`minScale`, `applyCamera`, `frame`, `currentCamera`, `animateCameraTo`,
-`animateFrame`, `animateBounds`, `enterFocus`, `leaveFocus`,
-`focusFromBreadcrumb`, `onWheel`.
+**Still in `OrbitalMap.tsx`: focus *policy*.** Which unit to focus, and what
+to frame when you do, needs the scene and the tree — `enterFocus`,
+`leaveFocus`, `focusFromBreadcrumb` and the pending-camera effect. They are
+now thin, and call the engine for every number. Finishing them means deciding
+where "frame this unit plus two rungs" belongs; it is a layout question
+wearing camera clothes, and it can wait for the layout move.
 
 `lod.ts` and `detail.ts` sit here rather than in Signal because zoom and the
 pinned field are their only inputs. Signal and Work *read* them.
@@ -126,9 +135,10 @@ Still trapped in `OrbitalMap.tsx`: the **270-line frame loop**, `hitTest`,
 
 ## The knot, stated plainly
 
-`components/viz/orbital/OrbitalMap.tsx` is **3,869 lines** holding **59 refs,
-25 states, 31 memos, 50 callbacks and 29 effects**. One `useEffect` — the frame
-loop — is 270 lines and touches **33 different refs** spanning all six engines.
+`components/viz/orbital/OrbitalMap.tsx` is **3,687 lines** holding **54 refs,
+22 states, 30 memos, 43 callbacks and 25 effects** — down from 3,869 / 59 / 25 /
+31 / 50 / 29 before the camera came out. One `useEffect` — the frame loop — is
+270 lines and touches **33 different refs** spanning all six engines.
 
 That single function is the reason the engines are hard to separate. It is not
 an accident and it should not be naively distributed: a per-frame loop that
@@ -147,8 +157,16 @@ and it is worth doing slowly.
 |---|---|---|
 | 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
 | 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
-| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | not started |
+| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **camera done** 2026-09-24; basket next |
 | 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
+
+**Camera, as built (2026-09-24):** `OrbitalMap.tsx` 3,869 → 3,687 lines; 182
+lines of braided camera code became 239 lines of glue plus 239 lines of pure,
+tested engine. Not a saving in lines, and it was not meant to be — the point
+is that a fit, a wheel zoom and the breadcrumb rule can now be checked in
+milliseconds instead of by opening a browser and squinting. Two duplicated
+bounds reduces and four hand-rolled centre-on-a-point cameras collapsed into
+`boundsOfUnits` and `centreOn`.
 
 Phase 2's order is deliberate. **Camera** first: most self-contained, mutates no
 org data, and everything depends on it. **Basket** second: smallest complete

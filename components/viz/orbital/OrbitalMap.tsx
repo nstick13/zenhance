@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from "next/navigation";
 import Konva from "konva";
 import { Circle, Group, Layer, Shape, Stage, Text } from "react-konva";
-import type { KonvaEventObject } from "konva/lib/Node";
 import type { Assignment, OrbitalNodeRow, OrgUnit, Person } from "@/lib/db/schema";
 import type { Vocabulary } from "@/lib/vocabulary";
 import { clearOrbitalNodes, moveOrgUnit, saveOrbitalNodes } from "@/lib/data/actions";
@@ -39,7 +38,18 @@ import {
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
 import { READABLE_SCALE } from "@/lib/orbital/complexity";
 import { focusOrbital } from "@/lib/orbital/focus";
-import { fitScaleFor, layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
+import { layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
+import { useCamera } from "./useCamera";
+import { MAX_SCALE, boundsOfUnits, centreOn, type Camera } from "@/lib/map/camera/viewport";
+import {
+  activeFocus,
+  focusToCrumb,
+  hasParentFocus,
+  parentFocus,
+  popFocus,
+  pushFocus,
+  type FocusFrame,
+} from "@/lib/map/camera/focusStack";
 import { structuralEnvelope } from "@/lib/orbital/envelope";
 import {
   anglePlacementOffsets,
@@ -151,7 +161,6 @@ type Props = {
   previewGeography?: "local";
 };
 
-const MAX_SCALE = 12;
 
 const EXTERNAL_R = 86;
 const EXTERNAL_GAP = 150;
@@ -256,8 +265,6 @@ type Hit =
   | { kind: "ring"; unitId: string; ring: UnitRingKey }
   | { kind: "torus"; unitId: string };
 
-type CameraSnapshot = { scale: number; x: number; y: number };
-type FocusFrame = { unitId: string };
 
 const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
@@ -280,15 +287,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const linkLayerRef = useRef<Konva.Layer | null>(null);
   const nodeLayerRef = useRef<Konva.Layer | null>(null);
 
-  // A zero-sized measurement (a container not yet laid out) gives Konva a
-  // zero-sized canvas, which throws on first draw. Fall back to a viewport.
-  const [size, setSize] = useState({ w: 1440, h: 900 });
-  const [scale, setScale] = useState(0.4);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
-  const [viewBox, setViewBox] = useState<{ minX: number; minY: number; maxX: number; maxY: number } | null>(
-    null,
-  );
   const [showReporting, setShowReporting] = useState(true);
   const [snapping, setSnapping] = useState(true);
   const [openWork, setOpenWork] = useState<{ seat: PlacedSeat; task: MockTask } | null>(null);
@@ -298,7 +298,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const [routeUnitId, setRouteUnitId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [focusFrames, setFocusFrames] = useState<FocusFrame[]>([]);
-  const activeFocusId = focusFrames[focusFrames.length - 1]?.unitId ?? null;
+  const activeFocusId = activeFocus(focusFrames);
   /** A short, plain explanation after a drop that did something the user
    *  might not expect — fades on its own. */
   const [notice, setNotice] = useState<string | null>(null);
@@ -356,7 +356,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const [angleOverrides, setAngleOverrides] = useState<Map<string, Placement>>(seeded.angles);
   const [positionRevision, setPositionRevision] = useState(0);
 
-  const scaleRef = useRef(scale);
   const dragRef = useRef<DragState | null>(null);
   const sceneRef = useRef<OrbitalScene | null>(null);
   const interactionSceneRef = useRef<OrbitalScene | null>(null);
@@ -368,9 +367,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const nodeRefs = useRef(new Map<string, Konva.Group>());
   const ripplesRef = useRef<Ripple[]>([]);
   const dirtyRef = useRef(true);
-  const cameraRafRef = useRef<number | null>(null);
-  const cameraTouched = useRef(false);
-  const pendingFocusCameraRef = useRef<CameraSnapshot | "frame" | null>(null);
+  const pendingFocusCameraRef = useRef<Camera | "frame" | null>(null);
   const focusRef = useRef<string | null>(null);
   /** The unit last clicked, and the route to it from the centre — read by the
    *  painters every frame, so clicking never waits on a React render. */
@@ -570,21 +567,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     [projectedInteractionScene, angleOverrides, positionRevision],
   );
 
-  useEffect(() => {
-    // A company switch can invalidate a focus history. Failing closed to the
-    // whole company is calmer than leaving a breadcrumb to a missing unit.
-    if (companyRef.current !== arrangedTree.rootId) {
-      companyRef.current = arrangedTree.rootId;
-      cameraTouched.current = false;
-      setFocusFrames([]);
-      setSelectedUnitId(null);
-      setRouteUnitId(null);
-      setHover(null);
-    } else if (activeFocusId && !arrangedTree.units.has(activeFocusId)) {
-      setFocusFrames([]);
-    }
-  }, [activeFocusId, arrangedTree]);
-
   const focusBreadcrumb = (focusedView?.breadcrumb ?? []).filter((unit) => unit.id !== "orbital-root");
 
   const focusBranch = focusedView?.branchIds ?? null;
@@ -751,8 +733,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     return out;
   }, [scene, people]);
 
-  const reveal = useMemo(() => revealAt(scale), [scale]);
-  const tier = tierAt(reveal);
   useEffect(() => {
     showReportingRef.current = showReporting;
     dirtyRef.current = true;
@@ -771,6 +751,35 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const pad = (envelope?.pad ?? 0) * 1.5;
     return { minX: b.minX - pad, minY: b.minY - pad, maxX: b.maxX + pad, maxY: b.maxY + pad };
   }, [local, worldRadius, scene, envelope]);
+
+  // The camera engine. All of its arithmetic lives in lib/map/camera and is
+  // unit-tested there; this hook owns the stage, the size and the animation
+  // frame. See docs/ENGINES.md § Camera.
+  const markDirty = useCallback(() => { dirtyRef.current = true; }, []);
+  const {
+    size, scale, viewBox, liveScale, hasTouched, markTouched, clearTouched,
+    refreshViewBox, currentCamera, frame,
+    animateCameraTo, animateFrame, animateBounds, onWheel,
+  } = useCamera({ stageRef, wrapRef, worldBounds, onChange: markDirty });
+
+  const reveal = useMemo(() => revealAt(scale), [scale]);
+  const tier = tierAt(reveal);
+
+  useEffect(() => {
+    // A company switch can invalidate a focus history. Failing closed to the
+    // whole company is calmer than leaving a breadcrumb to a missing unit.
+    if (companyRef.current !== arrangedTree.rootId) {
+      companyRef.current = arrangedTree.rootId;
+      clearTouched();
+      setFocusFrames([]);
+      setSelectedUnitId(null);
+      setRouteUnitId(null);
+      setHover(null);
+    } else if (activeFocusId && !arrangedTree.units.has(activeFocusId)) {
+      setFocusFrames([]);
+    }
+  }, [activeFocusId, arrangedTree, clearTouched]);
+
   // Where a large company opens when we can't yet tell where the viewer sits
   // in it: the company and its first two reporting levels — the heart of
   // the place, with the rest a pan or a Fit away. Deterministic; invents no
@@ -780,17 +789,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     // The settled scene, saved placements included — framing the calculated
     // layout would open on wherever the company *would* be.
     const top = Math.min(...scene.units.map((u) => u.depth));
-    return scene.units
-      .filter((u) => u.depth <= top + 2)
-      .reduce((b, u) => {
-        const reach = u.footprint ?? u.r;
-        return {
-          minX: Math.min(b.minX, u.x - reach),
-          minY: Math.min(b.minY, u.y - reach),
-          maxX: Math.max(b.maxX, u.x + reach),
-          maxY: Math.max(b.maxY, u.y + reach),
-        };
-      }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    return boundsOfUnits(scene.units.filter((u) => u.depth <= top + 2)) ?? worldBounds;
   }, [local, scene, worldBounds]);
 
   const externals = useMemo(
@@ -964,16 +963,16 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   /** How big a unit's disc draws right now — the one number paint, hit areas,
    *  landmark names and drop targets all share. */
   const drawnOf = useCallback((unit: PlacedUnit): number => {
-    const k = stageRef.current?.scaleX() ?? scaleRef.current;
+    const k = stageRef.current?.scaleX() ?? liveScale();
     return (localRef.current ? drawnMapRef.current.get(unit.id) : undefined) ?? unitDrawRadius(unit, k);
-  }, []);
+  }, [liveScale]);
 
   /** How much detail a unit's neighbourhood reads at, cached for the frame. */
   const detailFor = useCallback((unitId: string): { scale: number; reveal: Reveal } => {
     const cache = detailCacheRef.current;
     const known = cache.get(unitId);
     if (known) return known;
-    const k = stageRef.current?.scaleX() ?? scaleRef.current;
+    const k = stageRef.current?.scaleX() ?? liveScale();
     const unit = sceneRef.current?.unitById.get(unitId);
     const influence = unit ? fieldInfluence(fieldRef.current, unit, k) : 0;
     const lifted = effectiveScale(k, influence);
@@ -983,7 +982,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     };
     cache.set(unitId, result);
     return result;
-  }, []);
+  }, [liveScale]);
 
   // Keep the painters' view of the world current.
   useEffect(() => {
@@ -1009,7 +1008,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       focusedUnitId: focusUnitRef.current.id,
       focusPath: focusUnitRef.current.path,
       focusBranch,
-      scale: scaleRef.current,
+      scale: liveScale(),
       now: performance.now(),
       envelope,
       presence: presenceOf,
@@ -1026,6 +1025,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     };
     dirtyRef.current = true;
   }, [
+    liveScale,
     carriedBranch,
     carriedRoots,
     envelope,
@@ -1321,144 +1321,6 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
   // --- camera --------------------------------------------------------------
   useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth || 1440, h: el.clientHeight || 900 });
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    measure();
-    return () => ro.disconnect();
-  }, []);
-
-  /** Recompute the culling box, at most every 120ms — mounting and unmounting
-   *  hundreds of seats on every mousemove would cost more than it saves. */
-  const viewClock = useRef(0);
-  const refreshViewBox = useCallback(
-    (force = false) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-      const now = performance.now();
-      if (!force && now - viewClock.current < 120) return;
-      viewClock.current = now;
-      const k = stage.scaleX() || 1;
-      const w = stage.width() / k;
-      const h = stage.height() / k;
-      const padX = w * 0.6;
-      const padY = h * 0.6;
-      const minX = -stage.x() / k - padX;
-      const minY = -stage.y() / k - padY;
-      setViewBox({ minX, minY, maxX: minX + w + padX * 2, maxY: minY + h + padY * 2 });
-    },
-    [],
-  );
-
-  useEffect(() => {
-    refreshViewBoxRef.current = refreshViewBox;
-  }, [refreshViewBox]);
-
-  // How far out you're allowed to go has to depend on the org: a 2,500-person
-  // map is forty thousand units across, and a fixed floor would strand you
-  // zoomed into the middle of it, unable to see the whole thing.
-  const minScale = useMemo(
-    () => Math.min(0.06, fitScaleFor(worldBounds, { width: size.w || 600, height: size.h || 600 }) * 0.85),
-    [size, worldBounds],
-  );
-  const minScaleRef = useRef(minScale);
-  useEffect(() => {
-    minScaleRef.current = minScale;
-  }, [minScale]);
-
-  const applyCamera = useCallback((next: number, centre: Point, screen: Point) => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const clamped = Math.min(MAX_SCALE, Math.max(minScaleRef.current, next));
-    stage.scale({ x: clamped, y: clamped });
-    stage.position({ x: screen.x - centre.x * clamped, y: screen.y - centre.y * clamped });
-    stage.batchDraw();
-    scaleRef.current = clamped;
-    dirtyRef.current = true;
-    // React only needs to know when the change is big enough to matter to a
-    // label or the HUD; the morph itself reads the stage directly.
-    setScale((prev) => (Math.abs(Math.log(clamped / prev)) > 0.03 ? clamped : prev));
-    refreshViewBox(true);
-  }, [refreshViewBox]);
-
-  /** Fit a box of the world to the screen. For the ring map's circle this is
-   *  exactly the old radius fit. */
-  const frame = useCallback(
-    (bounds: Bounds, maxScale = MAX_SCALE) => {
-      const fit = Math.min(maxScale, fitScaleFor(bounds, { width: size.w, height: size.h }));
-      const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
-      applyCamera(fit, centre, { x: size.w / 2, y: size.h / 2 });
-    },
-    [size, applyCamera],
-  );
-
-  const currentCamera = useCallback((): CameraSnapshot => {
-    const stage = stageRef.current;
-    return stage
-      ? { scale: stage.scaleX(), x: stage.x(), y: stage.y() }
-      : { scale: scaleRef.current, x: size.w / 2, y: size.h / 2 };
-  }, [size]);
-
-  const animateCameraTo = useCallback((target: CameraSnapshot) => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    if (cameraRafRef.current !== null) cancelAnimationFrame(cameraRafRef.current);
-    const start = currentCamera();
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const duration = reduce ? 0 : 560;
-    const born = performance.now();
-    const tick = (now: number) => {
-      const raw = duration === 0 ? 1 : Math.min(1, (now - born) / duration);
-      const t = 1 - Math.pow(1 - raw, 3);
-      const next = {
-        scale: start.scale + (target.scale - start.scale) * t,
-        x: start.x + (target.x - start.x) * t,
-        y: start.y + (target.y - start.y) * t,
-      };
-      stage.scale({ x: next.scale, y: next.scale });
-      stage.position({ x: next.x, y: next.y });
-      scaleRef.current = next.scale;
-      dirtyRef.current = true;
-      stage.batchDraw();
-      if (raw < 1) {
-        cameraRafRef.current = requestAnimationFrame(tick);
-      } else {
-        cameraRafRef.current = null;
-        setScale(next.scale);
-        refreshViewBox(true);
-      }
-    };
-    cameraRafRef.current = requestAnimationFrame(tick);
-  }, [currentCamera, refreshViewBox]);
-
-  const animateFrame = useCallback((radius: number, centre: Point = { x: 0, y: 0 }) => {
-    const fit = Math.min(size.w, size.h) / (radius * 2 * 1.06);
-    const next = Math.min(MAX_SCALE, Math.max(minScaleRef.current, fit));
-    animateCameraTo({
-      scale: next,
-      x: size.w / 2 - centre.x * next,
-      y: size.h / 2 - centre.y * next,
-    });
-  }, [size, animateCameraTo]);
-
-  const animateBounds = useCallback((bounds: Bounds, maxScale = 1.2) => {
-    const fit = fitScaleFor(bounds, { width: size.w, height: size.h });
-    const next = Math.min(maxScale, Math.max(minScaleRef.current, fit));
-    const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
-    animateCameraTo({
-      scale: next,
-      x: size.w / 2 - centre.x * next,
-      y: size.h / 2 - centre.y * next,
-    });
-  }, [size, animateCameraTo]);
-
-  useEffect(() => () => {
-    if (cameraRafRef.current !== null) cancelAnimationFrame(cameraRafRef.current);
-  }, []);
-
-  useEffect(() => {
     const pending = pendingFocusCameraRef.current;
     if (!pending) return;
     pendingFocusCameraRef.current = null;
@@ -1471,69 +1333,51 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       if (local && focusedUnit && focusBranch) {
         // Local geography never moves for focus: frame the unit and its next
         // two levels exactly where they already are.
-        const near = scene.units.filter((u) => focusBranch.has(u.id) && u.depth <= focusedUnit.depth + 2);
-        if (near.length > 0) {
-          animateBounds(near.reduce((b, u) => {
-            const reach = u.footprint ?? u.r;
-            return {
-              minX: Math.min(b.minX, u.x - reach),
-              minY: Math.min(b.minY, u.y - reach),
-              maxX: Math.max(b.maxX, u.x + reach),
-              maxY: Math.max(b.maxY, u.y + reach),
-            };
-          }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }));
-        }
+        const near = boundsOfUnits(
+          scene.units.filter((u) => focusBranch.has(u.id) && u.depth <= focusedUnit.depth + 2));
+        if (near) animateBounds(near);
       } else if (snapping) {
         const localBand = scene.bands[Math.min(2, scene.bands.length - 1)];
         animateFrame((localBand?.outer ?? scene.extent) + 70);
       } else {
         const focused = activeFocusId ? scene.unitById.get(activeFocusId) : undefined;
         if (focused) {
-          const next = Math.max(scaleRef.current, Math.min(1.2, 56 / Math.max(1, focused.r)));
-          animateCameraTo({
-            scale: next,
-            x: size.w / 2 - focused.x * next,
-            y: size.h / 2 - focused.y * next,
-          });
+          const next = Math.max(liveScale(), Math.min(1.2, 56 / Math.max(1, focused.r)));
+          animateCameraTo(centreOn(focused, next, { width: size.w, height: size.h }));
         }
       }
     }
     else animateCameraTo(pending);
-  }, [activeFocusId, arrangedTree, focusBranch, local, scene, snapping, size, animateBounds, animateCameraTo, animateFrame]);
+  }, [activeFocusId, arrangedTree, focusBranch, local, scene, snapping, size, animateBounds, animateCameraTo, animateFrame, liveScale]);
 
   const enterFocus = useCallback((unitId: string) => {
     if (unitId === activeFocusId || !arrangedTree.units.has(unitId)) return;
-    cameraTouched.current = true;
+    markTouched();
     pendingFocusCameraRef.current = "frame";
-    setFocusFrames((current) => [...current, { unitId }]);
+    setFocusFrames((current) => pushFocus(current, unitId));
     setSelectedUnitId(unitId);
     setRouteUnitId(unitId);
     setHover(null);
-  }, [activeFocusId, arrangedTree]);
+  }, [activeFocusId, arrangedTree, markTouched]);
 
   const leaveFocus = useCallback(() => {
-    cameraTouched.current = true;
-    const leaving = focusFrames[focusFrames.length - 1];
-    if (!leaving) return;
+    markTouched();
+    const leavingId = activeFocus(focusFrames);
+    if (!leavingId) return;
     const camera = currentCamera();
-    const hasParentFocus = focusFrames.length > 1;
     // On rings a parent focus is re-laid at the origin; local geography never
     // moves, so the parent is wherever it already is.
-    const parentFocusId = focusFrames[focusFrames.length - 2]?.unitId;
-    const restored = hasParentFocus
-      ? (local && parentFocusId ? masterScene.unitById.get(parentFocusId) : { x: 0, y: 0 })
-      : masterScene.unitById.get(leaving.unitId);
+    const parentId = parentFocus(focusFrames);
+    const restored = hasParentFocus(focusFrames)
+      ? (local && parentId ? masterScene.unitById.get(parentId) : { x: 0, y: 0 })
+      : masterScene.unitById.get(leavingId);
     if (restored) {
-      pendingFocusCameraRef.current = {
-        scale: camera.scale,
-        x: size.w / 2 - restored.x * camera.scale,
-        y: size.h / 2 - restored.y * camera.scale,
-      };
+      pendingFocusCameraRef.current = centreOn(restored, camera.scale, { width: size.w, height: size.h });
     }
-    setFocusFrames((current) => current.slice(0, -1));
+    setFocusFrames((current) => popFocus(current));
     setSelectedUnitId(null);
     setHover(null);
-  }, [currentCamera, focusFrames, local, masterScene, size]);
+  }, [currentCamera, focusFrames, local, masterScene, size, markTouched]);
 
   // Read by the blank-tap handler, which is created before these exist.
   const leaveFocusRef = useRef<(() => void) | null>(null);
@@ -1560,16 +1404,12 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   }, [activeFocusId, leaveFocus, proposal, routeUnitId, selectedUnitId]);
 
   const focusFromBreadcrumb = useCallback((unitId: string) => {
-    cameraTouched.current = true;
+    markTouched();
     const camera = currentCamera();
     if (unitId === arrangedTree.rootId) {
       const current = activeFocusId ? masterScene.unitById.get(activeFocusId) : undefined;
       if (current) {
-        pendingFocusCameraRef.current = {
-          scale: camera.scale,
-          x: size.w / 2 - current.x * camera.scale,
-          y: size.h / 2 - current.y * camera.scale,
-        };
+        pendingFocusCameraRef.current = centreOn(current, camera.scale, { width: size.w, height: size.h });
       }
       setFocusFrames([]);
       setSelectedUnitId(null);
@@ -1577,41 +1417,19 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       return;
     }
     const crumb = local ? masterScene.unitById.get(unitId) : undefined;
-    pendingFocusCameraRef.current = {
-      scale: camera.scale,
-      x: size.w / 2 - (crumb?.x ?? 0) * camera.scale,
-      y: size.h / 2 - (crumb?.y ?? 0) * camera.scale,
-    };
-    setFocusFrames((current) => {
-      const existing = current.findIndex((entry) => entry.unitId === unitId);
-      if (existing >= 0) return current.slice(0, existing + 1);
-      const top = current[current.length - 1];
-      return top ? [...current.slice(0, -1), { unitId }] : current;
-    });
+    pendingFocusCameraRef.current = centreOn(
+      { x: crumb?.x ?? 0, y: crumb?.y ?? 0 }, camera.scale, { width: size.w, height: size.h });
+    setFocusFrames((current) => focusToCrumb(current, unitId));
     setSelectedUnitId(unitId);
     setRouteUnitId(unitId);
-  }, [activeFocusId, arrangedTree.rootId, currentCamera, local, masterScene, size]);
+  }, [activeFocusId, arrangedTree.rootId, currentCamera, local, masterScene, size, markTouched]);
 
   useEffect(() => {
-    if (cameraTouched.current || size.w === 0) return;
+    if (hasTouched() || size.w === 0) return;
     // A large company opens on its heart, never so close that the first thing
     // seen is one enormous disc.
     frame(startBounds, local ? 0.25 : MAX_SCALE);
-  }, [frame, local, startBounds, size]);
-
-  const onWheel = useCallback(
-    (e: KonvaEventObject<WheelEvent>) => {
-      e.evt.preventDefault();
-      cameraTouched.current = true;
-      const stage = stageRef.current;
-      const pointer = stage?.getPointerPosition();
-      if (!stage || !pointer) return;
-      const current = stage.scaleX();
-      const world = { x: (pointer.x - stage.x()) / current, y: (pointer.y - stage.y()) / current };
-      applyCamera(current * Math.exp(-e.evt.deltaY * 0.0015), world, pointer);
-    },
-    [applyCamera],
-  );
+  }, [frame, local, startBounds, size, hasTouched]);
 
   // --- persistence ---------------------------------------------------------
   const persist = useCallback(
@@ -1995,10 +1813,10 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const stage = stageRef.current;
     if (!unit || !stage) return;
     const k = stage.scaleX();
-    cameraTouched.current = true;
+    markTouched();
     animateCameraTo({ scale: k, x: size.w / 2 - unit.x * k, y: size.h / 2 - unit.y * k });
     setFlashEntry(unitId);
-  }, [animateCameraTo, size]);
+  }, [animateCameraTo, size, markTouched]);
 
   // Pressing an entry: a tap finds the branch; a drag carries it out.
   const entryPressRef = useRef<{ unitId: string; start: Point; pointerId: number; dragging: boolean } | null>(null);
@@ -2388,7 +2206,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       if (!hit && e.target === e.target.getStage()) {
         setRouteUnitId(null);
         setSelectedUnitId(null);
-        const k = stageRef.current?.scaleX() ?? scaleRef.current;
+        const k = stageRef.current?.scaleX() ?? liveScale();
         const place = lensInverse(fieldRef.current, world, k);
         const current = pinnedFieldRef.current;
         const now = performance.now();
@@ -2411,7 +2229,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const seat = s.seatById.get(hit.seatId);
     const task = seat?.personId ? boards.get(seat.personId)?.[hit.index] : undefined;
     if (seat && task) setOpenWork({ seat, task });
-  }, [hitTest, pointerWorld, boards, setPinnedField]);
+  }, [hitTest, pointerWorld, boards, setPinnedField, liveScale]);
 
   const registerNode = useCallback((key: string, node: Konva.Group | null) => {
     if (node) nodeRefs.current.set(key, node);
@@ -2453,7 +2271,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         draggable
         onWheel={onWheel}
         onDragStart={() => {
-          cameraTouched.current = true;
+          markTouched();
         }}
         onDragMove={() => {
           dirtyRef.current = true;

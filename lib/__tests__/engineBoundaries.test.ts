@@ -62,6 +62,8 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/orbital/focus.ts": "camera",
   "lib/orbital/lod.ts": "camera",
   "lib/orbital/detail.ts": "camera",
+  "lib/map/camera/viewport.ts": "camera",
+  "lib/map/camera/focusStack.ts": "camera",
 
   // 0. Runtime — the floor the engines stand on.
   "lib/orbital/motion.ts": "runtime",
@@ -87,7 +89,7 @@ const DATA_PREFIXES = [
 const DATA_FILES = ["lib/vocabulary.ts", "lib/validation.ts", "lib/theme.ts"];
 
 /** Directories every file of which must be assigned an engine. */
-const WATCHED = ["lib/orbital"];
+const WATCHED = ["lib/orbital", "lib/map"];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
