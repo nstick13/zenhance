@@ -3,10 +3,10 @@
  * common parent. `buildOrbitalTree` still uses an internal synthetic root to
  * run its existing indexes; no such node or link appears in this scene.
  */
-import { layoutBranches } from "./branches";
-import { layoutOrbital, type LayoutOptions, type OrbitalScene, type PlacedSeat } from "./layout";
-import { treeForFocus, type OrbitalTree } from "./model";
-import type { Point } from "./geometry";
+import { layoutBranches } from "@/lib/map/layout/branches";
+import { layoutOrbital, type LayoutOptions, type OrbitalScene, type PlacedSeat } from "@/lib/map/layout/layout";
+import { treeForFocus, type OrbitalTree } from "@/lib/map/layout/model";
+import type { Point } from "@/lib/map/layout/geometry";
 
 const ISLAND_GAP = 220;
 const BOUNDARY_PAD = 82;

@@ -34,28 +34,44 @@ Two consequences worth saying out loud:
 
 - **Growth, Basket, Signal and Work must not import each other.** When two of
   them need the same fact, that fact belongs in `layout`, `camera` or `runtime`.
-- **Nothing below `runtime` may import React or Konva.** The bar for "isolated"
-  is the one `lib/orbital/` already meets: drivable in a test with no React, no
-  Konva, and no database. That property is why the pure layer has 493 passing
-  tests and the renderer has almost none.
+- **Nothing under `lib/map/` may import React or Konva.** The bar for
+  "isolated" is: drivable in a test with no React, no Konva, and no database.
+  That property is why the engines carry 399 tests between them and the
+  renderer carries almost none — and why a wrong fit or a wrong drop now fails
+  in milliseconds instead of needing a browser and a squint.
 
-## Where each engine lives today
+## Where each engine lives
 
-Physical moves into `lib/map/<engine>/` are Phase 2 (see *Status* below). Today
-the engines are *groupings of existing files*, and the boundary test knows the
-grouping. Read this column as "these files are that engine", not as a path.
+Each engine is a directory under `lib/map/`, and the boundary test refuses any
+new file there until it is assigned one. `lib/orbital/` is gone.
 
-### 1. Layout — where every node sits
-`lib/orbital/` `geometry.ts` · `layout.ts` · `branches.ts` · `complexity.ts` ·
-`forest.ts` · `position.ts` · `envelope.ts` · `size.ts` · `model.ts` · `snap.ts`
+```
+lib/map/
+  layout/   geometry · layout · branches · complexity · forest
+            position · envelope · size · model · snap        3,414 lines · 155 tests
+  camera/   viewport · focusStack · focus · lod · detail        741 lines ·  90 tests
+  runtime/  motion · visibility · avatar                        346 lines ·  15 tests
+  growth/   drop · insertion · relationship                     876 lines ·  57 tests
+  signal/   progress · rings                                    309 lines ·  38 tests
+  basket/   basket · tray                                       201 lines ·  28 tests
+  work/     board                                               118 lines ·  16 tests
+```
 
-~2,400 lines, pure, well tested. **This engine is already isolated** — it is the
-model the other five are being moved toward. Its contract is
-[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md) and its laws are held by
-`lib/orbital/__tests__/laws.test.ts`.
+Their React halves sit beside the map they serve, as `use<Engine>` hooks in
+`components/viz/orbital/`. The rule is that the hook holds the stage, the
+state and the timing, and every number comes from `lib/map/`.
 
-Still trapped in `OrbitalMap.tsx`: ~80 lines of scene assembly (`masterScene`,
-`projectedScene`, `interactionScene`, `envelope`).
+### 1. Layout — where every node sits ✅ **moved 2026-09-24**
+`lib/map/layout/` — 3,414 lines, 155 tests, the largest engine and the one
+that was already isolated. Nothing about it changed: this was a move, not a
+refactor, which is why it went last.
+
+Its contract is [LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md) and its
+four laws are held by `lib/map/layout/__tests__/laws.test.ts`.
+
+Still in `OrbitalMap.tsx`: ~80 lines of scene assembly (`masterScene`,
+`projectedScene`, `interactionScene`, `envelope`). It threads saved
+placements and focus projection together and is genuinely the map's job.
 
 ### 2. Growth — adding, merging, re-parenting ✅ **extracted 2026-09-24**
 **Pure:** `lib/map/growth/drop.ts` — **what it means when you let go**, plus
@@ -98,7 +114,7 @@ all-or-nothing rule for sample work. 16 tests.
 `paintWorkCapsules` / `paintWorkDots` · `theme.ts` `WORK_STATUS_FILL`.
 
 **Not work, deliberately:** the work *dimensions* (`WORK_CAPSULE_*`,
-`SEAT_RING_STEP`) stay in `lib/orbital/geometry.ts`. Layout has to reserve
+`SEAT_RING_STEP`) stay in `lib/map/layout/geometry.ts`. Layout has to reserve
 room for a person's furniture before anything is drawn — a ring whose spacing
 ignored the capsules would overlap them. Those are layout's numbers; work
 reads them.
@@ -132,7 +148,7 @@ the zoom floor) · `focusStack.ts` (the focus stack and the breadcrumb rule).
 animation frame, and the one clamped write to Konva. It returns *functions*,
 never raw refs: handing a ref out for outside mutation makes the component's
 lifecycle impossible to reason about, and the React compiler rejects it.
-**Also camera:** `lib/orbital/focus.ts` (scene projection) · `lod.ts` ·
+**Also camera:** `lib/map/camera/focus.ts` (scene projection) · `lod.ts` ·
 `detail.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds`.
 
 **Still in `OrbitalMap.tsx`: focus *policy*.** Which unit to focus, and what
@@ -163,9 +179,9 @@ when growth is extracted they move into `runtime` instead of the component.
 This is the shape every remaining extraction should copy.
 
 ### 0. Runtime — the floor
-`lib/orbital/motion.ts` (springs) · `visibility.ts` (mark budget + thinning) ·
+`lib/map/runtime/motion.ts` (springs) · `visibility.ts` (mark budget + thinning) ·
 `components/viz/orbital/render.ts` (per-frame painters) · `theme.ts` ·
-`SeatAvatar.tsx` · `lib/orbital/avatar.ts`
+`SeatAvatar.tsx` · `lib/map/runtime/avatar.ts`
 
 Still trapped in `OrbitalMap.tsx`: the **270-line frame loop**, `hitTest`,
 `buildTargets`, `presenceOf`, `drawnOf`, `detailFor`, `registerNode`.
@@ -194,7 +210,7 @@ and it is worth doing slowly.
 |---|---|---|
 | 0 | Reconcile the repo — one trunk, branches archived, dead maps retired | **done** 2026-09-24 |
 | 1 | Name the seams; enforce them with a test | **done** 2026-09-24 |
-| 2 | Extract engines, in order: camera → basket → work → signal → growth → layout | **five of six done** 2026-09-24 — camera, basket, work, signal, growth. Layout is a move, not a refactor |
+| 2 | Extract engines: camera → basket → work → signal → growth → layout | **done** 2026-09-24. All six, plus `runtime` |
 | 3 | Converge `GrowLab` into the Growth engine; retire the SVG duplicate | not started |
 
 **Camera, as built (2026-09-24):** `OrbitalMap.tsx` 3,869 → 3,687 lines; 182

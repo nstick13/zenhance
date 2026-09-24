@@ -1,5 +1,5 @@
-import type { Link, OrbitalScene, PlacedSeat, PlacedUnit } from "./layout";
-import { polar, type Point } from "./geometry";
+import type { Link, OrbitalScene, PlacedSeat, PlacedUnit } from "@/lib/map/layout/layout";
+import { polar, type Point } from "@/lib/map/layout/geometry";
 
 export type PositionOffsets = ReadonlyMap<string, Point>;
 

@@ -250,7 +250,7 @@ export const mapNodes = pgTable(
 
 // --- orbital nodes (the orbital map's persisted arrangement) ---------------
 // The orbital map doesn't place things in x/y — a node's position *is* which
-// orbit it sits on and where round that orbit it sits (lib/orbital/*). So it
+// orbit it sits on and where round that orbit it sits (lib/map/*). So it
 // needs its own store rather than a second meaning for `map_nodes`.
 //
 // `parentId` is an **override, not an org edit**: dragging a team into
@@ -273,7 +273,7 @@ export const orbitalNodes = pgTable(
      *  of the map; in local branch geography (large companies), the unit's
      *  direction from its own parent. On the ring map a child sits outboard of
      *  its parent, so the two readings put a unit on the same side — see
-     *  lib/orbital/position.ts `savedAnglePoint`. */
+     *  lib/map/layout/position.ts `savedAnglePoint`. */
     angle: numeric("angle", { precision: 9, scale: 6 }),
     /** How far from the parent (or, on the ring map, from the centre) the unit
      *  was dropped, in world units. Null means "wherever the calculated layout

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildOrbitalTree, unitsAtDepth } from "../model";
-import { demoInput } from "./orbitalFixture";
+import { buildOrbitalTree, unitsAtDepth } from "@/lib/map/layout/model";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
 
 describe("buildOrbitalTree", () => {
   it("merges a pass-through root so the company sits at the centre of its own org", () => {

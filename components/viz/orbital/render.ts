@@ -22,10 +22,10 @@ import {
   WORK_RADIUS,
   workCapsuleLength,
   type Point,
-} from "@/lib/orbital/geometry";
-import type { OrbitalScene, PlacedUnit } from "@/lib/orbital/layout";
-import type { Envelope } from "@/lib/orbital/envelope";
-import type { DetailField } from "@/lib/orbital/detail";
+} from "@/lib/map/layout/geometry";
+import type { OrbitalScene, PlacedUnit } from "@/lib/map/layout/layout";
+import type { Envelope } from "@/lib/map/layout/envelope";
+import type { DetailField } from "@/lib/map/camera/detail";
 import { metaballBridge, type ReparentOrbit } from "@/lib/map/growth/relationship";
 import {
   UNIT_CULL_PX,
@@ -34,7 +34,7 @@ import {
   unitRingReveal,
   unitPresence,
   type Reveal,
-} from "@/lib/orbital/lod";
+} from "@/lib/map/camera/lod";
 import {
   UNIT_RING_KEYS,
   type SeatProgress,
@@ -115,11 +115,11 @@ export type RenderCtx = {
   /** A large company's territory outline, from settled structure only. */
   envelope: Envelope | null;
   /** How present a unit is, 0..1 — the visibility budget's verdict, eased so
-   *  marks fade rather than pop (lib/orbital/visibility.ts). Its people and
+   *  marks fade rather than pop (lib/map/runtime/visibility.ts). Its people and
    *  work are only ever as present as it is. */
   presence: (unitId: string) => number;
   /** How much detail a unit's neighbourhood reads at: the camera's own reveal,
-   *  lifted there by the local detail field (lib/orbital/detail.ts). */
+   *  lifted there by the local detail field (lib/map/camera/detail.ts). */
   revealFor: (unitId: string) => Reveal;
   /** The camera scale the neighbourhood reads as — for anything keyed to
    *  scale rather than to a reveal band. */

@@ -26,8 +26,8 @@ import {
   seatRingRadius,
   unitRadius,
   type Point,
-} from "./geometry";
-import { bandAtRadius, unitOwningAngle, type OrbitalScene, type PlacedUnit } from "./layout";
+} from "@/lib/map/layout/geometry";
+import { bandAtRadius, unitOwningAngle, type OrbitalScene, type PlacedUnit } from "@/lib/map/layout/layout";
 
 export type UnitSnap = {
   kind: "unit";

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { focusOrbital } from "../focus";
-import { pathToUnit, treeForFocus } from "../model";
-import { layoutOrbital } from "../layout";
-import { buildOrbitalTree } from "../model";
+import { focusOrbital } from "@/lib/map/camera/focus";
+import { pathToUnit, treeForFocus } from "@/lib/map/layout/model";
+import { layoutOrbital } from "@/lib/map/layout/layout";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
 
 const tree = buildOrbitalTree(
   {

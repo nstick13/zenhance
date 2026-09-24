@@ -27,7 +27,7 @@ More than **6×** and the rings have stopped holding their context; local
 geography is then used only if it fits the company at least **1.5×** larger.
 Measured against a fixed reference screen (1024×768, the iPad in `AGENTS.md`),
 never the live window, so resizing a browser can't change the drawing.
-Calibration table in `lib/orbital/complexity.ts`.
+Calibration table in `lib/map/layout/complexity.ts`.
 
 On the 2,562-person shape: rings need 91× zoom to read; local geography 18×,
 and fits 5× larger. Sparrow Jam (1.1×), Digital Tailoring (2.3×) and a
@@ -37,7 +37,7 @@ stays on rings too.
 
 ## Where the code lives
 
-Pure and tested, in `lib/orbital/`:
+Pure and tested, now one directory per engine under `lib/map/` (see [ENGINES.md](ENGINES.md)):
 
 | file | what it decides |
 |---|---|
@@ -88,7 +88,7 @@ criss cross, child nodes splay in apparently random directions… moving a node
 can change the location of another node even if it's far away. Moving a node
 does not always drop it where the mouse leaves it — there's this sort of
 randomly elastic behaviour."* The contract for the answer is
-[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md); `lib/orbital/__tests__/laws.test.ts`
+[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md); `lib/map/layout/__tests__/laws.test.ts`
 is where each law is held.
 
 **1. The picture is a pure function** of the company's structure and the

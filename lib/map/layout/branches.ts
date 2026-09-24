@@ -41,7 +41,7 @@ import {
   seatRingRadius,
   unitOuterExtent,
   type Point,
-} from "./geometry";
+} from "@/lib/map/layout/geometry";
 import {
   placeUnitSeats,
   seatRingCount,
@@ -51,9 +51,9 @@ import {
   type OrbitalScene,
   type PlacedSeat,
   type PlacedUnit,
-} from "./layout";
-import type { OrbitalTree, UnitNode } from "./model";
-import { SIZE_BY_HEADCOUNT, headcountDotPx, sizeIndex } from "./size";
+} from "@/lib/map/layout/layout";
+import type { OrbitalTree, UnitNode } from "@/lib/map/layout/model";
+import { SIZE_BY_HEADCOUNT, headcountDotPx, sizeIndex } from "@/lib/map/layout/size";
 
 const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;

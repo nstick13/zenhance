@@ -14,7 +14,7 @@ import {
   trackRelation,
   validateReparent,
 } from "../relationship";
-import { buildOrbitalTree } from "@/lib/orbital/model";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
 
 const units = [
   { id: "a", x: 0, y: 0 },

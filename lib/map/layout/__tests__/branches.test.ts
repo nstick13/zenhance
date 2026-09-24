@@ -6,15 +6,15 @@ import {
   localUnitRadius,
   LOCAL_MAX_R,
   LOCAL_MIN_R,
-} from "../branches";
-import { structuralEnvelope, insideEnvelope } from "../envelope";
-import { buildOrbitalTree, type OrgInput } from "../model";
-import { layoutOrbitalForest } from "../forest";
-import { treeForFocus } from "../model";
-import { unitDiscRadius, type OrbitalScene } from "../layout";
-import { UNIT_RADIUS, angleDelta } from "../geometry";
-import { desiredUnitRadius, neighbourAwareRadius } from "../lod";
-import { buildDeepOrg } from "./fixtures/deepOrg";
+} from "@/lib/map/layout/branches";
+import { structuralEnvelope, insideEnvelope } from "@/lib/map/layout/envelope";
+import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
+import { treeForFocus } from "@/lib/map/layout/model";
+import { unitDiscRadius, type OrbitalScene } from "@/lib/map/layout/layout";
+import { UNIT_RADIUS, angleDelta } from "@/lib/map/layout/geometry";
+import { desiredUnitRadius, neighbourAwareRadius } from "@/lib/map/camera/lod";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 /** The deep fixture mints random UUIDs; give its units stable ids so two
  *  builds can be compared unit for unit. */

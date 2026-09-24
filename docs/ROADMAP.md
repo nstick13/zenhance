@@ -5,7 +5,7 @@ Organized as **Features → Stories**. This is the canonical roadmap (replaces t
 > **Vision (Greg, co-founder):** "SimCity for a COO on an iPad." A delivery org you can zoom, pan, search, and rearrange like a living map — surfacing what the structure hides (over-allocation, gaps, cost/ROI).
 
 ## Status — as of 2026-09-13
-- **Version 0.1.41** — **Greg's orbital map is the live default at `/org`** (merged 2026-09-13, 4 commits, ~9.4k lines). The V2 canvas moved to `?view=canvas`, radial to `?view=radial`, switcher top-right (`components/viz/OrgViewSwitcher.tsx`). Ships **multi-company switching** (`lib/auth/workspace.ts` `listWorkspaces`/`selectWorkspace` + `components/WorkspaceSwitcher.tsx` + `lib/db/companies.ts`) — the one-workspace-per-user limit is gone, which is the prerequisite for the consultant/PM ICP. Plus the `lib/orbital/*` layout engine (geometry/layout/lod/model/motion/progress/snap, ~2.2k lines, 7 test files) and `lib/db/deepOrg.ts` for scale. **Migration `0008_lyrical_inertia.sql` (`orbital_nodes` + `orbital_node_type`) is applied in Neon (verified 2026-09-13)** — applied *before* the push, per the 0005 lesson. Unlike 0001/0003/0004/0005 it **is** in Drizzle's `_journal.json` (idx 8), so it's a properly generated migration, not a hand-written orphan. Verified at merge: `tsc --noEmit` clean, 279/279 Vitest pass, prod smoke test 200 on `/`, `/org`, `/settings`, `/pricing`. Stack: Vercel + Neon Postgres + Clerk auth.
+- **Version 0.1.41** — **Greg's orbital map is the live default at `/org`** (merged 2026-09-13, 4 commits, ~9.4k lines). The V2 canvas moved to `?view=canvas`, radial to `?view=radial`, switcher top-right (`components/viz/OrgViewSwitcher.tsx`). Ships **multi-company switching** (`lib/auth/workspace.ts` `listWorkspaces`/`selectWorkspace` + `components/WorkspaceSwitcher.tsx` + `lib/db/companies.ts`) — the one-workspace-per-user limit is gone, which is the prerequisite for the consultant/PM ICP. Plus the `lib/map/*` layout engine (geometry/layout/lod/model/motion/progress/snap, ~2.2k lines, 7 test files) and `lib/db/deepOrg.ts` for scale. **Migration `0008_lyrical_inertia.sql` (`orbital_nodes` + `orbital_node_type`) is applied in Neon (verified 2026-09-13)** — applied *before* the push, per the 0005 lesson. Unlike 0001/0003/0004/0005 it **is** in Drizzle's `_journal.json` (idx 8), so it's a properly generated migration, not a hand-written orphan. Verified at merge: `tsc --noEmit` clean, 279/279 Vitest pass, prod smoke test 200 on `/`, `/org`, `/settings`, `/pricing`. Stack: Vercel + Neon Postgres + Clerk auth.
 - ✅ **Migration `0005_stormy_red_ghost.sql` (`workspaces.vocabulary`) is applied** — locally and in Neon. Like `0001`/`0003`/`0004` it is **not** in Drizzle's `__drizzle_migrations` ledger, so a future `db:migrate` may try to replay it.
 - ⚠️ **Process lesson from `0005`, worth not repeating:** the code was pushed to `main` before the migration was applied. If `main` auto-deploys, that window is a hard prod outage — `requireWorkspace` selects every `workspaces` column, so *every* page 500s, not just the new tab. **Apply the migration first, then push.** Also: paste **bare SQL** into Neon's SQL editor — a `psql ... -c '...'` shell wrapper gives `syntax error at or near "psql"` (SQLSTATE 42601).
 - **v1 core shipped:** multi-tenant schema + auth scoping; People/Teams CRUD; CSV/Excel import; the radial D3+SVG viz with drill-down + panels; drag-to-reassign + scenario mode; analytics overlays; palette switcher; zoom & pan.
@@ -102,7 +102,7 @@ you need ~6× scale; at 6× that ring's circumference is tens of thousands of pi
 its parent's centre is necessarily off-screen. The zoom that grants legibility is the
 zoom that destroys context.
 
-**What is working and should not be touched:** the LOD ladder (`lib/orbital/lod.ts`) is
+**What is working and should not be touched:** the LOD ladder (`lib/map/camera/lod.ts`) is
 right. Detail morphing instead of popping is the correct call and it's well tested.
 **Detail and place are different problems** — Orbital currently only solves detail.
 
@@ -121,7 +121,7 @@ right. Detail morphing instead of popping is the correct call and it's well test
    *read-out* of the current LOD tier (`lod.ts` `LodTier`), not a control — but it reads
    as navigation and invites clicking. Either wire each to its zoom band or restyle it so
    it stops advertising something it doesn't do. Cheap.
-3. **Size rungs by occupancy** (`lib/orbital/layout.ts`). Every rung is sized for the
+3. **Size rungs by occupancy** (`lib/map/layout/layout.ts`). Every rung is sized for the
    deepest content while each parent holds ~4 children, so outer rungs are mostly empty
    (the 0.74× and 1.82× screenshots). Hardest of the three; do it last, if at all.
 

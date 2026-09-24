@@ -25,7 +25,7 @@
  * free, so their descendants that *are* on screen can still be reached —
  * a parent off to one side must not hide a whole visible team.
  */
-import { fieldInfluence, type DetailField } from "./detail";
+import { fieldInfluence, type DetailField } from "@/lib/map/camera/detail";
 
 export type VisibilityUnit = {
   id: string;

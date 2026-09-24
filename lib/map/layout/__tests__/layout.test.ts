@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { angleDelta, radiusOf, sectorContains, type Point } from "../geometry";
-import { applyOverrides, buildOrbitalTree } from "../model";
-import { bandAtRadius, layoutOrbital, unitOwningAngle } from "../layout";
-import { demoInput } from "./orbitalFixture";
+import { angleDelta, radiusOf, sectorContains, type Point } from "@/lib/map/layout/geometry";
+import { applyOverrides, buildOrbitalTree } from "@/lib/map/layout/model";
+import { bandAtRadius, layoutOrbital, unitOwningAngle } from "@/lib/map/layout/layout";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
 
 const scene = () => layoutOrbital(buildOrbitalTree(demoInput(), { workCountFor: () => 6 }));
 

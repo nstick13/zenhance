@@ -9,7 +9,7 @@ import {
   headcountDotPx,
   interpolateCurve,
   sizeIndex,
-} from "../size";
+} from "@/lib/map/layout/size";
 
 describe("dot size index — a broad-brush sense of headcount", () => {
   it("ships a curve that is non-decreasing and inside 0..1 on both axes", () => {

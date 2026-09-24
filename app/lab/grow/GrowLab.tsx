@@ -23,14 +23,14 @@
  * ------------------------------------------------------------------------ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { avatarPalette } from '@/lib/orbital/avatar';
-import { SEAT_ORBIT_GAP, SEAT_RADIUS, WORK_RADIUS, relaxAngles, unitRadius, workGridPoints } from '@/lib/orbital/geometry';
+import { avatarPalette } from '@/lib/map/runtime/avatar';
+import { SEAT_ORBIT_GAP, SEAT_RADIUS, WORK_RADIUS, relaxAngles, unitRadius, workGridPoints } from '@/lib/map/layout/geometry';
 import {
   drawnUnitRadius,
   revealAt,
   smoothstep,
   type Reveal,
-} from '@/lib/orbital/lod';
+} from '@/lib/map/camera/lod';
 import { C, WORK_STATUS_FILL } from '@/components/viz/orbital/theme';
 import {
   focusedStudyRingReveal, personOrbitRadius, studyFocusDepth, studyRingColor, studyRingReveal,
@@ -378,7 +378,7 @@ export function buildLayout(
 }
 
 /** Every node at or below `id`. Nothing may be dropped inside its own subtree
- *  — that would cut the subtree off the map entirely (see lib/orbital/snap.ts). */
+ *  — that would cut the subtree off the map entirely (see lib/map/layout/snap.ts). */
 function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
   const out = new Set<string>([id]);
   const stack = [id];
@@ -395,7 +395,7 @@ function descendantIds(kids: Record<string, Node[]>, id: string): Set<string> {
 
 /**
  * What a drop would mean, read off where the node was let go — the same two
- * questions the production map asks (lib/orbital/snap.ts): how far out you
+ * questions the production map asks (lib/map/layout/snap.ts): how far out you
  * are says which level, and which orbit you are on says whose child you'd be.
  * Here the rungs aren't global — each island has its own — so "the ring you
  * landed on" answers both at once.
@@ -1081,7 +1081,7 @@ export default function GrowLab({
   }, [targets, camera, camTy, reduced, size.w, byId, plus?.parentId, soloRoot?.id, dragFamily]);
 
   /**
-   * The zoom ladder, straight from `lib/orbital/lod`. People are not drawn at
+   * The zoom ladder, straight from `lib/map/camera/lod`. People are not drawn at
    * overview scale at all: they fade in only once there is room for them, and
    * a single arc stands in for the crowd on the way (Greg, 2026-09-20: "if you
    * zoom out in /org, then humans vanish. When you zoom in, first they appear

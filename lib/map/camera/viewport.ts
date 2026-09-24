@@ -16,7 +16,7 @@
  * is `world * scale + offset`. Most bugs in here have been sign errors in
  * that one line, so it is written once, in `centreOn`, and reused.
  */
-import { fitScaleFor, type Bounds } from "@/lib/orbital/complexity";
+import { fitScaleFor, type Bounds } from "@/lib/map/layout/complexity";
 
 export type Size = { width: number; height: number };
 export type Camera = { scale: number; x: number; y: number };

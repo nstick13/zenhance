@@ -9,7 +9,7 @@ import {
   tierAt,
   unitLabelVisible,
   unitRingReveal,
-} from "../lod";
+} from "@/lib/map/camera/lod";
 
 describe("smoothstep", () => {
   it("is flat at both ends, so a morph never snaps at the boundary", () => {

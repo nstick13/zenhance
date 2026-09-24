@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { polar, radiusOf } from "../geometry";
-import { buildOrbitalTree } from "../model";
-import { layoutOrbital } from "../layout";
-import { descendantIds, snapSeat, snapUnit, snapUnitOnRing } from "../snap";
-import { demoInput } from "./orbitalFixture";
+import { polar, radiusOf } from "@/lib/map/layout/geometry";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
+import { layoutOrbital } from "@/lib/map/layout/layout";
+import { descendantIds, snapSeat, snapUnit, snapUnitOnRing } from "@/lib/map/layout/snap";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
 
 const scene = () => layoutOrbital(buildOrbitalTree(demoInput(), { workCountFor: () => 4 }));
 

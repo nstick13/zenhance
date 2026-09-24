@@ -25,7 +25,7 @@
 import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
-import { buildDeepOrg } from "@/lib/orbital/__tests__/fixtures/deepOrg";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 type Db = PostgresJsDatabase<typeof schema>;
 

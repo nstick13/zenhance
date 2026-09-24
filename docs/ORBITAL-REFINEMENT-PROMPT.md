@@ -84,7 +84,7 @@ should be the same size as a team for now."*
   seated round a disc that small — and then only by as much as seating forces.
   Greg's choice; state in the code what "has to" means.
 - This makes headcount-based sizing inert. Switch it off behind one constant
-  rather than deleting it (`lib/orbital/size.ts` and its tests stay), and say
+  rather than deleting it (`lib/map/layout/size.ts` and its tests stay), and say
   in the doc that unit size currently carries no meaning. Greg: *"I don't have
   a concrete position on node sizing just yet."*
 - Sizes feed footprints, which feed the layout, so re-measure extent,
@@ -130,7 +130,7 @@ screenshot is not proof of an interaction.
 
 ## Standing rules
 
-- Production orbital map only (`components/viz/orbital/*`, `lib/orbital/*`).
+- Production orbital map only (`components/viz/orbital/*`, `lib/map/*`).
 - Audit before adding machinery; most of this is tuning what exists.
 - Read the installed Next.js guides before any Next-specific change.
 - Runs on a five-year-old iPad and a ten-year-old Lenovo: no per-frame React

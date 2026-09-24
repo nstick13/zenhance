@@ -88,7 +88,7 @@ fail if it were broken:
 
 - determinism across repeated runs, shuffled input order and both geographies;
 - zero body overlaps and zero link crossings on every fixture, including the
-  2,562-person `lib/orbital/__tests__/fixtures/deepOrg.ts` shape;
+  2,562-person `lib/map/layout/__tests__/fixtures/deepOrg.ts` shape;
 - a drag's effect confined to its parent branch — every node outside it
   identical before and after, to the bit;
 - drop position equals release position, and equals what reloads;
@@ -129,7 +129,7 @@ stays about geometry:
 
 ## Standing rules
 
-- Work in the production orbital map (`components/viz/orbital/*`, `lib/orbital/*`).
+- Work in the production orbital map (`components/viz/orbital/*`, `lib/map/*`).
   No lab, no second engine.
 - Audit before proposing new machinery. Much of what is needed exists.
 - Read the installed Next.js guides before any Next-specific change.

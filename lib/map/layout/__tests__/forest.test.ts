@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { layoutOrbitalForest, visibleRootIds } from "../forest";
-import { buildOrbitalTree } from "../model";
-import { snapUnitOnRing } from "../snap";
-import { buildDeepOrg } from "./fixtures/deepOrg";
+import { layoutOrbitalForest, visibleRootIds } from "@/lib/map/layout/forest";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
+import { snapUnitOnRing } from "@/lib/map/layout/snap";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 function forest(count: number) {
   return buildOrbitalTree({

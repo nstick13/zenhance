@@ -28,12 +28,12 @@ describe("landing ripple", () => {
 
 describe("every painter, on local geography with a detail field and thinning", () => {
   it("paints a whole frame without throwing, and never paints a hidden unit", async () => {
-    const { buildOrbitalTree } = await import("@/lib/orbital/model");
-    const { layoutOrbitalForest } = await import("@/lib/orbital/forest");
-    const { structuralEnvelope } = await import("@/lib/orbital/envelope");
-    const { revealAt } = await import("@/lib/orbital/lod");
-    const { effectiveScale, fieldInfluence } = await import("@/lib/orbital/detail");
-    const { demoInput } = await import("@/lib/orbital/__tests__/orbitalFixture");
+    const { buildOrbitalTree } = await import("@/lib/map/layout/model");
+    const { layoutOrbitalForest } = await import("@/lib/map/layout/forest");
+    const { structuralEnvelope } = await import("@/lib/map/layout/envelope");
+    const { revealAt } = await import("@/lib/map/camera/lod");
+    const { effectiveScale, fieldInfluence } = await import("@/lib/map/camera/detail");
+    const { demoInput } = await import("@/lib/map/layout/__tests__/orbitalFixture");
     const render = await import("./render");
 
     const scene = layoutOrbitalForest(buildOrbitalTree(demoInput(), { workCountFor: () => 4 }), { geography: "local" });

@@ -1,5 +1,5 @@
-import { layoutOrbital, type LayoutOptions, type Link, type OrbitalScene, type PlacedSeat, type PlacedUnit } from "./layout";
-import { pathToUnit, treeForFocus, type OrbitalTree, type UnitNode } from "./model";
+import { layoutOrbital, type LayoutOptions, type Link, type OrbitalScene, type PlacedSeat, type PlacedUnit } from "@/lib/map/layout/layout";
+import { pathToUnit, treeForFocus, type OrbitalTree, type UnitNode } from "@/lib/map/layout/model";
 
 export type FocusedOrbital = {
   /** Full scene projected around the local centre. Kept full so existing

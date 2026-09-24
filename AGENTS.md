@@ -49,12 +49,14 @@ Speed comes first (rule 2), but never across these.
 - **It must run well on an entry-level iPad from five years ago, and on a Lenovo laptop IT hasn't upgraded in ten.** Rich visuals and interactions are the enhancement, never the requirement.
 - **Graceful fallback.** The core experience works with effects turned down or off; richer effects arrive only where the device can carry them. Respect `prefers-reduced-motion`.
 - **Touch is a first-class input.** Anything you can reach by hovering must also be reachable by tapping.
-- **Check every change to the map on both companies** — Sparrow Jam (10 people) and Digital Tailoring (45). A fix for one has broken the other more than once. *(**Northwind**, ~2,560 invented people over eleven rungs, is back in the local development database since 2026-09-23 — `npm run db:northwind`. It was retired on 2026-09-20 to keep the database light, which held while the work was pure geometry and stopped holding once the map had to be navigated at scale. Seed it locally and look at it; the seeder refuses any database that is not on this machine, and there is no card for it on the import page. The same shape is still what the pure scale tests use, `lib/orbital/__tests__/fixtures/deepOrg.ts`.)*
+- **Check every change to the map on both companies** — Sparrow Jam (10 people) and Digital Tailoring (45). A fix for one has broken the other more than once. *(**Northwind**, ~2,560 invented people over eleven rungs, is back in the local development database since 2026-09-23 — `npm run db:northwind`. It was retired on 2026-09-20 to keep the database light, which held while the work was pure geometry and stopped holding once the map had to be navigated at scale. Seed it locally and look at it; the seeder refuses any database that is not on this machine, and there is no card for it on the import page. The same shape is still what the pure scale tests use, `lib/map/layout/__tests__/fixtures/deepOrg.ts`.)*
 
 ## Work with the least context needed
-This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. **Don't read whole files or scan the tree by default.**
+This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,600 lines. **Don't read whole files or scan the tree by default.**
 
-1. **Start at [docs/CODEMAP.md](docs/CODEMAP.md)** — it tells you which file (and which region of `RadialOrg.tsx`) owns a given concern. Read only the section the map points you to.
+**Start from the engine.** Since 2026-09-24 the map is seven directories under `lib/map/` — layout, camera, runtime, growth, signal, work, basket — each pure and tested on its own. If your change belongs to one of them, that directory plus its tests is usually all the context you need. [docs/ENGINES.md](docs/ENGINES.md) says which owns what.
+
+1. **Start at [docs/CODEMAP.md](docs/CODEMAP.md)** — it tells you which file owns a given concern. Read only the section the map points you to.
 2. **Locate symbols with `grep -n`** (function/const/type name), then `Read` with `offset`/`limit` around the hit. Reach for a full-file read only when the map says the change is genuinely cross-cutting.
 3. A whole-file or whole-tree read is sometimes correct — but make it a deliberate choice the map justifies, not a reflex.
 
@@ -62,7 +64,7 @@ This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. *
 - **What to build next:** [docs/ROADMAP.md](docs/ROADMAP.md) — start at **▶ Next build**. Features → Stories. **Analytics is design-first: discuss before coding.**
 - **Product/design *why* (personas, formal-vs-delivery, analytics design language, packaging):** [docs/PRODUCT.md](docs/PRODUCT.md). Read once; don't re-derive it in chat.
 - **Codebase map:** [docs/CODEMAP.md](docs/CODEMAP.md).
-- **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/orbital/`.
+- **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/map/`.
 - **Design sandboxes (feel studies) + archive convention:** [docs/LAB.md](docs/LAB.md).
 - **Customer feedback:** [docs/FEEDBACK.md](docs/FEEDBACK.md).
 - **Durable facts** (running locally, gotchas) belong in `docs/`, where every agent can read them — not in any one agent's private memory. *Some still live only in Nate's Claude memory (`~/.claude/projects/-Users-natetgreat-zenhance/memory/`); Nate's agent should move them into `docs/`.*

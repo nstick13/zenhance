@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Circle, Ellipse, Group, Image as KonvaImage } from "react-konva";
-import type { PlacedSeat } from "@/lib/orbital/layout";
-import { avatarPalette } from "@/lib/orbital/avatar";
+import type { PlacedSeat } from "@/lib/map/layout/layout";
+import { avatarPalette } from "@/lib/map/runtime/avatar";
 
 
 /** A photo when available; otherwise a clearly illustrative face placeholder.

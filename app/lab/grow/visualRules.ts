@@ -1,5 +1,5 @@
-import { SEAT_RADIUS } from '@/lib/orbital/geometry';
-import { smoothstep } from '@/lib/orbital/lod';
+import { SEAT_RADIUS } from '@/lib/map/layout/geometry';
+import { smoothstep } from '@/lib/map/camera/lod';
 
 export type StudyRingKey = 'delivery' | 'sprint' | 'health';
 export type StudyRingAlert = { severity: 'watch' | 'risk'; description: string };

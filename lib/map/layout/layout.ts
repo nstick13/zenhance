@@ -43,8 +43,8 @@ import {
   workOuterExtent,
   type Point,
   type Sector,
-} from "./geometry";
-import type { OrbitalTree, Seat, SeatKind, UnitNode } from "./model";
+} from "@/lib/map/layout/geometry";
+import type { OrbitalTree, Seat, SeatKind, UnitNode } from "@/lib/map/layout/model";
 
 export type PlacedUnit = {
   id: string;

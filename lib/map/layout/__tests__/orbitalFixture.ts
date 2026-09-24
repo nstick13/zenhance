@@ -1,4 +1,4 @@
-import type { OrgInput } from "../model";
+import type { OrgInput } from "@/lib/map/layout/model";
 
 /**
  * A miniature of the real demo org's shape: a holding company whose only

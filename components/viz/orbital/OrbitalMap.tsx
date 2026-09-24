@@ -14,13 +14,13 @@ import {
   buildOrbitalTree,
   type OrbitalTree,
   type StructureOverrides,
-} from "@/lib/orbital/model";
+} from "@/lib/map/layout/model";
 import {
   type OrbitalScene,
   type PlacedSeat,
   type PlacedUnit,
-} from "@/lib/orbital/layout";
-import { descendantIds, snapSeat, type SeatSnap } from "@/lib/orbital/snap";
+} from "@/lib/map/layout/layout";
+import { descendantIds, snapSeat, type SeatSnap } from "@/lib/map/layout/snap";
 import { planInsertion, type InsertionPlan } from "@/lib/map/growth/insertion";
 import { canReparentAt, decideDrop, eligibleTargets } from "@/lib/map/growth/drop";
 import { carrierOf, type BasketTree } from "@/lib/map/basket/basket";
@@ -38,10 +38,10 @@ import {
   type ReparentOrbit,
   type Relation,
 } from "@/lib/map/growth/relationship";
-import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
-import { READABLE_SCALE } from "@/lib/orbital/complexity";
-import { focusOrbital } from "@/lib/orbital/focus";
-import { layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
+import { MotionStore, type MotionTarget } from "@/lib/map/runtime/motion";
+import { READABLE_SCALE } from "@/lib/map/layout/complexity";
+import { focusOrbital } from "@/lib/map/camera/focus";
+import { layoutCompany, sceneBounds, type Bounds } from "@/lib/map/layout/complexity";
 import { useCamera } from "./useCamera";
 import { MAX_SCALE, boundsOfUnits, centreOn, type Camera } from "@/lib/map/camera/viewport";
 import {
@@ -53,13 +53,13 @@ import {
   pushFocus,
   type FocusFrame,
 } from "@/lib/map/camera/focusStack";
-import { structuralEnvelope } from "@/lib/orbital/envelope";
+import { structuralEnvelope } from "@/lib/map/layout/envelope";
 import {
   anglePlacementOffsets,
   applyPositionOffsets,
   combinePositionOffsets,
   type Placement,
-} from "@/lib/orbital/position";
+} from "@/lib/map/layout/position";
 import {
   SEAT_RADIUS,
   WORK_RADIUS,
@@ -68,7 +68,7 @@ import {
   normalizeAngle,
   polar,
   type Point,
-} from "@/lib/orbital/geometry";
+} from "@/lib/map/layout/geometry";
 import {
   isLandmark,
   LOD_LADDER,
@@ -80,7 +80,7 @@ import {
   unitLabelVisible,
   unitRingReveal,
   type Reveal,
-} from "@/lib/orbital/lod";
+} from "@/lib/map/camera/lod";
 import {
   INTERACTABLE_PRESENCE,
   effectiveScale,
@@ -90,9 +90,9 @@ import {
   lensDisplace,
   lensInverse,
   type DetailField,
-} from "@/lib/orbital/detail";
-import { markBudget, revealDelay, stepPresence, visibleUnitIds, type VisibilityUnit } from "@/lib/orbital/visibility";
-import { sizeIndex } from "@/lib/orbital/size";
+} from "@/lib/map/camera/detail";
+import { markBudget, revealDelay, stepPresence, visibleUnitIds, type VisibilityUnit } from "@/lib/map/runtime/visibility";
+import { sizeIndex } from "@/lib/map/layout/size";
 import PersonTaskBoard from "@/components/viz/PersonTaskBoard";
 import {
   UNIT_RING_KEYS,
@@ -134,7 +134,7 @@ import { SeatAvatar } from "./SeatAvatar";
  * The orbital map — the company at the centre, everything else in orbit
  * around whatever it belongs to.
  *
- * Geometry lives in lib/orbital/*; per-frame drawing lives in ./render.ts.
+ * Geometry lives in lib/map/layout/*; per-frame drawing lives in ./render.ts.
  * This file owns the camera, the dragging and the state. Three things worth
  * knowing:
  *
@@ -383,7 +383,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
 
   // --- the local detail field and the visibility budget ----------------------
   // A blank tap pins a soft field of extra detail where it landed (see
-  // lib/orbital/detail.ts). React holds only *where* it is pinned — what
+  // lib/map/camera/detail.ts). React holds only *where* it is pinned — what
   // decides which seats and labels exist. Its live strength, and every mark's
   // presence, are eased in the frame loop and never pass through React.
   const [pinnedField, setPinnedField] = useState<Point | null>(null);
@@ -498,7 +498,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const kindById = useMemo(() => new Map(units.map((u) => [u.id, u.kind])), [units]);
 
   // Rings for a company they fit; local branch geography for one that has
-  // outgrown them (lib/orbital/complexity.ts). Deterministic per company.
+  // outgrown them (lib/map/layout/complexity.ts). Deterministic per company.
   const masterScene = useMemo(
     () => layoutCompany(arrangedTree, {}, previewGeography).scene,
     [arrangedTree, previewGeography],
@@ -826,7 +826,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     const carried = drag?.kind === "unit" ? drag.moved : null;
 
     // Who makes room for the landing, and exactly where each will be after
-    // the drop (lib/orbital/insertion.ts). Each carries its own branch; no
+    // the drop (lib/map/growth/insertion.ts). Each carries its own branch; no
     // one else moves.
     const plan = drag?.kind === "unit" ? drag.plan : null;
     const seatSnap = drag?.kind === "seat" ? drag.snap : null;

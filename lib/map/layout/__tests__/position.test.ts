@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { anglePlacementOffsets, applyPositionOffsets, combinePositionOffsets, savedAnglePoint } from "../position";
-import { angleDelta } from "../geometry";
-import { layoutOrbital } from "../layout";
-import { layoutOrbitalForest } from "../forest";
-import { buildDeepOrg } from "./fixtures/deepOrg";
-import { buildOrbitalTree } from "../model";
-import { demoInput } from "./orbitalFixture";
+import { anglePlacementOffsets, applyPositionOffsets, combinePositionOffsets, savedAnglePoint } from "@/lib/map/layout/position";
+import { angleDelta } from "@/lib/map/layout/geometry";
+import { layoutOrbital } from "@/lib/map/layout/layout";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
 
 describe("snap-off position offsets", () => {
   it("moves a unit and its people without changing its parent", () => {

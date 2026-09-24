@@ -212,7 +212,7 @@ The camera's auto-fit is frozen for the duration of a drag — the world must no
 zoom or slide under the pointer while you're holding something.
 
 **A drop is also a question about the org**, read the way the production map
-reads it (`lib/orbital/snap.ts`, Greg 2026-09-13: *"snapping is relative to
+reads it (`lib/map/layout/snap.ts`, Greg 2026-09-13: *"snapping is relative to
 parent orbits, rather than an absolute grid"* — radius says which level, angle
 says which parent). Here the rungs aren't global (each island has its own), so
 **the orbit you landed on answers both at once**:
@@ -225,7 +225,7 @@ says which parent). Here the rungs aren't global (each island has its own), so
   angle. Carrying it further *inside* that orbit is the separate merge gesture.
 - **Let go on open paper** → nothing about the org changed. It has just moved.
 - A node can never be dropped inside its own subtree; that would cut the
-  subtree off the map (the guard `lib/orbital/snap.ts` also carries).
+  subtree off the map (the guard `lib/map/layout/snap.ts` also carries).
 
 ### Pushing two things together *(2026-09-20)*
 Drag one node close to another of **the same kind** and they visibly start to
@@ -266,7 +266,7 @@ Greg: *"make the result look and feel visually more like /org."* The study now
 takes its **maths** from the shipped engine rather than copying its look, so the
 two can't drift:
 
-- **Size comes from `lib/orbital/geometry`** — a unit is `unitRadius` (165 · 72 ·
+- **Size comes from `lib/map/layout/geometry`** — a unit is `unitRadius` (165 · 72 ·
   48 · 36 …) and a person is a `SEAT_RADIUS` seat, 9.5. Orbits stay sized by
   contents. Greg, 2026-09-20, chose "depth for size, contents for spacing",
   explicitly provisional: *"orbits around the central master node may later
@@ -278,7 +278,7 @@ two can't drift:
   ⚠️ This is flatter than `/org`'s 165 · 72 · 48, so the two are **not**
   pixel-identical on a deep org. That is the literal instruction; the tension
   with "look identical to /org" is Greg's to settle.
-- **The zoom ladder is `lib/orbital/lod`.** People are not drawn at overview
+- **The zoom ladder is `lib/map/camera/lod`.** People are not drawn at overview
   scale at all; a single arc (the torus) stands in for a unit's crowd from
   ~0.95×, and gives way to real avatars with their own connection lines from
   ~1.7×. Greg, 2026-09-20: *"if you zoom out in /org, then humans vanish. When
@@ -419,7 +419,7 @@ consume space and need local navigation to stay readable.
    quietly make the map more opinionated** — it would be answering this by
    stealth.
 
-> **Related, unresolved:** `lib/orbital/model.ts` merges away a "pass-through"
+> **Related, unresolved:** `lib/map/layout/model.ts` merges away a "pass-through"
 > root so the company sits at the centre. On a hand-built org that rule eats the
 > first unit the user creates the moment it gains a child. A partial fix (don't
 > absorb a leaf) is on the parked `getting-started-wizard` branch. The real

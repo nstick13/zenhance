@@ -15,7 +15,7 @@
  * The soft union lets neighbouring discs melt into one territory instead of a
  * string of bubbles, which is what reads as "a place" rather than a diagram.
  */
-import type { Point } from "./geometry";
+import type { Point } from "@/lib/map/layout/geometry";
 
 export type EnvelopeSource = {
   units: readonly { x: number; y: number; r: number; footprint?: number }[];

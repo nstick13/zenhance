@@ -13,8 +13,8 @@ import {
   lensInverse,
   scaleForTier,
   type DetailField,
-} from "../detail";
-import { revealAt } from "../lod";
+} from "@/lib/map/camera/detail";
+import { revealAt } from "@/lib/map/camera/lod";
 
 const field = (over: Partial<DetailField> = {}): DetailField => ({
   x: 0, y: 0, strength: 1, radiusPx: 200, ...over,

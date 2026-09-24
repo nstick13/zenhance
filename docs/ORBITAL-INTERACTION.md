@@ -72,7 +72,7 @@ An easy, interactive, intuitive way to see what is normally an org chart. Every 
 
 ## Recommended approach
 
-Build this into the production orbital map on the branch (`components/viz/orbital/OrbitalMap.tsx`, `lib/orbital/*`), not the lab. Production already has dragging, springs, ring snapping, branch-carrying, moving people, the route highlight, zoom-dependent detail, the real companies and saved arrangements; the lab adds focus and the drilldown card. Porting those across is far less work than rebuilding the rest in a lab — `LAB.md` doesn't allow labs to import real components, and the lab's data has no individual people. Keep the lab as a reference until focus is ported, then archive it per `LAB.md`.
+Build this into the production orbital map on the branch (`components/viz/orbital/OrbitalMap.tsx`, `lib/map/*`), not the lab. Production already has dragging, springs, ring snapping, branch-carrying, moving people, the route highlight, zoom-dependent detail, the real companies and saved arrangements; the lab adds focus and the drilldown card. Porting those across is far less work than rebuilding the rest in a lab — `LAB.md` doesn't allow labs to import real components, and the lab's data has no individual people. Keep the lab as a reference until focus is ported, then archive it per `LAB.md`.
 
 ## 1. Wide view — Decided
 
@@ -82,7 +82,7 @@ Fully zoomed out, or when the company itself is at the centre:
 - Every deeper unit is still drawn, as a small dot. Nothing is hidden — no summary circles standing in for branches. You see the company's whole shape and size.
 - Dots grow into circles as you zoom toward them.
 
-`drawnUnitRadius` in `lib/orbital/lod.ts` already gives depth-based minimum on-screen sizes and is likely the starting point.
+`drawnUnitRadius` in `lib/map/camera/lod.ts` already gives depth-based minimum on-screen sizes and is likely the starting point.
 
 ## 2. Focus — Decided
 

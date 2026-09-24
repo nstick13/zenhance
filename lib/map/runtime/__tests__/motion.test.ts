@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MotionStore } from "../motion";
+import { MotionStore } from "@/lib/map/runtime/motion";
 
 describe("reduced-motion travel", () => {
   it("arrives at the joined target immediately with no residual velocity", () => {

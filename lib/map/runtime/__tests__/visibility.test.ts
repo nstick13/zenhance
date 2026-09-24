@@ -8,11 +8,11 @@ import {
   visibleUnitIds,
   type ViewRect,
   type VisibilityUnit,
-} from "../visibility";
-import { buildOrbitalTree } from "../model";
-import { layoutOrbitalForest } from "../forest";
-import { sizeIndex } from "../size";
-import { buildDeepOrg } from "./fixtures/deepOrg";
+} from "@/lib/map/runtime/visibility";
+import { buildOrbitalTree } from "@/lib/map/layout/model";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
+import { sizeIndex } from "@/lib/map/layout/size";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 const everywhere: ViewRect = { minX: -1e9, minY: -1e9, maxX: 1e9, maxY: 1e9 };
 

@@ -16,8 +16,8 @@
  * layout, is never saved, and fades to exactly nothing well before distant
  * regions, which stay perfectly still.
  */
-import { revealAt, smoothstep, type Reveal } from "./lod";
-import type { Point } from "./geometry";
+import { revealAt, smoothstep, type Reveal } from "@/lib/map/camera/lod";
+import type { Point } from "@/lib/map/layout/geometry";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 

@@ -14,7 +14,7 @@ import { DEMO_COMPANIES, type DemoCompanyKind } from "@/lib/demoCompanies";
  *
  * A ~2,400-person enterprise shape used to sit alongside it. It was removed on
  * 2026-09-20 (Greg: "kill off Northwind entirely") — its generator survives
- * only as a test fixture, `lib/orbital/__tests__/fixtures/deepOrg.ts`, because
+ * only as a test fixture, `lib/map/layout/__tests__/fixtures/deepOrg.ts`, because
  * it is the one thing proving the layout still holds at that size.
  *
  * It is seeded as a workspace the dev user is a member of, which is what

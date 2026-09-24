@@ -24,11 +24,11 @@
  *   2,562 people, 12 levels         91×                 5.1× better    local
  *   ~6,000 people, 13 levels        229×                6.1× better    local
  */
-import { fanFor } from "./branches";
-import { layoutOrbitalForest } from "./forest";
-import type { Geography, OrbitalScene } from "./layout";
-import type { LayoutOptions } from "./layout";
-import type { OrbitalTree } from "./model";
+import { fanFor } from "@/lib/map/layout/branches";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
+import type { Geography, OrbitalScene } from "@/lib/map/layout/layout";
+import type { LayoutOptions } from "@/lib/map/layout/layout";
+import type { OrbitalTree } from "@/lib/map/layout/model";
 
 export const REFERENCE_VIEWPORT = { width: 1024, height: 768 } as const;
 /** Unit names begin to read from here (lod.unitLabelVisible). */

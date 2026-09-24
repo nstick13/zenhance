@@ -47,28 +47,28 @@ const TIER_OF: Record<Engine, number> = {
  */
 const ENGINE_OF: Record<string, Engine> = {
   // 1. Layout — where every node sits.
-  "lib/orbital/geometry.ts": "layout",
-  "lib/orbital/layout.ts": "layout",
-  "lib/orbital/branches.ts": "layout",
-  "lib/orbital/complexity.ts": "layout",
-  "lib/orbital/forest.ts": "layout",
-  "lib/orbital/position.ts": "layout",
-  "lib/orbital/envelope.ts": "layout",
-  "lib/orbital/size.ts": "layout",
-  "lib/orbital/model.ts": "layout",
-  "lib/orbital/snap.ts": "layout",
+  "lib/map/layout/geometry.ts": "layout",
+  "lib/map/layout/layout.ts": "layout",
+  "lib/map/layout/branches.ts": "layout",
+  "lib/map/layout/complexity.ts": "layout",
+  "lib/map/layout/forest.ts": "layout",
+  "lib/map/layout/position.ts": "layout",
+  "lib/map/layout/envelope.ts": "layout",
+  "lib/map/layout/size.ts": "layout",
+  "lib/map/layout/model.ts": "layout",
+  "lib/map/layout/snap.ts": "layout",
 
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
-  "lib/orbital/focus.ts": "camera",
-  "lib/orbital/lod.ts": "camera",
-  "lib/orbital/detail.ts": "camera",
+  "lib/map/camera/focus.ts": "camera",
+  "lib/map/camera/lod.ts": "camera",
+  "lib/map/camera/detail.ts": "camera",
   "lib/map/camera/viewport.ts": "camera",
   "lib/map/camera/focusStack.ts": "camera",
 
   // 0. Runtime — the floor the engines stand on.
-  "lib/orbital/motion.ts": "runtime",
-  "lib/orbital/visibility.ts": "runtime",
-  "lib/orbital/avatar.ts": "runtime",
+  "lib/map/runtime/motion.ts": "runtime",
+  "lib/map/runtime/visibility.ts": "runtime",
+  "lib/map/runtime/avatar.ts": "runtime",
 
   // 2. Growth — add, merge, re-parent.
   "lib/map/growth/insertion.ts": "growth",
@@ -95,7 +95,7 @@ const DATA_PREFIXES = [
 const DATA_FILES = ["lib/vocabulary.ts", "lib/validation.ts", "lib/theme.ts"];
 
 /** Directories every file of which must be assigned an engine. */
-const WATCHED = ["lib/orbital", "lib/map"];
+const WATCHED = ["lib/map"];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];

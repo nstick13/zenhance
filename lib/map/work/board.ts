@@ -15,7 +15,7 @@
  * below both.
  *
  * It is also not how much *room* work needs. `WORK_CAPSULE_*` and
- * `SEAT_RING_STEP` are in `lib/orbital/geometry.ts` because the layout has
+ * `SEAT_RING_STEP` are in `lib/map/layout/geometry.ts` because the layout has
  * to reserve space for a person's furniture before anything is drawn; a ring
  * whose spacing ignored the capsules would overlap them. Those are layout's
  * numbers, and work reads them rather than owning them.

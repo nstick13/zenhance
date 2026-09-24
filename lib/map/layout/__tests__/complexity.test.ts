@@ -8,10 +8,10 @@ import {
   sceneBounds,
   visualComplexity,
   zoomToRead,
-} from "../complexity";
-import { buildOrbitalTree, type OrgInput } from "../model";
-import { demoInput } from "./orbitalFixture";
-import { buildDeepOrg } from "./fixtures/deepOrg";
+} from "@/lib/map/layout/complexity";
+import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 /** Sparrow Jam's shape: a plant, an oversight group and two lines, ten people. */
 function sparrowShape(): OrgInput {

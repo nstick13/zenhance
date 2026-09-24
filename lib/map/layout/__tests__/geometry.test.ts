@@ -17,7 +17,7 @@ import {
   unitRadius,
   workGridPoints,
   type Sector,
-} from "../geometry";
+} from "@/lib/map/layout/geometry";
 
 const DEG = Math.PI / 180;
 

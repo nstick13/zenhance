@@ -13,17 +13,17 @@
  * another; that placement stands, and that is Law 3.
  */
 import { describe, expect, it } from "vitest";
-import { buildDeepOrg } from "./fixtures/deepOrg";
-import { demoInput } from "./orbitalFixture";
-import { buildOrbitalTree, type OrgInput } from "../model";
-import { layoutCompany } from "../complexity";
-import { layoutOrbitalForest } from "../forest";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
+import { demoInput } from "@/lib/map/layout/__tests__/orbitalFixture";
+import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { layoutCompany } from "@/lib/map/layout/complexity";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
 import { planInsertion } from "@/lib/map/growth/insertion";
-import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "../position";
-import { descendantIds } from "../snap";
+import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "@/lib/map/layout/position";
+import { descendantIds } from "@/lib/map/layout/snap";
 import { interactionOrbit, INTERACTION_ORBIT_MIN_PX } from "@/lib/map/growth/relationship";
-import { structuralEnvelope } from "../envelope";
-import type { OrbitalScene, PlacedUnit } from "../layout";
+import { structuralEnvelope } from "@/lib/map/layout/envelope";
+import type { OrbitalScene, PlacedUnit } from "@/lib/map/layout/layout";
 
 const deepInput = (people: number, maxDepth: number, seed: number): OrgInput => {
   const org = buildDeepOrg("w", { people, maxDepth, seed });

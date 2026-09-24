@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { chordAngle, openGap, planInsertion, type InsertionPlan } from "../insertion";
-import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "@/lib/orbital/position";
-import { buildOrbitalTree, type OrgInput } from "@/lib/orbital/model";
-import { layoutOrbitalForest } from "@/lib/orbital/forest";
-import { descendantIds } from "@/lib/orbital/snap";
-import type { OrbitalScene } from "@/lib/orbital/layout";
-import { buildDeepOrg } from "@/lib/orbital/__tests__/fixtures/deepOrg";
+import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "@/lib/map/layout/position";
+import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { layoutOrbitalForest } from "@/lib/map/layout/forest";
+import { descendantIds } from "@/lib/map/layout/snap";
+import type { OrbitalScene } from "@/lib/map/layout/layout";
+import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 
 /** A company whose single division has eight teams — enough for a crowded ring. */
 function crowded(): OrgInput {
