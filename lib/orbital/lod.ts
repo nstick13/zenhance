@@ -61,6 +61,20 @@ export function unitLabelVisible(drawnRadius: number, scale: number, detailScale
  *  as a landmark at overview and carries its name beneath it. */
 export const LANDMARK_LABEL_PX = 14;
 
+/**
+ * Which units name themselves at overview, so a big company can be read
+ * before you go into it.
+ *
+ * It used to be the biggest dots, back when a dot's size carried headcount.
+ * Units are all one size now (Greg, 2026-09-24), so size cannot pick them and
+ * the map lost every name at the whole-company view. Standing picks them
+ * instead: the company and the levels just below it are the landmarks you
+ * navigate by, exactly as a country map names countries before towns. On the
+ * 2,562-person shape that is 17 names for 411 units.
+ */
+export const LANDMARK_DEPTH = 3;
+export const isLandmark = (depth: number): boolean => depth <= LANDMARK_DEPTH;
+
 /** A node drawn smaller than this on screen isn't worth a draw call. Nothing
  *  reaches it while `drawnUnitRadius` is holding the floors below. */
 export const UNIT_CULL_PX = 0.35;
@@ -89,11 +103,19 @@ export const UNIT_CULL_PX = 0.35;
  * same absolute size as we zoomed in" — and it starts growing the moment its
  * real radius overtakes the floor.
  */
-const SCREEN_FLOOR_PX = [30, 11, 8, 6, 4.4, 3.2, 2.4, 1.8, 1.4, 1.15, 1, 0.9];
-const SCREEN_FLOOR_DEEPEST = 0.85;
+/**
+ * Flattened on 2026-09-24. The table used to fall with depth (30, 11, 8, 6…
+ * down to 0.85), which was how a rung told itself apart at overview. Units
+ * are now one size (geometry.UNIT_RADIUS) and depth is carried by the routes,
+ * so the floor is one number too — otherwise a deep team would be a speck
+ * beside an identical shallow one for no reason a reader could see.
+ */
+const SCREEN_FLOOR_UNIT_PX = 4.5;
+/** The company alone stays an anchor, in the same proportion as its disc. */
+const SCREEN_FLOOR_ROOT_PX = 18;
 
 export function screenFloorPx(depth: number): number {
-  return SCREEN_FLOOR_PX[depth] ?? SCREEN_FLOOR_DEEPEST;
+  return Math.max(0, Math.round(depth)) === 0 ? SCREEN_FLOOR_ROOT_PX : SCREEN_FLOOR_UNIT_PX;
 }
 
 export function drawnUnitRadius(

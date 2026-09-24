@@ -34,6 +34,14 @@ type Element =
   | { kind: "disc"; x: number; y: number; r: number }
   | { kind: "capsule"; ax: number; ay: number; bx: number; by: number; r: number };
 
+/** How many grid steps wide a connection's corridor must be before the
+ *  sampler can be relied on to find it. Two samples across is the least that
+ *  marching squares can trace without gaps; a little over that is stable. */
+const CORRIDOR_STEPS = 2.5;
+/** …and how many a unit's own body must be. Smaller than the corridor
+ *  figure because a disc is round: it covers samples in both directions. */
+const BODY_STEPS = 1.5;
+
 const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
   const dx = bx - ax;
   const dy = by - ay;
@@ -57,10 +65,45 @@ export function structuralEnvelope(source: EnvelopeSource): Envelope {
   const pad = Math.max(60, median * 0.6);
   const soft = pad * 1.1;
 
-  const elements: Element[] = units.map((u) => ({ kind: "disc", x: u.x, y: u.y, r: (u.footprint ?? u.r) + pad }));
+  // A corridor has to be wider than the sampler's step, or the grid steps
+  // straight over it and the territory falls apart at long connections
+  // (Greg, 2026-09-24: "the shrink wrap breaks when the connection line
+  // becomes too long. It should remain contiguous."). The step follows the
+  // company's size, so on a big company the corridors widen to match — which
+  // is also what stops a 40,000-unit-wide territory looking like beads on a
+  // thread.
+  let spread = 0;
+  {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const u of units) {
+      const reach = (u.footprint ?? u.r) + pad;
+      x0 = Math.min(x0, u.x - reach);
+      y0 = Math.min(y0, u.y - reach);
+      x1 = Math.max(x1, u.x + reach);
+      y1 = Math.max(y1, u.y + reach);
+    }
+    spread = Math.max(x1 - x0, y1 - y0);
+  }
+  const step0 = spread / GRID_SAMPLES;
+  const linkPad = Math.max(pad, step0 * CORRIDOR_STEPS);
+  // The same argument applies to the units themselves. One branch carried a
+  // long way out stretches the grid until the *rest* of the company is
+  // thinner than a sample, and the territory it belongs to disappears from
+  // under it. Nothing may be smaller than the sampler can see.
+  const floor = step0 * BODY_STEPS;
+
+  const elements: Element[] = units.map((u) => ({
+    kind: "disc",
+    x: u.x,
+    y: u.y,
+    r: Math.max((u.footprint ?? u.r) + pad, floor),
+  }));
   for (const link of source.links) {
     if (link.kind !== "unit") continue;
-    elements.push({ kind: "capsule", ax: link.from.x, ay: link.from.y, bx: link.to.x, by: link.to.y, r: pad });
+    elements.push({ kind: "capsule", ax: link.from.x, ay: link.from.y, bx: link.to.x, by: link.to.y, r: linkPad });
   }
 
   // Bounds, with room for the soft union to swell past the discs.

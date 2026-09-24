@@ -139,6 +139,85 @@ pixels out from its *drawn* edge, the same for a big unit and a small one.
   clock restarts whenever the hand travels more than a few units. A reparent
   must be held in the same way, so an ordinary drop always just lands.
 
+## Refinement — one size, tighter fans, one territory (2026-09-24)
+
+Built to [ORBITAL-REFINEMENT-PROMPT.md](ORBITAL-REFINEMENT-PROMPT.md), after a
+second pass over Northwind. The four laws above still hold and are still
+tested.
+
+**Every unit is one size.** Greg: *"the difference in sizing between people and
+their parent nodes is still much too great. A team… should be maximum size 2x
+the area of a human node. All other nodes between team and master should be the
+same size as a team for now."* So a unit's disc is `SEAT_RADIUS · √2`, on both
+maps, and it grows only when its own people will not fit within two seat rings
+of it — which on these companies is never. The company keeps a larger floor.
+
+Unit size therefore **carries no meaning at present**, neither depth nor
+headcount. Two pipelines are switched off rather than deleted, one constant
+each: `size.SIZE_BY_HEADCOUNT` and `layout.SIZE_BY_DEPTH`.
+
+Two things followed from it that Greg did not ask for and the map needed:
+
+- The **overview floor** was a table falling with depth (30, 11, 8, 6 … 0.85),
+  which was how a rung told itself apart from far away. With one size that
+  would have made a deep team a speck beside an identical shallow one, so it
+  is one number now, and the company's is larger.
+- **Landmark names** were given to the biggest dots. With no biggest dots, the
+  whole-company view lost every name. Standing picks them instead — the
+  company and three levels below it, 17 names for 411 units — and a per-frame
+  declutter keeps the higher-standing name where two would collide.
+
+**Children fan tightly, and vary their distance.** `ALLOW_RADIAL_LOOSENESS` is
+back on, with the bound that was missing: a child may only be drawn inward
+while its branch still fits the angular slot it was given. That is what makes
+variation safe — the three link crossings it used to cause are gone, measured.
+Fans narrowed from 200° to 170°, which costs extent (36,024 → 40,252 across on
+the 2,562-person shape) and buys a median fan of 87° rather than 102°.
+
+To make variation possible at all, a fan is drawn at `ORBIT_SLACK` wider than
+the tightest orbit that fits. At the tightest orbit the wedges exactly fill the
+fan, so no child has anywhere to widen into and variation does nothing at all
+— which is what the first attempt produced: 0 of 134 parents varied.
+
+**The reparent ring** is 18px from a unit's drawn edge, half what it was, and
+it only exists when the *camera* has reached the zoom where unit names read.
+The magnifier does not switch it on. Below that, a reporting change is only
+reachable by dropping one node onto another and choosing it.
+
+**Double-tap on open canvas leaves focus**, and takes back the detail field
+the first tap pinned, so the gesture does one thing.
+
+**The territory stays in one piece.** `structuralEnvelope` samples a fixed
+150-step grid across the whole company — about 233 world units per step on
+Northwind — while a connector corridor was only ~60 wide. Corridors thinner
+than the sampler simply were not found. Corridors are now at least 2.5 steps
+wide and bodies at least 1.5, whatever the company's spread. Measured with a
+branch dragged eight company-widths out: **32 separate territories before, one
+after**.
+
+### What this changed about which map a company gets
+
+Smaller units mean smaller companies, so the zoom-to-read calibration moved.
+Re-measured on the reference screen:
+
+| company | ring | local | drawn as |
+|---|---|---|---|
+| Sparrow Jam, 10 | 0.6× | — | rings |
+| Digital Tailoring, 45 | 1.5× | — | rings |
+| 150 people, 5 levels | 3.9× | — | rings |
+| 400 people, 7 levels | 7.7× | 11.7× | rings |
+| 1,000 people, 8 levels | 20.9× | 17.7× | **rings** (was local) |
+| 2,562 people, 11 levels | 73.2× | 38.9× | local |
+| ~6,000 people, 13 levels | 200.9× | 65.1× | local |
+
+The 1,000-person company now stays on rings: local geography no longer fits it
+1.5× better, because tighter fans cost room. Worth watching — it is the shape
+closest to the line.
+
+**Performance** (2,562 people / 411 units): layout 32ms, territory outline
+35ms, landing plan 0.04ms per pointer move. At ~6,400 people / 1,011 units:
+layout 87ms, outline 35ms. Both once per data change.
+
 ### Why wedges, not bubbles
 
 A child's orbit is sized by the **angle its branch subtends from the parent**,

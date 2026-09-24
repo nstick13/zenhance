@@ -17,7 +17,15 @@
  *
  * Area is what the eye reads, so it is area that interpolates; the radius is
  * only ever derived from it.
+ *
+ * **Switched off since 2026-09-24.** Greg asked for one size for every unit —
+ * a team at most twice a person's area, everything up to the company the same
+ * — because the gap between people and their parents read as far too large.
+ * Unit size therefore carries no meaning at present. Nothing here is deleted:
+ * he has no settled position on sizing yet, and turning it back on is this
+ * one constant. See `geometry.UNIT_RADIUS`.
  */
+export const SIZE_BY_HEADCOUNT = false;
 
 /** Smallest and largest dot radius on screen, in CSS pixels. Hard limits:
  *  nothing the index says can push a dot outside them. */

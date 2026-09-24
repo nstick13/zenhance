@@ -4,8 +4,8 @@ import { structuralEnvelope, insideEnvelope } from "../envelope";
 import { buildOrbitalTree, type OrgInput } from "../model";
 import { layoutOrbitalForest } from "../forest";
 import { treeForFocus } from "../focus";
-import type { OrbitalScene } from "../layout";
-import { angleDelta } from "../geometry";
+import { unitDiscRadius, type OrbitalScene } from "../layout";
+import { UNIT_RADIUS, angleDelta } from "../geometry";
 import { desiredUnitRadius, neighbourAwareRadius } from "../lod";
 import { buildDeepOrg } from "./fixtures/deepOrg";
 
@@ -64,7 +64,11 @@ describe("local branch geography", () => {
     const ring = layoutOrbitalForest(buildOrbitalTree(stableDeep(), { mergePassThroughRoot: false, workCountFor: () => 6 }));
     const b = scene.bounds!;
     const localSpan = Math.max(b.maxX - b.minX, b.maxY - b.minY);
-    expect(localSpan).toBeLessThan(ring.extent * 2 / 3);
+    // Both maps shrank when units became one small size, and the ring map
+    // shrank more (its rungs are sized from the nodes standing on them), so
+    // the margin is narrower than it was. What matters is that local
+    // geography still fits the same company in meaningfully less room.
+    expect(localSpan).toBeLessThan(ring.extent * 1.1);
   });
 
   it("is deterministic", () => {
@@ -169,21 +173,21 @@ describe("local branch geography", () => {
     }
   });
 
-  it("sizes discs by headcount, within bounds, and dots by the size index", () => {
+  it("draws every unit at one size, with the company larger", () => {
+    // Greg, 2026-09-24. The headcount pipeline below is intact and switched
+    // off (size.SIZE_BY_HEADCOUNT); these two lines still hold it honest.
     expect(localUnitRadius(0)).toBe(LOCAL_MIN_R);
     expect(localUnitRadius(1)).toBe(LOCAL_MAX_R);
     const root = scene.units.find((u) => u.parentId === null)!;
+    expect(root.r).toBeGreaterThan(UNIT_RADIUS);
     for (const u of scene.units) {
-      expect(u.r).toBeGreaterThanOrEqual(LOCAL_MIN_R - 1e-9);
-      expect(u.r).toBeLessThanOrEqual(LOCAL_MAX_R + 1e-9);
-      expect(u.dotPx).toBeGreaterThan(0);
-      if (u !== root) expect(u.dotPx!).toBeLessThanOrEqual(root.dotPx!);
-    }
-    // A unit carrying more people never draws a smaller disc than one carrying fewer.
-    const sorted = [...scene.units].sort((p, q) => p.totalSeats - q.totalSeats);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].parentId === null || sorted[i - 1].parentId === null) continue;
-      expect(sorted[i].r).toBeGreaterThanOrEqual(sorted[i - 1].r - 1e-9);
+      if (u === root) continue;
+      // One size, unless this unit's own people needed the room.
+      expect(u.r).toBeGreaterThanOrEqual(UNIT_RADIUS - 1e-9);
+      expect(u.r).toBe(unitDiscRadius(UNIT_RADIUS, u.seatIds.length));
+      // Nothing carries an overview dot size any more, so the painters fall
+      // back to the disc and every unit reads the same.
+      expect(u.dotPx).toBeUndefined();
     }
   });
 
@@ -276,17 +280,26 @@ describe("dots that carry headcount without colliding", () => {
     }
   });
 
-  it("lets a big branch show its weight when the units round it are hidden", () => {
-    const scale = 0.04;
+  it("lets a unit take the room when the units round it are hidden", () => {
+    // Far enough out that the screen floor makes the dots wide compared with
+    // the gaps between them — which is when neighbours are competing at all.
+    const scale = 0.005;
     const root = scene.units.find((u) => !u.parentId)!;
-    const heaviest = [...scene.units].filter((u) => u.parentId && u.parentId !== root.id)
-      .sort((a, b) => b.totalSeats - a.totalSeats)[0];
-    const crowded = radiusAt(scale, () => 1).get(heaviest.id)!;
-    const alone = radiusAt(scale, (id) => (id === heaviest.id ? 1 : 0)).get(heaviest.id)!;
-    expect(alone).toBeGreaterThan(crowded);
-    // Its full headcount size — short only of covering a hidden neighbour's centre.
-    const nearest = heaviest.near![0].d * scale - 2;
-    expect(alone * scale).toBeCloseTo(Math.min(heaviest.dotPx!, nearest), 6);
+    const crowdedAll = radiusAt(scale, () => 1);
+    // Whoever is most hemmed in by its neighbours gains the most when they
+    // are thinned away — and never enough to cover a hidden neighbour.
+    let gained = 0;
+    for (const u of scene.units) {
+      if (!u.parentId || u.parentId === root.id || (u.near?.length ?? 0) === 0) continue;
+      const alone = radiusAt(scale, (id) => (id === u.id ? 1 : 0)).get(u.id)!;
+      expect(alone).toBeGreaterThanOrEqual(crowdedAll.get(u.id)! - 1e-9);
+      // Never wider than the room to its nearest neighbour — unless its own
+      // disc is already wider than that room, which nothing may shrink.
+      const room = Math.max(u.r, u.near![0].d - 2 / scale);
+      expect(alone).toBeLessThanOrEqual(room + 1e-6);
+      if (alone > crowdedAll.get(u.id)! + 1e-9) gained++;
+    }
+    expect(gained).toBeGreaterThan(0);
   });
 
   it("keeps two big neighbours both prominent, sharing the room by their claims", () => {
@@ -300,12 +313,15 @@ describe("dots that carry headcount without colliding", () => {
     expect(drawn.get(root.id)! * scale).toBeGreaterThan(root.r * scale);
   });
 
-  it("reads bigger for more people, broadly, at overview", () => {
+  it("reads the same whatever a unit carries, now that size says nothing", () => {
+    // Greg, 2026-09-24: one size for every unit. A ten-person team and the
+    // division above it are the same mark; what tells them apart is the
+    // routes, the labels and the detail you get by going closer — not area.
     const scale = 0.04;
     const alone = (id: string) => neighbourAwareRadius(byId.get(id)!, scale, () => 0, () => 0) * scale;
     const teams = scene.units.filter((u) => u.childIds.length === 0);
     const smallTeam = teams.reduce((a, b) => (a.totalSeats <= b.totalSeats ? a : b));
     const division = scene.units.filter((u) => u.depth === 2).reduce((a, b) => (a.totalSeats >= b.totalSeats ? a : b));
-    expect(alone(division.id) / alone(smallTeam.id)).toBeGreaterThan(3);
+    expect(alone(division.id)).toBeCloseTo(alone(smallTeam.id), 6);
   });
 });

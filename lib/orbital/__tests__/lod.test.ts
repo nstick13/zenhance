@@ -167,9 +167,11 @@ describe("drawnUnitRadius", () => {
   it("holds a central node at one size on screen while you zoom", () => {
     // Greg, 2026-09-14: "more central nodes would effectively remain the same
     // absolute size as we zoomed in".
+    // The floor binds while it is wider than the node's own radius on
+    // screen, which for this division is below about 0.021x.
     const px = (scale: number) => drawnUnitRadius(division, scale, divisionCeiling) * scale;
-    expect(px(0.02)).toBeCloseTo(px(0.04), 5);
-    expect(px(0.02)).toBeCloseTo(screenFloorPx(1), 5);
+    expect(px(0.01)).toBeCloseTo(px(0.02), 5);
+    expect(px(0.01)).toBeCloseTo(screenFloorPx(division.depth), 5);
   });
 
   it("hands over to the node's real size once the zoom no longer needs the floor", () => {
@@ -180,13 +182,14 @@ describe("drawnUnitRadius", () => {
     expect(px(1)).toBeGreaterThan(px(0.5));
   });
 
-  it("keeps a deep node a speck where a central one is a bubble", () => {
-    // The far view Greg asked for: majors legible, the rest small dots that
-    // swell as you come down to them.
+  it("draws a deep node and a shallow one alike, and both worth a draw call", () => {
+    // Until 2026-09-24 the floor fell with depth, so a deep team was a speck
+    // beside a division. Units are one size now (Greg), and depth is carried
+    // by the routes instead.
     const far = 0.006;
     const deep = drawnUnitRadius(team, far, teamCeiling) * far;
-    const near = drawnUnitRadius(division, far, far > 0 ? divisionCeiling : 0) * far;
-    expect(deep).toBeLessThan(near / 4);
+    const near = drawnUnitRadius(division, far, divisionCeiling) * far;
+    expect(deep).toBeCloseTo(near, 6);
     expect(deep).toBeGreaterThan(0.35); // still worth a draw call
   });
 
@@ -194,9 +197,8 @@ describe("drawnUnitRadius", () => {
     expect(drawnUnitRadius(division, 1e-6, divisionCeiling)).toBe(divisionCeiling);
   });
 
-  it("shrinks the floor with depth, so size keeps carrying how central a node is", () => {
-    for (let d = 1; d < 12; d++) {
-      expect(screenFloorPx(d)).toBeLessThan(screenFloorPx(d - 1));
-    }
+  it("gives every unit the same floor, and the company a larger one", () => {
+    for (let d = 2; d < 12; d++) expect(screenFloorPx(d)).toBe(screenFloorPx(1));
+    expect(screenFloorPx(0)).toBeGreaterThan(screenFloorPx(1));
   });
 });

@@ -37,6 +37,7 @@ import {
   type Relation,
 } from "@/lib/orbital/relationship";
 import { MotionStore, type MotionTarget } from "@/lib/orbital/motion";
+import { READABLE_SCALE } from "@/lib/orbital/complexity";
 import { focusOrbital } from "@/lib/orbital/focus";
 import { fitScaleFor, layoutCompany, sceneBounds, type Bounds } from "@/lib/orbital/complexity";
 import { structuralEnvelope } from "@/lib/orbital/envelope";
@@ -56,7 +57,7 @@ import {
   type Point,
 } from "@/lib/orbital/geometry";
 import {
-  LANDMARK_LABEL_PX,
+  isLandmark,
   LOD_LADDER,
   desiredUnitRadius,
   neighbourAwareRadius,
@@ -261,6 +262,16 @@ type FocusFrame = { unitId: string };
 const uid = (id: string) => `u:${id}`;
 const sid = (id: string) => `s:${id}`;
 
+/** Two taps on open ground within this long, and this close together on
+ *  screen, mean one gesture. Generous on both counts: a finger is not a
+ *  mouse, and the second tap of a double-tap lands a few pixels off. */
+/** Room a landmark name needs to itself, in screen pixels. Wide, because a
+ *  company name is long and two overlapping names are worse than one. */
+const LABEL_CLEAR_PX = { x: 110, y: 26 };
+
+const DOUBLE_TAP_MS = 400;
+const DOUBLE_TAP_PX = 36;
+
 export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes, sampleWork, previewGeography }: Props) {
   const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -370,6 +381,9 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
   const showReportingRef = useRef(true);
   const pressOriginRef = useRef<Point | null>(null);
   const pressMovedRef = useRef(false);
+  /** The last tap on open ground, so a second one can mean "leave focus".
+   *  Kept here rather than relying on dblclick, which touch does not send. */
+  const lastBlankTapRef = useRef<{ at: number; at0: Point } | null>(null);
   const renderRef = useRef<RenderCtx | null>(null);
   const focusBranchRef = useRef<ReadonlySet<string> | null>(null);
   const companyRef = useRef<string | null>(null);
@@ -1196,6 +1210,8 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         }
       }
 
+      /** Landmarks wanting a name this frame, nearest the top first. */
+      const wantLabel: { node: Konva.Node; label: Konva.Node; depth: number; id: string }[] = [];
       for (const [key, node] of nodeRefs.current) {
         const isSeat = key.startsWith("s:");
         const held = drag && (drag.kind === "unit"
@@ -1227,7 +1243,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
             if (hit && Math.abs(hit.radius() - drawnWorld) > 1e-3) hit.radius(drawnWorld);
             const landmark = node.findOne(".landmark");
             if (landmark) {
-              landmark.visible(drawnPx >= LANDMARK_LABEL_PX);
+              wantLabel.push({ node, label: landmark, depth: unit.depth, id });
               // Beneath the dot — and beneath its gauges when they show.
               const gauged = !!ctx.unitRings.get(id)?.people &&
                 unitRingReveal(unit.depth, detailFor(id).scale) * smoothstep(5, 11, drawnPx) > 0.1;
@@ -1267,6 +1283,23 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         } else {
           node.scaleX(state.scale.value);
           node.scaleY(state.scale.value);
+        }
+      }
+
+      // Landmark names, decluttered. Uniform dots mean the names are the only
+      // thing orienting you at overview, and near the company they bunch —
+      // so the higher-standing name wins its room and the others stand down
+      // until there is space. Ranked by standing, then by id, so the same
+      // view always keeps the same names.
+      if (wantLabel.length > 0) {
+        wantLabel.sort((a, b) => a.depth - b.depth || (a.id < b.id ? -1 : 1));
+        const taken: { x: number; y: number }[] = [];
+        for (const want of wantLabel) {
+          const at = want.node.getAbsolutePosition();
+          const clear = taken.every((t) =>
+            Math.abs(t.x - at.x) > LABEL_CLEAR_PX.x || Math.abs(t.y - at.y) > LABEL_CLEAR_PX.y);
+          if (want.label.visible() !== clear) want.label.visible(clear);
+          if (clear) taken.push(at);
         }
       }
 
@@ -1502,6 +1535,14 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
     setHover(null);
   }, [currentCamera, focusFrames, local, masterScene, size]);
 
+  // Read by the blank-tap handler, which is created before these exist.
+  const leaveFocusRef = useRef<(() => void) | null>(null);
+  const activeFocusIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    leaveFocusRef.current = leaveFocus;
+    activeFocusIdRef.current = activeFocusId ?? null;
+  }, [activeFocusId, leaveFocus]);
+
   // Esc steps back one thing at a time: the detail field, then the selection,
   // then one level of focus.
   useEffect(() => {
@@ -1684,7 +1725,15 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
       stage.scaleX(),
       drag.magnet?.unitId ?? null,
     ) : null;
-    const reparent = magnet ? null : reparentOrbitTarget(
+    // A parent only offers its ring when the *camera* has reached the zoom
+    // where unit names read — you have to be able to see what you are aiming
+    // at (Greg, 2026-09-24). The magnifier deliberately does not count: it
+    // lifts detail in one place, and switching a reporting-change gesture on
+    // underneath it would be a trap. Zoomed further out, dragging is pure
+    // geography and a reporting change is only reachable by dropping one node
+    // onto another and choosing it.
+    const canReparent = stage.scaleX() >= READABLE_SCALE;
+    const reparent = magnet || !canReparent ? null : reparentOrbitTarget(
       eligible.map((unit) => ({
         id: unit.id,
         x: unit.x,
@@ -2342,6 +2391,19 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
         const k = stageRef.current?.scaleX() ?? scaleRef.current;
         const place = lensInverse(fieldRef.current, world, k);
         const current = pinnedFieldRef.current;
+        const now = performance.now();
+        const last = lastBlankTapRef.current;
+        const second = !!last && now - last.at < DOUBLE_TAP_MS &&
+          Math.hypot(place.x - last.at0.x, place.y - last.at0.y) * k < DOUBLE_TAP_PX;
+        lastBlankTapRef.current = second ? null : { at: now, at0: place };
+        // Second tap in quick succession on open ground: leave focus (Greg,
+        // 2026-09-24). It also takes back the field the first tap pinned, so
+        // the gesture does one thing rather than two.
+        if (second && activeFocusIdRef.current) {
+          setPinnedField(null);
+          leaveFocusRef.current?.();
+          return;
+        }
         setPinnedField(current && Math.hypot(place.x - current.x, place.y - current.y) * k < 28 ? null : place);
       }
       return;
@@ -2551,7 +2613,7 @@ export function OrbitalMap({ people, units, assignments, vocabulary, savedNodes,
             const named = unitLabelVisible(drawn, scale, detailScale);
             // Large dots name themselves beneath; the frame loop shows or
             // hides the name as the dot actually swells or gives way.
-            const landmark = local && !named && (unit.dotPx ?? 0) >= LANDMARK_LABEL_PX;
+            const landmark = local && !named && isLandmark(unit.depth);
             // A name beneath a dot clears its gauges when they are showing.
             const gauged = !!unitRings.get(unit.id)?.people &&
               unitRingReveal(unit.depth, detailScale) * smoothstep(5, 11, drawn * scale) > 0.1;

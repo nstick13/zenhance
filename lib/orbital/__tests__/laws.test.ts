@@ -22,6 +22,7 @@ import { planInsertion } from "../insertion";
 import { anglePlacementOffsets, applyPositionOffsets, type Placement } from "../position";
 import { descendantIds } from "../snap";
 import { interactionOrbit, INTERACTION_ORBIT_MIN_PX } from "../relationship";
+import { structuralEnvelope } from "../envelope";
 import type { OrbitalScene, PlacedUnit } from "../layout";
 
 const deepInput = (people: number, maxDepth: number, seed: number): OrgInput => {
@@ -122,8 +123,14 @@ describe("Law 4 — the engine never crosses a link or overlaps a body", () => {
     });
   }
 
-  it("keeps every parent's children on one circle", () => {
+  it("lets children sit at different distances — and still never crosses", () => {
+    // Greg, 2026-09-24: "make use of variable connection line lengths where
+    // needed". Variation is what used to cause the only three crossings on
+    // this company; it is now bounded by each branch's angular slot, so both
+    // things can be true at once. The crossing count above is the other half
+    // of this test.
     const scene = layoutCompany(treeOf(big)).scene;
+    let varied = 0;
     let checked = 0;
     for (const parent of scene.units) {
       const kids = parent.childIds
@@ -132,15 +139,49 @@ describe("Law 4 — the engine never crosses a link or overlaps a body", () => {
       if (kids.length < 2) continue;
       checked++;
       const ds = kids.map((k) => Math.hypot(k.x - parent.x, k.y - parent.y));
-      // One circle: the furthest and nearest child differ by rounding only.
-      expect((Math.max(...ds) - Math.min(...ds)) / Math.max(...ds)).toBeLessThan(1e-9);
+      if ((Math.max(...ds) - Math.min(...ds)) / Math.max(...ds) > 0.05) varied++;
     }
     expect(checked).toBeGreaterThan(50);
+    expect(varied / checked).toBeGreaterThan(0.5);
+  });
+
+  it("fans children away from the grandparent, not all round the parent", () => {
+    const scene = layoutCompany(treeOf(big)).scene;
+    const spans: number[] = [];
+    for (const parent of scene.units) {
+      if (!parent.parentId) continue;
+      const kids = parent.childIds
+        .map((id) => scene.unitById.get(id))
+        .filter((k): k is PlacedUnit => !!k);
+      if (kids.length < 2) continue;
+      const grandparent = scene.unitById.get(parent.parentId);
+      if (!grandparent) continue;
+      // The company's own child is a holding node: it stands in for the
+      // company and uses the whole circle, with the company tucked into a
+      // gap. Its children are legitimately all round it.
+      if (!grandparent.parentId) continue;
+      const home = Math.atan2(grandparent.y - parent.y, grandparent.x - parent.x);
+      for (const kid of kids) {
+        const a = Math.atan2(kid.y - parent.y, kid.x - parent.x);
+        let away = Math.abs(a - home);
+        while (away > Math.PI) away = Math.abs(away - 2 * Math.PI);
+        // No child sits behind its parent, in the grandparent's direction.
+        expect(away).toBeGreaterThan(Math.PI / 2 - 0.35);
+      }
+      const angles = kids.map((k) => Math.atan2(k.y - parent.y, k.x - parent.x) - home);
+      spans.push(Math.max(...angles) - Math.min(...angles));
+    }
+    spans.sort((a, b) => a - b);
+    // And the fan stays a fan: half of them inside a right angle or so.
+    expect(spans[spans.length >> 1]).toBeLessThan((110 * Math.PI) / 180);
   });
 });
 
 describe("Law 2 — a node lands exactly where the hand let go", () => {
-  const tree = treeOf(mid);
+  // A company drawn in local geography, where a unit may be placed at any
+  // distance. On the ring map the radius is the reporting level, so a drop
+  // off the ring is refused instead — covered in insertion.test.ts.
+  const tree = treeOf(big);
   const scene = layoutCompany(tree).scene;
   const parent = scene.units.find((u) => u.childIds.length >= 3 && u.depth > 0)!;
   const moving = scene.unitById.get(parent.childIds[0])!;
@@ -213,7 +254,7 @@ describe("Law 2 — a node lands exactly where the hand let go", () => {
 });
 
 describe("Law 3 — an authored placement is an obstacle, not a suggestion", () => {
-  const tree = treeOf(mid);
+  const tree = treeOf(big);
   const scene = layoutCompany(tree).scene;
   const parent = scene.units.find((u) => u.childIds.length >= 4 && u.depth > 0)!;
   const [firstId, secondId] = parent.childIds;
@@ -254,7 +295,7 @@ describe("Law 3 — an authored placement is an obstacle, not a suggestion", () 
 });
 
 describe("blast radius — one drag cannot move a distant branch", () => {
-  const tree = treeOf(mid);
+  const tree = treeOf(big);
   const scene = layoutCompany(tree).scene;
 
   it("moves only the dragged branch and the siblings that made room", () => {
@@ -308,5 +349,50 @@ describe("a parent's interaction orbit", () => {
     const near = interactionOrbit({ ...unit }, 1, 30);
     const far = interactionOrbit({ ...unit, footprint: 900 }, 1, 30);
     expect(near).toEqual(far);
+  });
+});
+
+describe("the territory outline stays in one piece", () => {
+  /** Marching squares traces solid ground one way round and the pockets of
+   *  open ground inside it the other, so the sign of the area says which a
+   *  ring is. A contiguous territory has exactly one positive ring, however
+   *  many holes it has. */
+  const outerRings = (env: { rings: { x: number; y: number }[][] }) =>
+    env.rings.filter((ring) => {
+      let twice = 0;
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % ring.length];
+        twice += a.x * b.y - b.x * a.y;
+      }
+      return twice > 0;
+    });
+
+  it("wraps the whole of a large company as one territory", () => {
+    // Greg, 2026-09-24: "The company boundary shrink wrap breaks when the
+    // connection line becomes too long." A corridor thinner than the
+    // sampler's step was simply not found, so the company came apart.
+    const scene = layoutCompany(treeOf(big)).scene;
+    expect(outerRings(structuralEnvelope(scene)).length).toBe(1);
+  });
+
+  it("holds even when one branch is flung a long way out", () => {
+    const scene = layoutCompany(treeOf(big)).scene;
+    const far = scene.units.find((u) => u.parentId && u.childIds.length > 0)!;
+    const b = scene.bounds!;
+    // Drag a whole branch out to eight times the company's own width, the way
+    // a person could, and the route out must still read as one place.
+    const by = { x: (b.maxX - b.minX) * 8, y: (b.maxY - b.minY) * 3 };
+    const moved = new Set(descendantIds(scene, far.id));
+    const shifted = {
+      ...scene,
+      units: scene.units.map((u) => (moved.has(u.id) ? { ...u, x: u.x + by.x, y: u.y + by.y } : u)),
+      links: scene.links.map((l) => ({
+        ...l,
+        from: moved.has(l.sourceId) ? { x: l.from.x + by.x, y: l.from.y + by.y } : l.from,
+        to: moved.has(l.targetId) ? { x: l.to.x + by.x, y: l.to.y + by.y } : l.to,
+      })),
+    };
+    expect(outerRings(structuralEnvelope(shifted)).length).toBe(1);
   });
 });

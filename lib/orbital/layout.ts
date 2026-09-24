@@ -284,6 +284,42 @@ function seatRingCapacity(unitR: number, ring: number): number {
   return Math.max(1, Math.floor(SEAT_MAX_SPAN / step) + 1);
 }
 
+/** How many rings of people a unit may carry before its own disc has to grow.
+ *  Two reads as "a team and its people"; more starts to read as a crowd with
+ *  something small lost in the middle. */
+export const MAX_SEAT_RINGS = 2;
+
+/** Whether the ring map still shrinks a node with every rung, the way the
+ *  original concept drawing did (company 165, then 72, 48, 36). Off since
+ *  2026-09-24: a unit is one size everywhere, on both drawings, so the two
+ *  maps agree about how big a team is. See `geometry.UNIT_RADIUS`. */
+export const SIZE_BY_DEPTH = false;
+
+/**
+ * A unit's disc: the standard size, grown **only when it has to be** — when
+ * its own people will not fit within `MAX_SEAT_RINGS` of it — and then only
+ * by as much as the seating forces (Greg, 2026-09-24).
+ *
+ * In practice almost nothing grows: two rings round the standard dot seat
+ * about thirty people. A ninety-person team does, and then it is the seating
+ * that says how big, not the headcount.
+ */
+export function unitDiscRadius(base: number, seatCount: number): number {
+  if (seatCount <= 0 || seatRingCount(base, seatCount) <= MAX_SEAT_RINGS) return base;
+  let low = base;
+  let high = base;
+  for (let i = 0; i < 40 && seatRingCount(high, seatCount) > MAX_SEAT_RINGS; i++) {
+    low = high;
+    high *= 1.5;
+  }
+  for (let i = 0; i < 24 && high - low > 0.5; i++) {
+    const mid = (low + high) / 2;
+    if (seatRingCount(mid, seatCount) <= MAX_SEAT_RINGS) high = mid;
+    else low = mid;
+  }
+  return high;
+}
+
 export function seatRingCount(unitR: number, seatCount: number): number {
   let remaining = seatCount;
   let rings = 0;
@@ -562,6 +598,13 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
   // measured a few hundred units where the map would really have thousands,
   // so nothing ever cleared the base radii and the whole pass was dead code.
   const firstPass = fitBands(sizeBands(unitRadius), unitRadius).bands;
+  // The busiest unit on each rung decides whether that rung's nodes have to
+  // grow at all, so a rung stays one size across the map.
+  const maxSeatsByDepth: number[] = [];
+  for (const unit of tree.units.values()) {
+    const d = Math.max(0, unit.depth);
+    maxSeatsByDepth[d] = Math.max(maxSeatsByDepth[d] ?? 0, unit.seatIds.length);
+  }
   const radiusByDepth: number[] = [];
   for (let d = 0; d <= tree.maxDepth; d++) {
     const base = unitRadius(d);
@@ -574,7 +617,14 @@ export function layoutOrbital(tree: OrbitalTree, opts: LayoutOptions = {}): Orbi
     // A node may never outgrow its parent's rung: the hierarchy has to stay
     // legible at a glance, whatever the arithmetic says.
     const ceiling = d === 0 ? Infinity : (radiusByDepth[d - 1] ?? base) * shrinkAt(d);
-    radiusByDepth[d] = Math.max(base, Math.min(wanted, slot * NODE_SLOT_FILL, ceiling, base * NODE_MAX_GROWTH));
+    const grown = Math.max(base, Math.min(wanted, slot * NODE_SLOT_FILL, ceiling, base * NODE_MAX_GROWTH));
+    // Since 2026-09-24 every unit is one size (geometry.UNIT_RADIUS), so a
+    // node grows for one reason only: its own people need the room. The rung
+    // machinery above is left intact — it is what spaces the bands — but it
+    // no longer decides how big a node is.
+    radiusByDepth[d] = SIZE_BY_DEPTH
+      ? grown
+      : unitDiscRadius(base, maxSeatsByDepth[d] ?? 0);
   }
   const radiusAt = (depth: number) => radiusByDepth[Math.max(0, Math.min(depth, tree.maxDepth))] ?? unitRadius(depth);
 

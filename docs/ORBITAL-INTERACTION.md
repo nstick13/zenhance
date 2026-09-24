@@ -24,6 +24,12 @@ It supersedes three things below, all on `orbital-large-navigation`:
   It is never pulled onto an orbit after release, and a spot that cannot hold
   it is refused *before* release. Open ground is an ordinary saved landing, not
   a session-only one.
+- **§2 Double-tap on open canvas leaves focus** (2026-09-24), taking the
+  detail field its first tap pinned with it.
+- **§6 The reparent ring only exists when unit names read from the camera**
+  (2026-09-24) — the magnifier does not switch it on — and it sits 18px from a
+  unit's drawn edge. Zoomed further out, a reporting change is reachable only
+  by dropping one node onto another.
 - **§6 A reparent must be held, not merely released on.** Dropping on another
   parent's interaction ring in passing just places the unit; the ring fills
   while the hand holds still, and only then does release ask. A unit's own

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SEAT_RADIUS,
+  UNIT_RADIUS,
   WORK_COL_GAP,
   angleDelta,
   angleOf,
@@ -51,14 +52,22 @@ describe("sectors", () => {
 });
 
 describe("unitRadius", () => {
-  it("shrinks every rung down from the company", () => {
-    expect(unitRadius(0)).toBeGreaterThan(unitRadius(1));
-    expect(unitRadius(1)).toBeGreaterThan(unitRadius(2));
-    expect(unitRadius(2)).toBeGreaterThan(unitRadius(3));
+  it("is one size for every unit below the company", () => {
+    // Greg, 2026-09-24: a team is at most twice a person's area, and
+    // everything between a team and the company draws the same. Depth no
+    // longer shrinks anything; size carries no meaning at present.
+    expect(unitRadius(1)).toBe(UNIT_RADIUS);
+    expect(unitRadius(2)).toBe(UNIT_RADIUS);
+    expect(unitRadius(20)).toBe(UNIT_RADIUS);
   });
 
-  it("never collapses to nothing on a deep org", () => {
-    expect(unitRadius(20)).toBeGreaterThanOrEqual(20);
+  it("keeps a unit to twice a person's area", () => {
+    const area = (r: number) => Math.PI * r * r;
+    expect(area(UNIT_RADIUS)).toBeCloseTo(2 * area(SEAT_RADIUS), 6);
+  });
+
+  it("leaves the company larger, so the map has an anchor", () => {
+    expect(unitRadius(0)).toBeGreaterThan(unitRadius(1));
   });
 });
 

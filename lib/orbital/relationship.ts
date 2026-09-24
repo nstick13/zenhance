@@ -40,10 +40,11 @@ export const MAGNET_RELEASE = 1.35;
  *
  * The gap is measured from the node's **drawn edge** and is the same number of
  * screen pixels for every unit, so a big unit and a small one offer the same
- * visible ring. Halved from 72 on 2026-09-23: Greg found the rings sat too far
- * out to read as belonging to their node.
+ * visible ring. Halved twice: 72 → 36 on 2026-09-23, and 36 → 18 on
+ * 2026-09-24, when Greg still found it "too easy to inadvertently re-parent"
+ * and asked for a ring that hugs its node.
  */
-export const INTERACTION_ORBIT_MIN_PX = 36;
+export const INTERACTION_ORBIT_MIN_PX = 18;
 export const INTERACTION_ORBIT_BAND_PX = 44;
 
 /** How far the hand may wander and still count as holding still, in world

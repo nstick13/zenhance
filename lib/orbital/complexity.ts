@@ -45,23 +45,22 @@ export const LOOSE_FROM_ZOOM = 2;
 export const FULLY_LOOSE_ZOOM = 64;
 
 /**
- * Whether children may leave their parent's circle (Greg, 2026-09-23).
+ * Whether children may leave their parent's circle.
  *
- * Radial looseness packs a company about a third tighter by drawing each
- * child in along its own ray. Measured on the 2,562-person shape: extent
- * 21,177 loose against 34,883 circular. The cost is that a parent's children
- * no longer sit on one circle — 117 of 134 parents ended up with children at
- * visibly different distances — and that is exactly what Greg saw and called
- * out: "those orbits seem to be inconsistent, some of them quite elliptical or
- * having the centre of the orbit not on the node". Loose layouts also produced
- * the only three link crossings on the whole company.
+ * Off on 2026-09-23, back on 2026-09-24. The reason it went off was Greg's
+ * "those orbits seem to be inconsistent, some of them quite elliptical" — which
+ * he has since clarified was about the **reparent interaction ring**, not about
+ * where children sit. What he wants from the children is the opposite: *"make
+ * use of variable connection line lengths where needed, and by default try to
+ * fan out more tightly, rather than splaying in such a way that they are
+ * equidistantly distributed around the parent node."*
  *
- * An orbit you can see, predict and drop onto is worth more than a third of
- * the extent, so the shipped map is circular. The machinery stays, tested, one
- * constant away: set this to `true` and looseness follows visual complexity
- * again.
+ * The three link crossings that variation used to cause are fixed at the
+ * source: a child may now only come inward while its branch still fits the
+ * angular slot it was given (branches.ts). Bounded that way, variation buys
+ * about a third of the company's extent and costs nothing.
  */
-export const ALLOW_RADIAL_LOOSENESS = false;
+export const ALLOW_RADIAL_LOOSENESS = true;
 /** Breathing room a fitted view leaves at its edges. */
 export const FIT_MARGIN = 1.06;
 

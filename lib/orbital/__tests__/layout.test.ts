@@ -99,25 +99,27 @@ describe("layoutOrbital — holds up as the org grows", () => {
     }
   });
 
-  it("grows the nodes with the rungs, so a big org isn't a field of specks", () => {
-    // The regression this guards: node size was indexed against the *unfitted*
-    // bands, which measure a few hundred units where the finished map has
-    // thousands. Nothing ever cleared the base radii, the whole pass was dead
-    // code, and a 2,400-person org drew every team at the r=20 floor.
+  it("draws every unit at one size, however big the org gets", () => {
+    // Since 2026-09-24 a unit is one size on both maps (geometry.UNIT_RADIUS),
+    // so the rung a node stands on no longer changes how big it is. What this
+    // guards now is that the *rungs* still open out for a wider org — the
+    // spacing does the work that node size used to.
     const small = scene();
     const big = wide(14, 10, 9);
     expect(big.maxDepth).toBeGreaterThanOrEqual(2);
     for (let d = 1; d <= big.maxDepth; d++) {
-      expect(big.bands[d].nodeRadius).toBeGreaterThan(small.bands[d].nodeRadius * 1.5);
+      expect(big.bands[d].nodeRadius).toBe(small.bands[d].nodeRadius);
+      expect(big.bands[d].radius).toBeGreaterThan(small.bands[d].radius);
     }
   });
 
   it("never lets a rung's nodes outgrow the rung inside it", () => {
-    // Size is the only thing carrying depth once you're too far out to read a
-    // label, so it has to fall monotonically whatever the arithmetic wants.
+    // Depth used to be carried by size. It is carried by the visible routes
+    // now, so equal is the expected answer below the company — what must
+    // never happen is a rung's nodes growing as you go outward.
     for (const s of [scene(), wide(8, 6, 8), wide(14, 10, 9)]) {
       for (let d = 1; d < s.bands.length; d++) {
-        expect(s.bands[d].nodeRadius).toBeLessThan(s.bands[d - 1].nodeRadius);
+        expect(s.bands[d].nodeRadius).toBeLessThanOrEqual(s.bands[d - 1].nodeRadius);
       }
     }
   });

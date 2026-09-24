@@ -33,10 +33,19 @@
  * orbits, and so shift its siblings bodily, but never reshapes the inside of
  * any branch it is not part of.
  */
-import { polar, seatFurnitureReach, seatRingRadius, unitOuterExtent, type Point } from "./geometry";
+import {
+  ROOT_RADIUS,
+  UNIT_RADIUS,
+  polar,
+  seatFurnitureReach,
+  seatRingRadius,
+  unitOuterExtent,
+  type Point,
+} from "./geometry";
 import {
   placeUnitSeats,
   seatRingCount,
+  unitDiscRadius,
   widestGap,
   type Link,
   type OrbitalScene,
@@ -44,7 +53,7 @@ import {
   type PlacedUnit,
 } from "./layout";
 import type { OrbitalTree, UnitNode } from "./model";
-import { headcountDotPx, sizeIndex } from "./size";
+import { SIZE_BY_HEADCOUNT, headcountDotPx, sizeIndex } from "./size";
 
 const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;
@@ -58,8 +67,22 @@ export const LOCAL_MAX_R = 230;
 export const BRANCH_GAP = 46;
 /** Least angular air between neighbouring sibling wedges. */
 const WEDGE_GAP = 0.05;
-/** A unit's children fan away from its parent, never round behind it. */
-export const FAN_MAX = 200 * DEG;
+/** How much wider than the tightest possible orbit a fan is drawn, so that
+ *  children have angular room to be pulled inward (see the variation pass).
+ *  Spent only when variation is on. */
+const ORBIT_SLACK = 0.35;
+/** A unit's children fan away from its parent, never round behind it.
+ *  Tightened from 200° on 2026-09-24 (Greg: children should "fan out more
+ *  tightly, rather than splaying in such a way that they are equidistantly
+ *  distributed around the parent node"). The company itself is the exception
+ *  — it has no parent to face away from, so it uses the whole circle.
+ *
+ *  Tighter fans cost extent, because the same branches have to fit a smaller
+ *  angle: measured on the 2,562-person shape, 200° gives 36,024 across and a
+ *  median fan of 102°, 170° gives 40,252 and 87°, 150° gives 44,355 and 77°.
+ *  170° is where the fans read as fans without pushing the company so wide
+ *  that local geography stops being worth choosing. */
+export const FAN_MAX = 170 * DEG;
 /** How much of the distance to its nearest neighbour a dot may swell into when
  *  zoomed out — two neighbours at this share still leave a tenth clear. */
 const CEILING_SHARE = 0.45;
@@ -161,13 +184,21 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
   const dotPx = new Map<string, number>();
   for (const unit of tree.units.values()) {
     const index = sizeIndex(unit.totalSeats, company);
-    const r = localUnitRadius(unit.id === tree.rootId ? 1 : index);
+    const isRoot = unit.id === tree.rootId;
+    // One size for every unit, grown only when its own people need the room
+    // (Greg, 2026-09-24). Headcount sizing is kept, switched off.
+    const base = SIZE_BY_HEADCOUNT
+      ? localUnitRadius(isRoot ? 1 : index)
+      : (isRoot ? ROOT_RADIUS : UNIT_RADIUS);
+    const r = unitDiscRadius(base, unit.seatIds.length);
     let busiest = 0;
     for (const id of unit.seatIds) busiest = Math.max(busiest, tree.seats.get(id)?.workCount ?? 0);
     const rings = seatRingCount(r, unit.seatIds.length);
     radius.set(unit.id, r);
     footprint.set(unit.id, unitOuterExtent(r, rings, rings > 0 ? seatFurnitureReach(busiest) : 0));
-    dotPx.set(unit.id, headcountDotPx(unit.totalSeats, company, { master: unit.id === tree.rootId }));
+    // With one size for every unit there is nothing for the overview dot to
+    // say, so it says nothing and the painters fall back to the disc.
+    if (SIZE_BY_HEADCOUNT) dotPx.set(unit.id, headcountDotPx(unit.totalSeats, company, { master: isRoot }));
   }
   const kidsOf = (unit: UnitNode) => unit.childIds.filter((id) => tree.units.has(id));
 
@@ -271,7 +302,14 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
         low = mid;
       }
     }
-    const rho = high;
+    // Leave a little angular slack before laying the wedges out. At the
+    // minimum orbit the wedges exactly fill the fan, so no child has room to
+    // come inward — coming inward widens the angle a branch subtends, and
+    // there is nowhere for that width to go. Opening the orbit slightly buys
+    // every child a slot wider than it needs, and that slack is what variable
+    // connection lengths are spent from.
+    const rho = high * (1 + ORBIT_SLACK * radialLooseness);
+    fit = fits(rho) ?? fit;
 
     // Lay the wedges edge to edge: centred on "straight ahead" for a branch,
     // spread evenly round the whole circle for the company.
@@ -285,39 +323,50 @@ export function layoutBranches(tree: OrbitalTree, opts: LocalLayoutOptions = {})
       return { id: k, angle, distance: rho, disks: carry(childBranches[i].disks, angle, rho, angle) };
     });
 
-    // Radial looseness. One shared orbit proves the wedges disjoint and is
-    // the right, calm drawing for a simple company. As visual complexity
-    // grows, branch shape is allowed to pull a child toward the nearest safe
-    // distance on its own ray. Deep/narrow branches get more of that room;
-    // broad branches stay nearer the shared orbit. Every candidate is checked
-    // against final neighbour positions, so variation remains collision-free.
+    // Variable connection lengths (Greg, 2026-09-24). One shared orbit is
+    // what proves the wedges disjoint, but it leaves a small child out on the
+    // same long stem as its biggest sibling. Each child may be drawn back in
+    // along its own ray — as far as two things allow, and no further:
+    //
+    //   space   its branch must stay clear of everything else in this frame;
+    //   wedge   its branch must still fit inside the angular slot it was
+    //           given, because coming inward widens the angle it subtends.
+    //
+    // The wedge bound is what keeps Law 4. Without it, a branch drawn inward
+    // spills into its neighbour's slot and their connections cross — three of
+    // them on the 2,562-person shape, which is how this was found.
     const own0: Disk = { x: 0, y: 0, f: own };
     const cell = 2 * Math.max(own, ...placed.flatMap((p) => p.disks.map((d) => d.f)));
-    // Circular orbits (the shipped map) need none of this search, and it is
-    // the most expensive thing in the walk.
+    // The fan's unused angle, shared equally: each child may widen into its
+    // own share and no further, so two neighbours can never both claim it.
+    const slotExtra = Math.max(0, available - fit.total) / kids.length;
     for (let i = 0; radialLooseness > 0 && i < placed.length; i++) {
       const child = placed[i];
       const others = new DiskGrid([own0, ...placed.flatMap((p, j) => (j === i ? [] : p.disks))], cell);
       const local = childBranches[i].disks;
-      const clearAt = (distance: number) =>
-        carry(local, child.angle, distance, child.angle).every((d) => others.clear(d, BRANCH_GAP));
+      const slot = fit.wedges[i].hi - fit.wedges[i].lo + slotExtra;
+      const fitsAt = (distance: number) => {
+        const w = wedgeAt(local, distance, clear);
+        if (!w || w.hi - w.lo > slot) return false;
+        return carry(local, child.angle, distance, child.angle).every((d) => others.clear(d, BRANCH_GAP));
+      };
       let inner = own + footprint.get(child.id)! + BRANCH_GAP;
       let outer = child.distance;
       if (inner >= outer) continue;
-      if (clearAt(inner)) outer = inner;
+      if (fitsAt(inner)) outer = inner;
       else {
         for (let step = 0; step < 18 && outer - inner > 2; step++) {
           const mid = (inner + outer) / 2;
-          if (clearAt(mid)) outer = mid;
+          if (fitsAt(mid)) outer = mid;
           else inner = mid;
         }
       }
-      if (outer < child.distance && radialLooseness > 0) {
+      if (outer < child.distance) {
         let varied = child.distance - (child.distance - outer) * radialLooseness;
-        // The clear set along a ray need not be perfectly continuous for a
-        // hooked branch. Both endpoints are proven safe; if the interpolated
-        // point falls in a pocket, choose the nearer safe endpoint.
-        if (!clearAt(varied)) varied = radialLooseness < 0.5 ? child.distance : outer;
+        // The safe set along a ray need not be perfectly continuous for a
+        // hooked branch. Both endpoints are proven; if the interpolated point
+        // is not, fall back to the nearer proven one.
+        if (!fitsAt(varied)) varied = radialLooseness < 0.5 ? child.distance : outer;
         child.distance = varied;
         child.disks = carry(local, child.angle, varied, child.angle);
       }

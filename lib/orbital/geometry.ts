@@ -64,21 +64,34 @@ export function clampToSector(s: Sector, angle: number): number {
 // rung keeps shrinking so a deep org still reads as a hierarchy rather than a
 // field of equal dots, with a floor so it never becomes a speck.
 
-export const ROOT_RADIUS = 165;
-const DEPTH_RADII = [ROOT_RADIUS, 72, 48, 36];
-const DEEP_SHRINK = 0.82;
-const MIN_UNIT_RADIUS = 20;
-
-export function unitRadius(depth: number): number {
-  const d = Math.max(0, Math.round(depth));
-  if (d < DEPTH_RADII.length) return DEPTH_RADII[d];
-  const beyond = d - (DEPTH_RADII.length - 1);
-  const last = DEPTH_RADII[DEPTH_RADII.length - 1];
-  return Math.max(MIN_UNIT_RADIUS, Math.round(last * DEEP_SHRINK ** beyond));
-}
-
 /** A person orbiting the unit they belong to. */
 export const SEAT_RADIUS = 9.5;
+
+/**
+ * How big a unit's disc is (Greg, 2026-09-24).
+ *
+ * *"The difference in sizing between people and their parent nodes is still
+ * much too great. A team (the direct parent of a human node) should be
+ * maximum size 2x the area of a human node. All other nodes between team and
+ * master should be the same size as a team for now."*
+ *
+ * So a unit is one size, set against the person: **twice a person's area**,
+ * which is √2 times their radius. Every unit from a team up to the level
+ * below the company draws at it. The company keeps a larger floor so the map
+ * still has an anchor to read from.
+ *
+ * Size therefore carries **no meaning** at present — not depth, not headcount.
+ * Greg: *"I don't have a concrete position on node sizing just yet."* The
+ * headcount pipeline in `size.ts` is intact and switched off behind
+ * `SIZE_BY_HEADCOUNT`; turning it back on is one constant.
+ */
+export const UNIT_RADIUS = SEAT_RADIUS * Math.SQRT2;
+/** The company, which has to read as the place everything hangs from. */
+export const ROOT_RADIUS = UNIT_RADIUS * 2.5;
+
+export function unitRadius(depth: number): number {
+  return Math.max(0, Math.round(depth)) === 0 ? ROOT_RADIUS : UNIT_RADIUS;
+}
 export const SEAT_GAP = 10;
 /** Clear space between the unit's edge and the seat ring. Generous, because
  *  at close zoom the people carry capsules and labels that need air (Greg,
@@ -121,8 +134,14 @@ export const seatFurnitureReach = (workCount: number): number =>
  *  work never reaches the outer ring's people. */
 export const SEAT_RING_STEP = 2 * SEAT_RADIUS + WORK_CAPSULE_GAP + workCapsuleLength(8) + 12;
 
+/** Air between a unit's edge and its people. The tuned 38 was set when a unit
+ *  was 48–165 across; against a 13-unit dot it left the people looking
+ *  unattached, so it scales with the dot and keeps a floor. */
+export const seatOrbitGap = (unitR: number): number =>
+  Math.max(15, Math.min(SEAT_ORBIT_GAP, unitR * 1.5));
+
 export const seatRingRadius = (unitR: number, ring = 0): number =>
-  unitR + SEAT_ORBIT_GAP + SEAT_RADIUS + ring * SEAT_RING_STEP;
+  unitR + seatOrbitGap(unitR) + SEAT_RADIUS + ring * SEAT_RING_STEP;
 
 /** How far a unit's own furniture — its seat rings, and the work those people
  *  carry — reaches past its centre. The work matters: leaving it out is what
