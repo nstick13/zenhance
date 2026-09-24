@@ -18,7 +18,7 @@ When an experiment is done — **graduated** to prod *or* **abandoned**:
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
-| `grow` / `grow-established` / `grow-large` | **active** | The blank-canvas start, 45-person company, and 1,000-person stress fixture share `GrowLab.tsx`. All support wheel/pinch zoom, pan and Fit; the large study also has branch jumps. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
+| `grow` / `grow-established` / `grow-large` | **active** | The blank-canvas start, 45-person company, and 1,000-person stress fixture share `GrowLab.tsx`. All support wheel/pinch zoom, pan and Fit. The large study opens locally and adds a pinned detail field, route-preserving visibility budget, headcount-indexed overview, geographic insertion preview, dwell-gated relationship proposals and a responsive branch-carry basket. Human avatars and sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
 | `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Value streams→Teams→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
 | `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
 | `orbital-focus` | **archived** | Graduated to the production `OrbitalMap` (2026-09-15). Carried forward: focus-relative fixed rings; double-click/double-tap and card focus; progressive whole-company marks; dimmed context with a violet route home; nested focus; and focus-aware dragging with meaningful snap modes. The lab's aggregate summaries were deliberately dropped because every real unit remains visible. |
@@ -82,6 +82,40 @@ abstractions while retaining a violet route back toward the centre; clicking
 the paper releases focus without moving the camera. Deep nesting can still
 wind the ancestry path through other geometry: this is not yet a branch-local
 projection or a solved large-company layout.
+
+**Large-company navigation revision, 2026-09-22:** the decisions in
+`LARGE-COMPANY-NAVIGATION-PROMPT.md` are now implemented as a lab-only layer on
+`/grow-large`; production `/org` is untouched. The study opens on deterministic
+local territory (Field Operations), with whole-forest Fit as an explicit
+choice. A blank tap pins a local semantic-detail field without moving the
+camera. Paint, labels and hit targets share its effective-detail calculation.
+At overview, a deterministic hierarchical budget keeps roots, selected routes,
+nearby territory and larger branches; an exposed descendant always brings its
+route home. Hidden structure still participates in layout and Fit.
+
+Large overview dots now encode descendant headcount through compressed,
+bounded **screen area**, with exact counts in labels. Each connected family has
+a smoothed structural envelope calculated from team geometry only; people,
+work, hover and local detail cannot make it breathe. The standard blank and
+45-person studies keep their prior circular boundaries and reveal behavior.
+
+Within the large study, ordinary drag is geography only. Returning to the
+source orbit opens a local insertion gap by moving only colliding siblings, and
+the preview angles are the angles committed on release. Direct overlap uses a
+coral relationship treatment, then requires a deliberate dwell before release
+can open a relationship confirmation. Team merge confirmation quantifies the
+entire carried branch, but its final action is deliberately a no-op in the lab:
+lead selection and directly assigned people remain unresolved, so the study
+does not pretend to complete a destructive merge.
+
+Long-distance moves use a pending carry basket: right edge on desktop, bottom
+edge above the safe area on compact/touch layouts. Multiple entries can remain
+pending while the user pans, zooms or changes local detail. The source stays as
+a desaturated dashed placeholder; descendants cannot be separately carried
+under a basketed ancestor, and adding an ancestor absorbs existing descendant
+entries with an explanation. Return/Return all leave geography unchanged;
+dragging an entry out commits geographic placement only. Basket state is
+in-memory and vanishes on refresh.
 
 ### The idea being tested
 Greg's framing: *"the user starts with almost nothing."* One breathing `+` in the
@@ -327,7 +361,14 @@ two can't drift:
 - **The camera may now zoom past 1×** when the map is small. Capping the fit at
   1× was the other half of why the first team was invisible.
 
-### Boundaries decide who your parent is *(2026-09-20)*
+### Historical: boundaries decided who your parent was *(2026-09-20)*
+
+> The automatic boundary-crossing behaviour below remains in the standard
+> blank/45-person grow studies for comparison. It is **superseded in
+> `/grow-large` by the 2026-09-22 navigation revision above**, where ordinary
+> drag edits geography only and relationship changes require deliberate
+> overlap, dwell and confirmation.
+
 Every node's **boundary** is the circle enclosing its whole subtree. Dragging
 reads two complementary things on release, in this order (Greg, 2026-09-20:
 *"we're brave enough to re-parent … We can have this alongside the existing

@@ -36,6 +36,17 @@ import {
   focusedStudyRingReveal, personOrbitRadius, studyFocusDepth, studyRingColor, studyRingReveal,
   type StudyRingKey, type StudyRingProgress,
 } from './visualRules';
+import {
+  addBasketEntry,
+  basketOwner,
+  effectiveSemanticScale,
+  insertionAngles,
+  overviewMarkRadius,
+  pickVisibleStructure,
+  smoothEnvelopePath,
+  structuralEnvelope,
+  structureBudget,
+} from './largeCompanyRules';
 
 /* --- unified orbital palette -------------------------------------------- */
 const PAPER = '#fefefe';
@@ -709,8 +720,27 @@ type DragState = {
   /** Everything that travels with this node, at the moment it was grabbed. */
   start: Record<string, { x: number; y: number }>;
   /** Fixed at grab time: the family boundary must not chase the dragged branch. */
-  family: { rootId: string; x: number; y: number; radius: number } | null;
+  family: { rootId: string; x: number; y: number; radius: number; path?: string } | null;
+  /** Restore this snapshot when a branch is put in the pending basket. */
+  beforePinned: Record<string, { x: number; y: number }>;
+  /** Basket entries re-enter the same drag path but keep a source placeholder. */
+  fromBasket: boolean;
+  client: { x: number; y: number };
+  lastAt: { x: number; y: number };
+  previewHints: Record<string, number>;
   moved: boolean;
+};
+
+type BasketEntry = {
+  id: string;
+  origin: { x: number; y: number };
+};
+
+type RelationshipTarget = {
+  a: string;
+  b: string;
+  kind: Kind;
+  mode: 'merge' | 'move-person';
 };
 
 /** Two teams running together, or two people deciding to become a team. */
@@ -733,6 +763,7 @@ export default function GrowLab({
   sampleWork = {},
   studyTitle = 'The first team',
   focusStops = [],
+  initialFocusId = null,
   scaleMode = 'standard',
   focusedRings = false,
 }: {
@@ -741,6 +772,7 @@ export default function GrowLab({
   sampleWork?: Record<string, SampleWorkItem[]>;
   studyTitle?: string;
   focusStops?: { id: string; label: string; zoom: number }[];
+  initialFocusId?: string | null;
   scaleMode?: StudyScale;
   focusedRings?: boolean;
 }) {
@@ -753,7 +785,13 @@ export default function GrowLab({
   const [stepIx, setStepIx] = useState(0);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [manualCamera, setManualCamera] = useState<Camera | null>(null);
-  const [selectedStudyStop, setSelectedStudyStop] = useState<string | null>(null);
+  const [selectedStudyStop, setSelectedStudyStop] = useState<string | null>(initialFocusId);
+  const [detailField, setDetailField] = useState<{ x: number; y: number } | null>(null);
+  const [basket, setBasket] = useState<BasketEntry[]>([]);
+  const [basketNotice, setBasketNotice] = useState<string | null>(null);
+  const [highlightedBasketId, setHighlightedBasketId] = useState<string | null>(null);
+  const [relationshipArm, setRelationshipArm] = useState<RelationshipTarget | null>(null);
+  const [dragPreviewHints, setDragPreviewHints] = useState<Record<string, number>>({});
   const [reduced, setReduced] = useState(false);
 
   /** Where the pointer is on a ring, and whether the menu has been opened there. */
@@ -775,7 +813,7 @@ export default function GrowLab({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const manualCameraRef = useRef<Camera | null>(null);
   const touchGestureRef = useRef<
-    | { kind: 'pan'; x: number; y: number; cam: Camera }
+    | { kind: 'pan'; x: number; y: number; cam: Camera; moved?: boolean }
     | { kind: 'pinch'; distance: number; x: number; y: number; world: { x: number; y: number }; cam: Camera }
     | null
   >(null);
@@ -803,6 +841,12 @@ export default function GrowLab({
   }, []);
 
   useEffect(() => {
+    if (!basketNotice) return;
+    const timer = window.setTimeout(() => setBasketNotice(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [basketNotice]);
+
+  useEffect(() => {
     // `?still=1` forces the reduced-motion rendering, so the calm version can
     // be reviewed without anyone changing their OS settings.
     const forced = new URLSearchParams(window.location.search).has('still');
@@ -814,8 +858,8 @@ export default function GrowLab({
   }, []);
 
   /* --- derived ----------------------------------------------------------- */
-  const layout = useMemo(() => buildLayout(nodes, pinned, angleHints, scaleMode),
-    [nodes, pinned, angleHints, scaleMode]);
+  const layout = useMemo(() => buildLayout(nodes, pinned, { ...angleHints, ...dragPreviewHints }, scaleMode),
+    [nodes, pinned, angleHints, dragPreviewHints, scaleMode]);
 
   /** How big a node really is — its depth decides it (Greg, 2026-09-20). */
   const radiusOf = useCallback(
@@ -839,6 +883,8 @@ export default function GrowLab({
     return out;
   }, [layout]);
   const byId = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes]);
+  const parentById = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.parentId])), [nodes]);
+  const basketIds = useMemo(() => basket.map((entry) => entry.id), [basket]);
   const activeFocusId = openId ?? selectedStudyStop;
   const focusDistances = useMemo(() => {
     if (!activeFocusId) return {} as Record<string, number>;
@@ -927,10 +973,11 @@ export default function GrowLab({
       maxY = Math.max(maxY, y + r);
     };
     for (const n of nodes) {
+      if (scaleMode === 'large' && n.kind !== 'team') continue;
       const p = layout.pos[n.id];
       if (!p) continue;
       grow(p.x, p.y, layout.radius[n.id] ?? SEAT_RADIUS);
-      const R = layout.ring[n.id];
+      const R = scaleMode === 'large' ? null : layout.ring[n.id];
       if (R) grow(p.x, p.y, R);
     }
     if (soloRoot && showSoloAdd) {
@@ -954,7 +1001,7 @@ export default function GrowLab({
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     return { k, tx: size.w / 2 - cx * k, ty: (top + (size.h - bottom)) / 2 - cy * k };
-  }, [nodes, layout, size, soloRoot, showSoloAdd]);
+  }, [nodes, layout, size, soloRoot, showSoloAdd, scaleMode]);
   // Half a fitted map is useful context; shrinking much further makes every
   // family occupy the same few pixels and creates a false "single blob".
   const minZoom = Math.max(0.035, cameraFit.k * 0.5);
@@ -963,9 +1010,19 @@ export default function GrowLab({
   // slide under the pointer while you are holding something.
   const draftSpot = draftFocusId ? layout.pos[draftFocusId] : null;
   const draftK = Math.max(1.15, cameraFit.k);
+  const selectedStopCamera = useMemo(() => {
+    const stop = selectedStudyStop
+      ? focusStops.find((item) => item.id === selectedStudyStop) ?? null
+      : null;
+    const point = stop ? layout.pos[stop.id] : null;
+    if (!stop || !point || !size.w) return null;
+    const zoom = Math.max(minZoom, Math.min(4, stop.zoom));
+    return { k: zoom, tx: size.w / 2 - point.x * zoom, ty: size.h / 2 - point.y * zoom };
+  }, [selectedStudyStop, focusStops, layout, size.w, size.h, minZoom]);
   const camera = useMemo(() => drag ? drag.cam : draftSpot
     ? { k: draftK, tx: size.w / 2 - draftSpot.x * draftK, ty: size.h / 2 - draftSpot.y * draftK }
-    : manualCamera ?? cameraFit, [drag, draftSpot, draftK, size.w, size.h, cameraFit, manualCamera]);
+    : manualCamera ?? selectedStopCamera ?? cameraFit,
+  [drag, draftSpot, draftK, size.w, size.h, cameraFit, manualCamera, selectedStopCamera]);
 
   // On a phone the wizard is a sheet across the bottom, so the map steps up
   // out of its way rather than being half-covered by it.
@@ -1092,6 +1149,17 @@ export default function GrowLab({
   const m = (id: string) => frame.pos[id] ?? { x: 0, y: 0, a: 0 };
   const k = frame.k || camera.k;
   const overviewDetail = scaleMode === 'large' ? smoothstep(0.35, 0.72, k) : 1;
+  const fieldDistancePx = (id: string) => {
+    if (!detailField) return Infinity;
+    const point = m(id);
+    return Math.hypot(point.x - detailField.x, point.y - detailField.y) * k;
+  };
+  const semanticScaleFor = (id: string) => scaleMode === 'large'
+    ? effectiveSemanticScale(k, fieldDistancePx(id))
+    : k;
+  const overviewDetailFor = (id: string) => scaleMode === 'large'
+    ? smoothstep(0.35, 0.72, semanticScaleFor(id))
+    : 1;
   const focusDepth = activeFocusId ? depthOf[activeFocusId] ?? 0 : studyFocusDepth(k);
   const focusDim = (id: string) => {
     if (scaleMode !== 'large' || !activeFocusId) return 1;
@@ -1102,9 +1170,10 @@ export default function GrowLab({
   };
   const ringRevealFor = (node: Node) => {
     const depth = depthOf[node.id] ?? 0;
-    if (!focusedRings) return studyRingReveal(depth, k);
+    const semanticScale = semanticScaleFor(node.id);
+    if (!focusedRings) return studyRingReveal(depth, semanticScale);
     if (activeFocusId && (focusDistances[node.id] === undefined || focusDistances[node.id] > 1)) return 0;
-    return focusedStudyRingReveal(depth, focusDepth, k, scaleMode === 'large');
+    return focusedStudyRingReveal(depth, focusDepth, semanticScale, scaleMode === 'large');
   };
   const tx = frame.tx || camera.tx;
   const ty = frame.ty || camTy;
@@ -1115,7 +1184,32 @@ export default function GrowLab({
     const y = point.y * k + ty;
     return x >= -margin && x <= size.w + margin && y >= -margin && y <= size.h + margin;
   };
+  const structuralVisible = scaleMode === 'large'
+    ? pickVisibleStructure(teams.map((team) => ({
+        id: team.id,
+        parentId: team.parentId && byId[team.parentId]?.kind === 'team' ? team.parentId : null,
+        depth: depthOf[team.id] ?? 0,
+        headcount: headcount[team.id] ?? 0,
+        distancePx: fieldDistancePx(team.id),
+        root: team.parentId === null,
+        onRoute: focusPath.has(team.id),
+        selected: activeFocusId === team.id || (focusDistances[team.id] ?? Infinity) <= 1,
+      })), structureBudget(size.w * size.h, k))
+    : new Set(teams.map((team) => team.id));
+  const teamIsVisible = (id: string) => structuralVisible.has(id);
+  const personIsVisible = (person: Node) => !!person.parentId && teamIsVisible(person.parentId) &&
+    revealAt(semanticScaleFor(person.id)).people > 0.01;
+  const familyEnvelopes = scaleMode === 'large'
+    ? layout.roots.filter((root) => root.kind === 'team').map((root) => {
+        const family = descendantIds(layout.kids, root.id);
+        const discs = [...family]
+          .filter((id) => byId[id]?.kind === 'team')
+          .map((id) => ({ ...layout.pos[id]!, r: (layout.radius[id] ?? MIN_TEAM_R) * NODE_VISUAL_SCALE }));
+        return { rootId: root.id, path: smoothEnvelopePath(structuralEnvelope(discs, 48)) };
+      })
+    : [];
   const workMarks = people.flatMap((person) => {
+    if (scaleMode === 'large' && !personIsVisible(person)) return [];
     const items = sampleWork[person.id] ?? [];
     if (!items.length) return [];
     const seat = m(person.id);
@@ -1372,7 +1466,13 @@ export default function GrowLab({
     setDraftFocusId(null);
     manualCameraRef.current = null;
     setManualCamera(null);
-    setSelectedStudyStop(null);
+    setSelectedStudyStop(initialFocusId);
+    setDetailField(null);
+    setBasket([]);
+    setBasketNotice(null);
+    setHighlightedBasketId(null);
+    setRelationshipArm(null);
+    setDragPreviewHints({});
     setMenu(null);
     setHover(null);
     setDrag(null);
@@ -1383,7 +1483,7 @@ export default function GrowLab({
     setSplitAsk(null);
     setParentJustAdded(null);
     setStepIx(0);
-  }, [initialNodes]);
+  }, [initialNodes, initialFocusId]);
 
   const openNode = useCallback((id: string) => {
     setMenu(null);
@@ -1473,37 +1573,6 @@ export default function GrowLab({
       setCoalescing(null);
     },
     [nodes],
-  );
-
-  /** Put both teams under one parent — an existing node, or a brand new one. */
-  const giveSharedParent = useCallback(
-    (aId: string, bId: string, parentId: string | null) => {
-      const aPos = layout.pos[aId];
-      const bPos = layout.pos[bId];
-      if (parentId) {
-        setNodes((ns) => ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId } : n)));
-        setPinned((p) => without(p, aId, bId));
-        setMerge(null);
-        return;
-      }
-      const up: Node = { id: nid('team'), kind: 'team', parentId: null, name: null, role: null, purpose: null };
-      setNodes((ns) => [up, ...ns.map((n) => (n.id === aId || n.id === bId ? { ...n, parentId: up.id } : n))]);
-      setPinned((p) => {
-        // The new parent appears between the two teams it was made for.
-        return {
-          ...without(p, aId, bId),
-          [up.id]: {
-            x: ((aPos?.x ?? 0) + (bPos?.x ?? 0)) / 2,
-            y: ((aPos?.y ?? 0) + (bPos?.y ?? 0)) / 2,
-          },
-        };
-      });
-      setMerge(null);
-      setParentJustAdded(up.id);
-      setOpenId(up.id);
-      setStepIx(0);
-    },
-    [layout],
   );
 
   /**
@@ -1604,57 +1673,109 @@ export default function GrowLab({
     return { x: (cx - left - c.tx) / c.k, y: (cy - top - c.ty) / c.k };
   }, []);
 
-  /** Two teams close enough that letting go would run them together. */
-  const armed = useMemo(() => {
-    if (!drag?.moved) return null;
-    const a = byId[drag.id];
-    const ap = layout.pos[drag.id];
+  /** Direct overlap identifies one relationship target. It does not arm until
+   * the pointer deliberately dwells there. */
+  const relationshipAt = useCallback((id: string, ap: { x: number; y: number }): RelationshipTarget | null => {
+    const a = byId[id];
     if (!a || !ap) return null;
-    // Like pairs with like: two teams run together, two people become a team.
-    // A person meeting a team is a different question, and the orbit asks it.
-    const blocked = descendantIds(layout.kids, drag.id);
-    let best: { id: string; d: number } | null = null;
+    const blocked = descendantIds(layout.kids, id);
+    let best: { id: string; d: number; mode: RelationshipTarget['mode'] } | null = null;
     for (const other of nodes) {
-      if (other.kind !== a.kind || blocked.has(other.id)) continue;
+      if (blocked.has(other.id)) continue;
+      const mode = a.kind === 'team' && other.kind === 'team'
+        ? 'merge'
+        : a.kind === 'person' && other.kind === 'team'
+          ? 'move-person'
+          : a.kind === 'person' && other.kind === 'person'
+            ? 'merge'
+            : null;
+      if (!mode) continue;
       const bp = layout.pos[other.id];
       if (!bp) continue;
       const d = Math.hypot(ap.x - bp.x, ap.y - bp.y);
-      // A node's gauges reach well past its outline, so two nodes look like
-      // they are touching long before their centres are. Arming at contact
-      // meant the merge only appeared once they had already overlapped
-      // (Greg, 2026-09-20).
       const combinedRadius = radiusOf(a.id) + radiusOf(other.id);
       if (a.kind === 'team' && !canArmTeamMerge(layout, other.id, d, combinedRadius)) continue;
-      if (a.kind === 'person' && d > combinedRadius * MERGE_REACH) continue;
-      if (!best || d < best.d) best = { id: other.id, d };
+      if (a.kind === 'person' && d > combinedRadius * 1.35) continue;
+      if (!best || d < best.d) best = { id: other.id, d, mode };
     }
-    return best ? { a: drag.id, b: best.id, kind: a.kind } : null;
-  }, [drag, byId, layout, nodes, radiusOf]);
+    return best ? { a: id, b: best.id, kind: a.kind, mode: best.mode } : null;
+  }, [byId, layout, nodes, radiusOf]);
 
-  /** Where the drop would put this node in the org, if anywhere. */
-  /**
-   * What letting go here would mean. Two complementary readings, in order:
-   * land on an orbit and you have chosen that team deliberately; otherwise the
-   * boundary you are inside decides, and being inside none of them means the
-   * node answers to nobody.
-   */
-  const landing = useMemo(() => {
-    if (!drag?.moved || armed) return null;
-    const n = byId[drag.id];
+  const relationshipCandidate = useMemo<RelationshipTarget | null>(() => {
+    if (!drag?.moved) return null;
     const at = layout.pos[drag.id];
-    if (!n || !at) return null;
+    return at ? relationshipAt(drag.id, at) : null;
+  }, [drag, layout, relationshipAt]);
+
+  const candidateKey = relationshipCandidate
+    ? `${relationshipCandidate.a}:${relationshipCandidate.b}:${relationshipCandidate.mode}`
+    : null;
+  useEffect(() => {
+    if (!relationshipCandidate || !candidateKey) {
+      setRelationshipArm(null);
+      return;
+    }
+    setRelationshipArm(null);
+    const timer = window.setTimeout(() => setRelationshipArm(relationshipCandidate), reduced ? 0 : 620);
+    return () => window.clearTimeout(timer);
+  // `candidateKey` is the stable identity; depending on the freshly-created
+  // object would restart the dwell timer on every animation frame.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateKey, reduced]);
+
+  const armed = scaleMode !== 'large'
+    ? relationshipCandidate
+    : relationshipArm && relationshipCandidate &&
+      relationshipArm.a === relationshipCandidate.a &&
+      relationshipArm.b === relationshipCandidate.b &&
+      relationshipArm.mode === relationshipCandidate.mode
+      ? relationshipCandidate
+      : null;
+
+  /** The earlier grow studies keep their boundary/orbit relationship reading.
+   * The large-company study alone makes ordinary placement geography-only. */
+  const legacyLanding = useMemo(() => {
+    if (scaleMode === 'large' || !drag?.moved || armed) return null;
+    const node = byId[drag.id];
+    const at = layout.pos[drag.id];
+    if (!node || !at) return null;
     const onOrbit = classifyDrop(layout, drag.id, at);
     const parentId = onOrbit ? onOrbit.parentId : boundaryAt(layout, byId, drag.id, at);
-    if (parentId === (n.parentId ?? null)) return null;
+    if (parentId === (node.parentId ?? null)) return null;
     return { parentId, viaOrbit: !!onOrbit, orbit: onOrbit?.orbit ?? null };
-  }, [drag, armed, byId, layout]);
+  }, [scaleMode, drag, armed, byId, layout]);
 
   // Event handlers run long after the render that created them, so they read
   // the world through this instead of a stale closure.
-  const live = useRef({ drag, armed, landing, byId, layout });
+  const live = useRef({ drag, armed, relationshipCandidate, legacyLanding, byId, layout });
   useEffect(() => {
-    live.current = { drag, armed, landing, byId, layout };
+    live.current = { drag, armed, relationshipCandidate, legacyLanding, byId, layout };
   });
+
+  const inBasketRegion = useCallback((clientX: number, clientY: number) => {
+    const rect = shellRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    return size.w < 700 ? y >= size.h - 126 : x >= size.w - 196;
+  }, [size]);
+
+  const storeInBasket = useCallback((id: string, session: DragState) => {
+    const result = addBasketEntry(basketIds, id, parentById);
+    setPinned(session.beforePinned);
+    if (result.owner) {
+      setHighlightedBasketId(result.owner);
+      setBasketNotice(`${byId[id]?.name ?? 'That branch'} is already included with ${byId[result.owner]?.name ?? 'its parent branch'}.`);
+      return;
+    }
+    const existing = new Map(basket.map((entry) => [entry.id, entry]));
+    const origin = session.start[id] ?? layout.pos[id] ?? { x: 0, y: 0 };
+    setBasket(result.ids.map((entryId) => existing.get(entryId) ?? { id: entryId, origin }));
+    setHighlightedBasketId(id);
+    setBasketNotice(result.absorbed.length
+      ? `${result.absorbed.length} smaller ${result.absorbed.length === 1 ? 'carry is' : 'carries are'} included with this branch.`
+      : `${byId[id]?.name ?? 'Branch'} is ready to carry.`);
+  }, [basket, basketIds, parentById, byId, layout]);
 
   /**
    * Listeners are wired up here and now, not in an effect. An effect only runs
@@ -1662,35 +1783,59 @@ export default function GrowLab({
    * which silently swallowed the tap.
    */
   const beginDrag = useCallback(
-    (id: string, cx: number, cy: number) => {
+    (id: string, cx: number, cy: number, fromBasket = false) => {
+      const carriedBy = basketOwner(basketIds, id, parentById);
+      if (carriedBy && !fromBasket) {
+        setHighlightedBasketId(carriedBy);
+        setBasketNotice(`${byId[id]?.name ?? 'That node'} is already included in a pending branch.`);
+        return;
+      }
       const cam = { k, tx, ty };
       const grab = toWorld(cx, cy, cam);
       // Anything below this node that has been hand-placed travels with it;
       // everything else keeps orbiting and follows for free.
       const family = descendantIds(layout.kids, id);
+      const sourceAt = layout.pos[id] ?? { x: 0, y: 0 };
       const start: Record<string, { x: number; y: number }> = {
-        [id]: layout.pos[id] ?? { x: 0, y: 0 },
+        [id]: fromBasket ? grab : sourceAt,
       };
       for (const fid of family) {
-        if (fid !== id && pinned[fid]) start[fid] = pinned[fid]!;
+        if (fid !== id && pinned[fid]) start[fid] = fromBasket
+          ? { x: grab.x + pinned[fid]!.x - sourceAt.x, y: grab.y + pinned[fid]!.y - sourceAt.y }
+          : pinned[fid]!;
       }
       const source = byId[id];
       const sourceRootId = rootOf(id);
       const sourceRoot = sourceRootId ? layout.pos[sourceRootId] : null;
+      const sourceEnvelope = scaleMode === 'large' && sourceRootId
+        ? smoothEnvelopePath(structuralEnvelope(
+            [...descendantIds(layout.kids, sourceRootId)]
+              .filter((memberId) => byId[memberId]?.kind === 'team')
+              .map((memberId) => ({
+                ...layout.pos[memberId]!,
+                r: (layout.radius[memberId] ?? MIN_TEAM_R) * NODE_VISUAL_SCALE,
+              })),
+            48,
+          ))
+        : undefined;
       const session: DragState = {
-        id, cam, grab, start, moved: false,
+        id, cam, grab, start, moved: false, fromBasket,
+        beforePinned: { ...pinned }, client: { x: cx, y: cy }, lastAt: sourceAt, previewHints: {},
         family: source?.parentId && sourceRootId && sourceRoot
           ? {
               rootId: sourceRootId,
               x: sourceRoot.x,
               y: sourceRoot.y,
               radius: (layout.reach[sourceRootId] ?? unitRadius(0)) + 80,
+              path: sourceEnvelope,
             }
           : null,
       };
       setDrag(session);
       setHover(null);
       setMenu(null);
+      setDragPreviewHints({});
+      setRelationshipArm(null);
 
       const move = (mx: number, my: number) => {
         const w = toWorld(mx, my, cam);
@@ -1700,8 +1845,32 @@ export default function GrowLab({
           // A press that hasn't travelled is still a click, not a drag.
           if (Math.hypot(dx, dy) * cam.k < 4) return;
           session.moved = true;
-          setDrag({ ...session });
         }
+        session.client = { x: mx, y: my };
+        const sourceParent = source?.parentId ? layout.pos[source.parentId] : null;
+        const orbitRadius = source?.parentId
+          ? source.kind === 'person' ? layout.personRing[source.parentId] : layout.ring[source.parentId]
+          : null;
+        const draggedAt = { x: start[id]!.x + dx, y: start[id]!.y + dy };
+        session.lastAt = draggedAt;
+        if (scaleMode === 'large' && !fromBasket && source?.parentId && sourceParent && orbitRadius) {
+          const distance = Math.hypot(draggedAt.x - sourceParent.x, draggedAt.y - sourceParent.y);
+          const onOwnOrbit = Math.abs(distance - orbitRadius) <= orbitRadius * RING_CATCH_SHARE;
+          if (onOwnOrbit) {
+            const targetAngle = Math.atan2(draggedAt.y - sourceParent.y, draggedAt.x - sourceParent.x);
+            const siblings = (layout.kids[source.parentId] ?? [])
+              .filter((node) => node.kind === source.kind)
+              .map((node) => {
+                const point = layout.pos[node.id]!;
+                return { id: node.id, angle: Math.atan2(point.y - sourceParent.y, point.x - sourceParent.x) };
+              });
+            const separation = (2 * radiusOf(id) + (source.kind === 'person' ? 8 : PAD)) /
+              Math.max(1, orbitRadius);
+            session.previewHints = insertionAngles(siblings, id, targetAngle, separation);
+          } else session.previewHints = {};
+        } else session.previewHints = {};
+        setDragPreviewHints(session.previewHints);
+        setDrag({ ...session });
         setPinned((prev) => {
           const next = { ...prev };
           for (const [nid2, at] of Object.entries(start)) next[nid2] = { x: at.x + dx, y: at.y + dy };
@@ -1716,22 +1885,39 @@ export default function GrowLab({
         e.preventDefault();
         move(t.clientX, t.clientY);
       };
-      const finish = () => {
+      const finish = (event: MouseEvent | TouchEvent) => {
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', finish);
         window.removeEventListener('touchmove', onTouchMove);
         window.removeEventListener('touchend', finish);
         window.removeEventListener('touchcancel', finish);
         setDrag(null);
+        setDragPreviewHints({});
+        setRelationshipArm(null);
         if (!session.moved) {
-          openNode(id);
+          if (!fromBasket) openNode(id);
           return;
         }
         // A mouse drag still synthesizes a click on release. If it lands on
         // the paper, that click must not immediately dismiss the drop choice.
         suppressCanvasClickUntil.current = Date.now() + 250;
-        const { armed: arm, landing: land, byId: ids } = live.current;
+        const pointer = 'changedTouches' in event && event.changedTouches[0]
+          ? { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY }
+          : 'clientX' in event
+            ? { x: event.clientX, y: event.clientY }
+            : session.client;
+        if (scaleMode === 'large' && source?.kind === 'team' && inBasketRegion(pointer.x, pointer.y)) {
+          if (fromBasket) setPinned(session.beforePinned);
+          else storeInBasket(id, session);
+          return;
+        }
+        const { armed: liveArm, relationshipCandidate: liveCandidate, legacyLanding: land, byId: ids } = live.current;
+        const arm = liveArm ?? (reduced ? liveCandidate ?? relationshipAt(id, session.lastAt) : null);
         if (arm) {
+          if (arm.mode === 'move-person') {
+            setMoveAsk({ id: arm.a, parentId: arm.b });
+            return;
+          }
           setMerge({
             a: arm.a,
             b: arm.b,
@@ -1742,13 +1928,17 @@ export default function GrowLab({
           return;
         }
         if (land) {
-          // The line drawn under your hand while you dragged *was* the
-          // question. Greg, 2026-09-20: "we're brave enough to re-parent when
-          // dragging something inside a boundary" — and taking a node outside
-          // every boundary severs it, there and then.
-          // NB this supersedes the "Split off on release, never an automatic
-          // change" line in docs/UNIFIED-ORBITAL.md.
           reparent(id, land.parentId, live.current.layout.pos[id]);
+          return;
+        }
+        if (Object.keys(session.previewHints).length) {
+          setAngleHints((current) => ({ ...current, ...session.previewHints }));
+          setPinned((current) => without(current, id));
+        }
+        if (fromBasket) {
+          setBasket((entries) => entries.filter((entry) => entry.id !== id));
+          setHighlightedBasketId(null);
+          setBasketNotice(`${byId[id]?.name ?? 'Branch'} placed. Geography only; relationships are unchanged.`);
         }
       };
 
@@ -1758,7 +1948,8 @@ export default function GrowLab({
       window.addEventListener('touchend', finish);
       window.addEventListener('touchcancel', finish);
     },
-    [k, tx, ty, toWorld, layout, pinned, openNode, byId, rootOf, reparent],
+    [basketIds, parentById, byId, k, tx, ty, toWorld, layout, pinned, openNode, rootOf,
+      radiusOf, inBasketRegion, storeInBasket, reduced, relationshipAt, scaleMode, reparent],
   );
 
   /* --- pointer on a ring -------------------------------------------------- */
@@ -1851,7 +2042,9 @@ export default function GrowLab({
     const here = toScreen(focusId);
     const n = byId[focusId];
     const h = merge
-      ? merge.stage === 'choose'
+      ? merge.kind === 'team'
+        ? 360
+        : merge.stage === 'choose'
         ? 268
         : merge.stage === 'rename'
           ? 300
@@ -1860,7 +2053,8 @@ export default function GrowLab({
             : 280
       : 232;
     return {
-      ...placeCallout({ x: here.x, y: here.y, r: (n ? radiusOf(n.id) : SEAT_RADIUS) * k }, otherBoxes(focusId), CALLOUT_W, h, size.w, size.h),
+      ...placeCallout({ x: here.x, y: here.y, r: (n ? radiusOf(n.id) : SEAT_RADIUS) * k },
+        otherBoxes(focusId), CALLOUT_W, h, size.w, size.h - 82),
     };
   })();
 
@@ -1900,29 +2094,45 @@ export default function GrowLab({
     return teams.filter((t) => !blocked.has(t.id) && t.name?.trim());
   })();
 
+  const branchSummary = (id: string) => {
+    const branch = descendantIds(layout.kids, id);
+    let childUnits = 0;
+    let branchTeams = 0;
+    let branchPeople = 0;
+    for (const memberId of branch) {
+      const member = byId[memberId];
+      if (member?.kind === 'team') {
+        branchTeams++;
+        if (memberId !== id) childUnits++;
+      } else if (member?.kind === 'person') branchPeople++;
+    }
+    return { childUnits, branchTeams, branchPeople };
+  };
+
   /** One entry per visible node: where its label goes and what it would say. */
   const labelItems = nodes
     .map((n) => {
-      if (n.kind === 'person' && hoveredNodeId !== n.id && openId !== n.id) return null;
-      // Names are a hover state for the moment — Greg, 2026-09-20: "nodes
-      // don't have labels unless you hover on them (we're going to change this
-      // later)". The map reads as shape and colour until you ask.
-      if (n.kind === 'team' && hoveredNodeId !== n.id && openId !== n.id) return null;
+      if (scaleMode === 'large' && n.kind === 'team' && !teamIsVisible(n.id)) return null;
+      if (scaleMode === 'large' && n.kind === 'person' && !personIsVisible(n)) return null;
+      const promoted = scaleMode === 'large' && n.kind === 'team' &&
+        (n.parentId === null || focusPath.has(n.id) || fieldDistancePx(n.id) < 165);
+      if (hoveredNodeId !== n.id && openId !== n.id && !promoted) return null;
       const mo = m(n.id);
       if (mo.a < 0.05) return null;
       const s2 = worldToScreen(mo);
       const missing = missingLabel(n);
       const count = headcount[n.id] ?? 0;
       const minimumScreenRadius = n.kind === 'team' ? ((depthOf[n.id] ?? 0) === 0 ? 20 : (depthOf[n.id] ?? 0) === 1 ? 14 : 9) : 3;
-      const screenRadius = n.kind === 'team' && overviewDetail < 0.02
-        ? ((depthOf[n.id] ?? 0) === 0 ? 5 : 3.2)
+      const nodeDetail = overviewDetailFor(n.id);
+      const screenRadius = n.kind === 'team' && nodeDetail < 0.02
+        ? overviewMarkRadius(count, n.parentId === null)
         : Math.max(radiusOf(n.id) * k, minimumScreenRadius) * NODE_VISUAL_SCALE;
       const hasVisibleRings = n.kind === 'team' && sampleRings[n.id] &&
         ringRevealFor(n) * overviewDetail > 0.2;
       return {
         id: n.id,
         node: n,
-        alpha: mo.a,
+        alpha: mo.a * focusDim(n.id),
         x: s2.x,
         y: s2.y + screenRadius + (hasVisibleRings ? 3 * (5.5 + 2.7) + 6 : 0) + 16,
         depth: depthOf[n.id] ?? 0,
@@ -1996,6 +2206,9 @@ export default function GrowLab({
             if (!gesture) return;
             e.preventDefault();
             if (gesture.kind === 'pan' && e.touches.length === 1) {
+              if (Math.hypot(e.touches[0]!.clientX - gesture.x, e.touches[0]!.clientY - gesture.y) > 4) {
+                gesture.moved = true;
+              }
               commitCamera({ ...gesture.cam, tx: gesture.cam.tx + e.touches[0]!.clientX - gesture.x,
                 ty: gesture.cam.ty + e.touches[0]!.clientY - gesture.y });
             } else if (gesture.kind === 'pinch' && e.touches.length >= 2) {
@@ -2009,13 +2222,33 @@ export default function GrowLab({
               commitCamera({ k: nextK, tx: x - gesture.world.x * nextK, ty: y - gesture.world.y * nextK });
             }
           }}
-          onTouchEnd={() => { touchGestureRef.current = null; }}
+          onTouchEnd={() => {
+            if (touchGestureRef.current?.kind === 'pan' && touchGestureRef.current.moved) {
+              suppressCanvasClickUntil.current = Date.now() + 250;
+            }
+            touchGestureRef.current = null;
+          }}
           onTouchCancel={() => { touchGestureRef.current = null; }}
-          onClick={() => {
+          onClick={(event) => {
             if (Date.now() < suppressCanvasClickUntil.current) return;
+            if (scaleMode === 'large') commitCamera({ k, tx, ty });
             closeAll();
+            if (scaleMode === 'large') {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setDetailField({
+                x: (event.clientX - rect.left - tx) / k,
+                y: (event.clientY - rect.top - ty) / k,
+              });
+            }
           }}
         >
+          <defs>
+            <radialGradient id="local-detail-wash">
+              <stop offset="0%" stopColor="#dfe6ff" stopOpacity="0.72" />
+              <stop offset="58%" stopColor="#edf1ff" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+            </radialGradient>
+          </defs>
           {/* ---- shapes, in the camera's frame ---- */}
           <g
             transform={`translate(${tx} ${ty}) scale(${k})`}
@@ -2023,6 +2256,15 @@ export default function GrowLab({
                says so for itself — switching the whole map off meant the "+"
                chasing the pointer could silently eat your clicks. */
           >
+            {scaleMode === 'large' && detailField && (
+              <g style={{ pointerEvents: 'none' }}>
+                <circle cx={detailField.x} cy={detailField.y} r={240 / Math.max(k, 0.01)}
+                  fill="url(#local-detail-wash)" opacity={0.34} />
+                <circle cx={detailField.x} cy={detailField.y} r={18 / Math.max(k, 0.01)}
+                  fill="none" stroke={TEAM_HUE} strokeWidth={1.5 / Math.max(k, 0.01)}
+                  strokeDasharray={`${3 / k} ${5 / k}`} opacity={0.65} />
+              </g>
+            )}
             {/* A family has its own boundary. Inner helpers appear only while
                 that family is being worked with; neither creates a relation. */}
             <g style={{ pointerEvents: 'none' }}>
@@ -2030,20 +2272,30 @@ export default function GrowLab({
                 const fixed = drag?.family?.rootId === root.id ? drag.family : null;
                 const centre = fixed ? { x: fixed.x, y: fixed.y } : m(root.id);
                 const radius = fixed?.radius ?? (layout.reach[root.id] ?? unitRadius(0)) + 80;
-                const landingHere = !!landing?.parentId && rootOf(landing.parentId) === root.id;
+                const landingHere = legacyLanding?.parentId
+                  ? rootOf(legacyLanding.parentId) === root.id
+                  : !!drag?.id && !!dragPreviewHints[drag.id] && rootOf(drag.id) === root.id;
+                const envelope = familyEnvelopes.find((item) => item.rootId === root.id);
                 return (
                   <g key={`helpers-${root.id}`}>
-                    <circle
-                      cx={centre.x}
-                      cy={centre.y}
-                      r={radius}
-                      fill="none"
-                      stroke={landingHere ? TEAM_HUE : '#9aa9de'}
-                      strokeWidth={(landingHere ? 2.6 : 1.7) / k}
-                      strokeDasharray={`${4 / k} ${9 / k}`}
-                      opacity={(landingHere ? 0.9 : 0.75) * overviewDetail *
-                        (activeFocusId && scaleMode === 'large' ? 0.28 : 1)}
-                    />
+                    {scaleMode === 'large' && (fixed?.path || envelope?.path) ? (
+                      <path d={fixed?.path ?? envelope!.path} fill="#eef2ff" fillOpacity={0.2}
+                        stroke={landingHere ? TEAM_HUE : '#aeb9df'}
+                        strokeWidth={(landingHere ? 2.4 : 1.35) / k}
+                        strokeDasharray={`${4 / k} ${11 / k}`}
+                        opacity={(landingHere ? 0.88 : 0.52) * (activeFocusId ? 0.45 : 1)} />
+                    ) : (
+                      <circle
+                        cx={centre.x}
+                        cy={centre.y}
+                        r={radius}
+                        fill="none"
+                        stroke={landingHere ? TEAM_HUE : '#9aa9de'}
+                        strokeWidth={(landingHere ? 2.6 : 1.7) / k}
+                        strokeDasharray={`${4 / k} ${9 / k}`}
+                        opacity={(landingHere ? 0.9 : 0.75) * overviewDetail}
+                      />
+                    )}
                     {helperRootId === root.id && [0.25, 0.5, 0.75].map((fraction) => (
                       <circle
                         key={fraction}
@@ -2066,15 +2318,21 @@ export default function GrowLab({
               const R = layout.ring[t.id];
               const humanR = layout.personRing[t.id];
               const mo = m(t.id);
-              if (!R || mo.a < 0.05) return null;
+              if (!R || mo.a < 0.05 || (scaleMode === 'large' && !teamIsVisible(t.id))) return null;
+              const nodeDetail = overviewDetailFor(t.id);
+              const nodeReveal = revealAt(semanticScaleFor(t.id));
               const hasTwoOrbits = !!humanR && humanR < R - 1;
               const outerKind: OrbitKind = hasTwoOrbits ? 'teams' : 'people';
               const innerLive = (hover?.parentId === t.id && hover.orbit === 'people') ||
                 (menu?.parentId === t.id && menu.orbit === 'people') ||
-                (landing?.parentId === t.id && landing.orbit === 'people');
+                (legacyLanding?.parentId === t.id && legacyLanding.orbit === 'people') ||
+                (byId[drag?.id ?? '']?.parentId === t.id && !!drag?.id && !!dragPreviewHints[drag.id] &&
+                  byId[drag.id]?.kind === 'person');
               const outerLive = (hover?.parentId === t.id && hover.orbit === outerKind) ||
                 (menu?.parentId === t.id && menu.orbit === outerKind) ||
-                (landing?.parentId === t.id && landing.orbit !== 'people');
+                (legacyLanding?.parentId === t.id && legacyLanding.orbit !== 'people') ||
+                (byId[drag?.id ?? '']?.parentId === t.id && !!drag?.id && !!dragPreviewHints[drag.id] &&
+                  byId[drag.id]?.kind === 'team');
               const targetOn = (orbit: OrbitKind, e: { clientX: number; clientY: number }): RingTarget =>
                 ({ parentId: t.id, angle: angleOn(t.id, e), orbit });
               return (
@@ -2083,11 +2341,11 @@ export default function GrowLab({
                     <circle r={humanR} cx={mo.x} cy={mo.y} fill="none"
                       stroke={innerLive ? TEAM_HUE : C.seatLink}
                       strokeWidth={(innerLive ? 2.2 : 1.2) / k} strokeDasharray={`${3 / k} ${10 / k}`}
-                      opacity={mo.a * reveal.people * (innerLive ? 0.92 : 0.55) * overviewDetail * focusDim(t.id)}
+                      opacity={mo.a * nodeReveal.people * (innerLive ? 0.92 : 0.55) * nodeDetail * focusDim(t.id)}
                       style={{ pointerEvents: 'none' }} />
                     <circle r={humanR} cx={mo.x} cy={mo.y} fill="none" stroke="transparent"
                       strokeWidth={RING_BAND / k}
-                      style={{ cursor: 'pointer', pointerEvents: overviewDetail > 0.35 && reveal.people > 0.35 ? 'stroke' : 'none' }}
+                      style={{ cursor: 'pointer', pointerEvents: nodeDetail > 0.35 && nodeReveal.people > 0.35 ? 'stroke' : 'none' }}
                       onMouseMove={(e) => { if (!menu && !drag) setHover(targetOn('people', e)); }}
                       onMouseLeave={() => { if (!menu) setHover((current) =>
                         current?.parentId === t.id && current.orbit === 'people' ? null : current); }}
@@ -2107,7 +2365,7 @@ export default function GrowLab({
                     stroke={outerLive ? TEAM_HUE : LINE}
                     strokeWidth={(outerLive ? 2 : 1.5) / k}
                     strokeDasharray={`${4 / k} ${9 / k}`}
-                    opacity={mo.a * (outerLive ? 0.75 : 0.9) * overviewDetail * focusDim(t.id)}
+                    opacity={mo.a * (outerLive ? 0.75 : 0.9) * nodeDetail * focusDim(t.id)}
                     style={{ transition: 'stroke 160ms ease' }}
                   />
                   {/* the band that answers the pointer — invisible, generous */}
@@ -2118,7 +2376,7 @@ export default function GrowLab({
                     fill="none"
                     stroke="transparent"
                     strokeWidth={RING_BAND / k}
-                    style={{ cursor: 'pointer', pointerEvents: overviewDetail > 0.35 ? 'stroke' : 'none' }}
+                    style={{ cursor: 'pointer', pointerEvents: nodeDetail > 0.35 ? 'stroke' : 'none' }}
                     // Mouse events, not pointer events: they fire everywhere,
                     // including the older browsers this has to run on.
                     onMouseMove={(e) => {
@@ -2142,6 +2400,24 @@ export default function GrowLab({
             })}
 
             {nodes.length === 0 && <SeedNode onPick={startFirstPerson} />}
+
+            {/* Relationship intent is deliberately unlike the violet landing
+                preview. Direct overlap marks one still target; only a dwell
+                completes the coral treatment and makes release ask. */}
+            {relationshipCandidate && (() => {
+              const target = byId[relationshipCandidate.b];
+              const point = m(relationshipCandidate.b);
+              if (!target) return null;
+              const ready = !!armed;
+              const radius = radiusOf(target.id) + (ready ? 18 : 11) / Math.max(k, 0.05);
+              return <g style={{ pointerEvents: 'none' }}>
+                <circle cx={point.x} cy={point.y} r={radius} fill={ALERT}
+                  fillOpacity={ready ? 0.16 : 0.06} stroke={ALERT}
+                  strokeWidth={(ready ? 3.5 : 2) / Math.max(k, 0.05)}
+                  strokeDasharray={ready ? undefined : `${5 / k} ${5 / k}`}
+                  opacity={ready ? 0.95 : 0.68} />
+              </g>;
+            })()}
 
             {/* the droplet: two teams running together, or already doing so */}
             {(() => {
@@ -2179,19 +2455,23 @@ export default function GrowLab({
                 a link by the money flowing down it, and there is no money
                 here to thicken it with. */}
             {nodes.map((n) => {
-              // While a node is in your hand the line shows where it would
-              // land, not where it came from — cross into a boundary and the
-              // line reappears on the new parent, cross out of everything and
-              // it goes. That preview is the whole confirmation.
+              // Geographic drag keeps the relationship line attached to its
+              // real parent. A relationship proposal has its own dwell and
+              // confirmation treatment; radius alone never reparents.
               const held = drag?.moved && drag.id === n.id;
-              const parentId = held && landing ? landing.parentId : n.parentId;
+              const parentId = held && legacyLanding ? legacyLanding.parentId : n.parentId;
               if (!parentId || !byId[parentId]) return null;
+              if (scaleMode === 'large') {
+                if (n.kind === 'team' && (!teamIsVisible(n.id) || !teamIsVisible(parentId))) return null;
+                if (n.kind === 'person' && !personIsVisible(n)) return null;
+              }
               const a = m(parentId);
               const b = m(n.id);
               const toPerson = n.kind === 'person';
-              const alpha = Math.min(m(n.id).a, m(parentId).a) * (toPerson ? reveal.people : 0.85);
+              const nodeReveal = revealAt(semanticScaleFor(n.id));
+              const alpha = Math.min(m(n.id).a, m(parentId).a) * (toPerson ? nodeReveal.people : 0.85);
               if (alpha < 0.02) return null;
-              const proposed = held && !!landing;
+              const proposed = held && (!!dragPreviewHints[n.id] || !!legacyLanding);
               const onPath = !!activeFocusId && focusPath.has(n.id) && focusPath.has(parentId);
               const nearFocusPath = onPath && (focusDistances[n.id] ?? Infinity) <= 2;
               return (
@@ -2214,11 +2494,13 @@ export default function GrowLab({
 
             {/* One thick arc standing exactly where a unit's people will be,
                 while they are still too small to draw. */}
-            {reveal.torus > 0.01 &&
+            {(scaleMode === 'large' || reveal.torus > 0.01) &&
               teams.map((t) => {
                 const crowd = (layout.kids[t.id] ?? []).filter((c) => c.kind === 'person');
                 const R = layout.personRing[t.id];
-                if (!crowd.length || !R || (scaleMode === 'large' && activeFocusId &&
+                const nodeReveal = revealAt(semanticScaleFor(t.id));
+                if (!crowd.length || !R || nodeReveal.torus < 0.01 ||
+                  (scaleMode === 'large' && !teamIsVisible(t.id)) || (scaleMode === 'large' && activeFocusId &&
                   (focusDistances[t.id] === undefined || focusDistances[t.id] > 1))) return null;
                 const mo = m(t.id);
                 return (
@@ -2232,7 +2514,7 @@ export default function GrowLab({
                     // it is standing in for (Greg, 2026-09-20).
                     stroke="#d6def0"
                     strokeWidth={SEAT_RADIUS * (scaleMode === 'large' && activeFocusId ? 1.1 : 2)}
-                    opacity={reveal.torus * (scaleMode === 'large' && activeFocusId ? 0.36 : 0.85) *
+                    opacity={nodeReveal.torus * (scaleMode === 'large' && activeFocusId ? 0.36 : 0.85) *
                       mo.a * focusDim(t.id)}
                   />
                 );
@@ -2241,9 +2523,12 @@ export default function GrowLab({
             {/* Work is a half-torus facing away from the parent, never more
                 than 180 degrees. It resolves into the shipped two-column dot
                 grid as the camera approaches the person. */}
-            {reveal.workCapsule > 0.01 && people.map((person) => {
+            {(scaleMode === 'large' || reveal.workCapsule > 0.01) && people.map((person) => {
               const items = sampleWork[person.id] ?? [];
-              if (!items.length || (scaleMode === 'large' && activeFocusId && focusDim(person.id) < 0.38)) return null;
+              const nodeReveal = revealAt(semanticScaleFor(person.id));
+              if (!items.length || nodeReveal.workCapsule < 0.01 ||
+                (scaleMode === 'large' && !personIsVisible(person)) ||
+                (scaleMode === 'large' && activeFocusId && focusDim(person.id) < 0.38)) return null;
               const seat = m(person.id);
               if (!onScreen(seat, 50)) return null;
               const parent = person.parentId ? m(person.parentId) : null;
@@ -2253,7 +2538,7 @@ export default function GrowLab({
               const end = axis + Math.PI / 2;
               let cursor = start;
               return <g key={`work-arc-${person.id}`} fill="none" strokeLinecap="round"
-                opacity={reveal.workCapsule * seat.a} style={{ pointerEvents: 'none' }}>
+                opacity={nodeReveal.workCapsule * seat.a} style={{ pointerEvents: 'none' }}>
                 <path d={workArcPath(seat.x, seat.y, radius, start, end)} stroke={C.track} strokeWidth={5.6} />
                 {WORK_ORDER.map((status) => {
                   const count = items.filter((item) => item.status === status).length;
@@ -2268,14 +2553,20 @@ export default function GrowLab({
               </g>;
             })}
 
-            {scaleMode === 'large' && overviewDetail < 0.99 && teams.map((team) => {
+            {scaleMode === 'large' && teams.map((team) => {
+              if (!teamIsVisible(team.id)) return null;
               const mo = m(team.id);
               if (!onScreen(mo, 35)) return null;
+              const nodeDetail = overviewDetailFor(team.id);
+              if (nodeDetail >= 0.99) return null;
               const target = targets[team.id];
               const arrived = (!target || Math.hypot(target.x - mo.x, target.y - mo.y) < 3) && mo.a > 0.6;
-              const dotRadius = ((depthOf[team.id] ?? 0) === 0 ? 5 : 3.2) / Math.max(k, 0.01);
+              const dotRadius = overviewMarkRadius(headcount[team.id] ?? 0, team.parentId === null) /
+                Math.max(k, 0.01);
+              const owner = basketOwner(basketIds, team.id, parentById);
+              const carried = !!owner && !(drag?.fromBasket && dragFamily?.has(team.id));
               return <g key={`dot-${team.id}`} transform={`translate(${mo.x} ${mo.y})`}
-                opacity={mo.a * (1 - overviewDetail)}
+                opacity={mo.a * (1 - nodeDetail) * focusDim(team.id) * (carried ? 0.32 : 1)}
                 style={{ cursor: 'pointer', pointerEvents: arrived ? 'auto' : 'none' }}
                 onMouseEnter={() => setHoveredNodeId(team.id)}
                 onMouseLeave={() => setHoveredNodeId(null)}
@@ -2288,22 +2579,41 @@ export default function GrowLab({
                   beginDrag(team.id, touch.clientX, touch.clientY);
                 }}
                 onClick={(event) => event.stopPropagation()}>
-                <circle r={dotRadius} fill={TEAM_HUE} />
+                <circle r={dotRadius} fill={carried ? SURFACE : TEAM_HUE} stroke={TEAM_HUE}
+                  strokeWidth={(carried ? 1.4 : 0) / k} strokeDasharray={carried ? `${3 / k} ${3 / k}` : undefined} />
                 <circle r={13 / Math.max(k, 0.01)} fill="transparent" />
+              </g>;
+            })}
+
+            {drag?.fromBasket && basket.filter((entry) => entry.id === drag.id).map((entry) => {
+              const radius = radiusOf(entry.id) * NODE_VISUAL_SCALE;
+              return <g key={`source-placeholder-${entry.id}`}
+                transform={`translate(${entry.origin.x} ${entry.origin.y})`}
+                opacity={0.34} style={{ pointerEvents: 'none' }}>
+                <circle r={radius} fill={SURFACE} stroke={TEAM_HUE} strokeWidth={1.8 / k}
+                  strokeDasharray={`${5 / k} ${5 / k}`} />
+                <circle cx={radius * 0.65} cy={-radius * 0.65} r={8 / k}
+                  fill={SURFACE} stroke={TEAM_HUE} strokeWidth={1.3 / k} />
               </g>;
             })}
 
             {nodes.map((n) => {
               const mo = m(n.id);
+              if (scaleMode === 'large' && n.kind === 'team' && !teamIsVisible(n.id)) return null;
+              if (scaleMode === 'large' && n.kind === 'person' && !personIsVisible(n)) return null;
+              const nodeReveal = revealAt(semanticScaleFor(n.id));
+              const nodeDetail = overviewDetailFor(n.id);
               // A thousand hidden avatar groups are still a thousand SVG
               // subtrees for React to reconcile on every camera frame.
-              if (n.kind === 'person' && (reveal.people < 0.01 || !onScreen(mo, 60))) return null;
+              if (n.kind === 'person' && (nodeReveal.people < 0.01 || !onScreen(mo, 60))) return null;
               if (n.kind === 'team' && !onScreen(mo, 100)) return null;
               const t = targets[n.id];
               // Mid-flight it is sitting on top of its parent, so it must not
               // take the click — but only *it* stops listening, not the map.
               const arrived = (!t || Math.hypot(t.x - mo.x, t.y - mo.y) < 3) && mo.a > 0.6;
-              if (n.kind === 'team' && overviewDetail < 0.02) return null;
+              if (n.kind === 'team' && nodeDetail < 0.02) return null;
+              const owner = basketOwner(basketIds, n.id, parentById);
+              const carried = !!owner && !(drag?.fromBasket && dragFamily?.has(n.id));
               return (
                 <NodeShape
                   key={n.id}
@@ -2311,15 +2621,19 @@ export default function GrowLab({
                   mo={mo}
                   selected={openId === n.id}
                   dragging={drag?.id === n.id && drag.moved}
-                  joining={armed ? armed.a === n.id || armed.b === n.id : false}
+                  joining={relationshipCandidate
+                    ? relationshipCandidate.a === n.id || relationshipCandidate.b === n.id
+                    : false}
+                  carried={carried}
+                  carriedRoot={owner === n.id}
                   interactive={arrived}
                   depth={depthOf[n.id] ?? 0}
                   radius={radiusOf(n.id)}
                   zoom={k}
-                  reveal={reveal}
+                  reveal={nodeReveal}
                   progress={sampleRings[n.id]}
                   ringReveal={ringRevealFor(n)}
-                  visualPresence={overviewDetail * focusDim(n.id)}
+                  visualPresence={nodeDetail * focusDim(n.id)}
                   onHover={(active) => setHoveredNodeId(active ? n.id : null)}
                   onRingHover={(key, x, y) => setHoveredRing(key ? { nodeId: n.id, key, x, y } : null)}
                   onRingSelect={(key, x, y) => setSelectedRing((current) =>
@@ -2329,16 +2643,18 @@ export default function GrowLab({
               );
             })}
 
-            {reveal.workDots > 0.01 && workMarks.map(({ person, item, seat, point }) => {
+            {(scaleMode === 'large' || reveal.workDots > 0.01) && workMarks.map(({ person, item, seat, point }) => {
+              const nodeReveal = revealAt(semanticScaleFor(person.id));
+              if (nodeReveal.workDots < 0.01) return null;
               if (!onScreen(point, 20)) return null;
               const active = hoveredWorkId === item.id || selectedWorkId === item.id;
               return <circle key={item.id} cx={point.x} cy={point.y}
                 r={WORK_RADIUS * (active ? 1.55 : 1)} fill={WORK_STATUS_FILL[item.status]}
                 stroke={SURFACE} strokeWidth={active ? 1.1 : 0.55}
-                opacity={reveal.workDots * seat.a}
-                role="button" tabIndex={reveal.workDots > 0.4 ? 0 : -1}
+                opacity={nodeReveal.workDots * seat.a}
+                role="button" tabIndex={nodeReveal.workDots > 0.4 ? 0 : -1}
                 aria-label={`${item.title}, ${item.status.replace('_', ' ')}, ${person.name ?? 'person'}`}
-                style={{ cursor: 'pointer', pointerEvents: reveal.workDots > 0.4 ? 'auto' : 'none' }}
+                style={{ cursor: 'pointer', pointerEvents: nodeReveal.workDots > 0.4 ? 'auto' : 'none' }}
                 onMouseEnter={() => setHoveredWorkId(item.id)}
                 onMouseLeave={() => setHoveredWorkId(null)}
                 onFocus={() => setHoveredWorkId(item.id)}
@@ -2401,6 +2717,102 @@ export default function GrowLab({
           </g>
         </svg>
       )}
+
+      {scaleMode === 'large' && (basket.length > 0 || (drag && byId[drag.id]?.kind === 'team')) && (() => {
+        const compact = size.w < 700;
+        const hot = !!drag && inBasketRegion(drag.client.x, drag.client.y);
+        return <aside aria-label="Branch carry basket" style={{
+          position: 'absolute', zIndex: 8,
+          ...(compact
+            ? { left: 12, right: 12, bottom: 'max(12px, env(safe-area-inset-bottom))' }
+            : { top: 88, right: 14, width: 176, maxHeight: 'calc(100vh - 176px)' }),
+          padding: basket.length ? 10 : 8,
+          borderRadius: compact ? 16 : 18,
+          border: `1.5px ${hot ? 'solid' : 'dashed'} ${hot ? TEAM_HUE : '#b8c3e6'}`,
+          background: hot ? '#f0edff' : 'rgba(255,255,255,.94)',
+          boxShadow: hot ? '0 12px 34px rgba(93,74,198,.2)' : '0 8px 24px rgba(86,103,179,.12)',
+          transition: reduced ? 'none' : 'background 160ms ease, border 160ms ease, box-shadow 160ms ease',
+          overflowY: compact ? 'visible' : 'auto',
+        }} onClick={(event) => event.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: INK, fontSize: 12, fontWeight: 750 }}>Carry branches</div>
+              <div style={{ color: INK_SOFT, fontSize: 10.5, marginTop: 1 }}>
+                {hot ? 'Release to hold it here' : basket.length ? 'Navigate, then drag one out' : 'Move here for a distant trip'}
+              </div>
+            </div>
+            {basket.length > 1 && <button className="zen-ghost" style={{ minHeight: 32, padding: '4px 7px', fontSize: 11 }}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => {
+                setBasket([]);
+                setHighlightedBasketId(null);
+                setBasketNotice('All pending carries returned. Geography is unchanged.');
+              }}>Return all</button>}
+          </div>
+          {basket.length > 0 && <div style={{ display: compact ? 'flex' : 'grid', gap: 7, marginTop: 8,
+            overflowX: compact ? 'auto' : 'visible' }}>
+            {basket.map((entry) => {
+              const node = byId[entry.id];
+              const counts = branchSummary(entry.id);
+              const selected = highlightedBasketId === entry.id;
+              return <div key={entry.id} style={{ minWidth: compact ? 188 : 0, padding: '8px 9px', borderRadius: 12,
+                border: `1px solid ${selected ? TEAM_HUE : LINE}`, background: selected ? '#f3f0ff' : SURFACE }}>
+                <button aria-label={`Carry ${node?.name ?? 'branch'} out of the basket`}
+                  style={{ width: '100%', minHeight: 44, padding: 0, border: 0, background: 'transparent',
+                    textAlign: 'left', color: INK, cursor: 'grab', fontFamily: 'inherit' }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginDrag(entry.id, event.clientX, event.clientY, true);
+                  }}
+                  onTouchStart={(event) => {
+                    const touch = event.touches[0];
+                    if (!touch) return;
+                    event.stopPropagation();
+                    beginDrag(entry.id, touch.clientX, touch.clientY, true);
+                  }}>
+                  <span style={{ display: 'block', fontSize: 12, fontWeight: 700,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {node?.name ?? 'Unnamed branch'}
+                  </span>
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 10.5, color: INK_SOFT }}>
+                    {counts.childUnits} child {counts.childUnits === 1 ? 'unit' : 'units'} · {counts.branchPeople} people
+                  </span>
+                </button>
+                <button className="zen-ghost" style={{ width: '100%', minHeight: 34, marginTop: 4, fontSize: 11 }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onTouchStart={(event) => event.stopPropagation()}
+                  onClick={() => {
+                    setBasket((entries) => entries.filter((item) => item.id !== entry.id));
+                    setHighlightedBasketId(null);
+                    setBasketNotice(`${node?.name ?? 'Branch'} returned. Geography is unchanged.`);
+                  }}>Return</button>
+              </div>;
+            })}
+          </div>}
+        </aside>;
+      })()}
+
+      {relationshipCandidate && drag && (() => {
+        const point = toScreen(relationshipCandidate.b);
+        return <div role="status" style={{ position: 'absolute', zIndex: 9,
+          left: Math.max(12, Math.min(size.w - 210, point.x + 22)),
+          top: Math.max(82, Math.min(size.h - 82, point.y - 22)),
+          width: 188, padding: '8px 10px', borderRadius: 12,
+          background: armed ? '#fff0f3' : SURFACE, border: `1px solid ${armed ? ALERT : '#efb4c0'}`,
+          color: armed ? ALERT : INK_SOFT, fontSize: 11.5, fontWeight: 650,
+          pointerEvents: 'none', boxShadow: '0 8px 22px rgba(134,64,86,.14)' }}>
+          {armed
+            ? relationshipCandidate.mode === 'merge' ? 'Release to review the whole-branch merge' : 'Release to review this reassignment'
+            : 'Hold here to propose a relationship change'}
+        </div>;
+      })()}
+
+      {basketNotice && <div role="status" aria-live="polite" style={{ position: 'absolute', zIndex: 10,
+        left: '50%', bottom: basket.length && size.w < 700 ? 154 : 96, transform: 'translateX(-50%)',
+        maxWidth: 'min(440px, calc(100vw - 32px))', padding: '9px 13px', borderRadius: 999,
+        background: INK, color: SURFACE, fontSize: 12, boxShadow: '0 8px 24px rgba(34,43,88,.2)',
+        pointerEvents: 'none', textAlign: 'center' }}>{basketNotice}</div>}
 
       {/* ---- the wizard ---- */}
       {openNodeObj && step && placement && (
@@ -2582,10 +2994,35 @@ export default function GrowLab({
             {byId[merge.a]?.name ?? 'This team'} + {byId[merge.b]?.name ?? 'that one'}
           </div>
 
-          {merge.stage === 'choose' && (
+          {merge.kind === 'team' && (() => {
+            const counts = branchSummary(merge.a);
+            return <>
+              <h2 className="zen-title">
+                Merge &quot;{byId[merge.a]?.name ?? 'this branch'}&quot; into &quot;{byId[merge.b]?.name ?? 'that unit'}&quot;?
+              </h2>
+              <p style={{ fontSize: 13, lineHeight: 1.5, color: INK_SOFT, margin: '0 0 14px' }}>
+                {byId[merge.a]?.name ?? 'This branch'} carries its entire branch: {counts.childUnits} child units,
+                {' '}{Math.max(0, counts.branchTeams - 1)} nested teams and {counts.branchPeople} people. They remain
+                together beneath the merged unit. To merge only the top unit, cancel and reassign its children first.
+              </p>
+              <p style={{ fontSize: 11.5, color: ALERT, margin: '0 0 14px' }}>
+                Lab preview only. The unresolved lead and direct-assignment rules prevent any merge from being applied.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button className="zen-ghost" onClick={() => setMerge(null)}>Cancel</button>
+                <div style={{ flex: 1 }} />
+                <button className="zen-primary" onClick={() => {
+                  setMerge(null);
+                  setBasketNotice('Merge contract previewed; no organisational data changed.');
+                }}>Merge entire branch</button>
+              </div>
+            </>;
+          })()}
+
+          {merge.kind !== 'team' && merge.stage === 'choose' && (
             <>
               <h2 className="zen-title">
-                {merge.kind === 'team' ? 'What should happen?' : 'Do these two work together?'}
+                Do these two work together?
               </h2>
               <div style={{ display: 'grid', gap: 8 }}>
                 <button
@@ -2593,38 +3030,34 @@ export default function GrowLab({
                   onClick={() => setMerge({ ...merge, stage: 'rename', name: byId[merge.b]?.name ?? '' })}
                 >
                   <span style={{ fontWeight: 600, fontSize: 14 }}>
-                    {merge.kind === 'team' ? 'Make them one team' : 'Make them a team'}
+                    Make them a team
                   </span>
                   <span style={{ fontSize: 12, color: INK_SOFT }}>
-                    {merge.kind === 'team'
-                      ? 'Everyone and everything in both, on one ring. Nothing above either team changes.'
-                      : 'A new team closes around the two of them, where they already sit.'}
+                    A new team closes around the two of them, where they already sit.
                   </span>
                 </button>
                 <button className="zen-choice" onClick={() => setMerge({ ...merge, stage: 'parent' })}>
                   <span style={{ fontWeight: 600, fontSize: 14 }}>
-                    {merge.kind === 'team' ? 'Give them a shared parent' : 'Put them on the same team'}
+                    Put them on the same team
                   </span>
                   <span style={{ fontSize: 12, color: INK_SOFT }}>
-                    {merge.kind === 'team'
-                      ? 'Both stay as they are, and start orbiting the same thing.'
-                      : 'Move them both onto a team that is already on the map.'}
+                    Move them both onto a team that is already on the map.
                   </span>
                 </button>
               </div>
               <div style={{ display: 'flex', marginTop: 14 }}>
                 <div style={{ flex: 1 }} />
                 <button className="zen-ghost" onClick={() => setMerge(null)}>
-                  {merge.kind === 'team' ? 'Leave them apart' : 'Not really'}
+                  Not really
                 </button>
               </div>
             </>
           )}
 
-          {merge.stage === 'rename' && (
+          {merge.kind !== 'team' && merge.stage === 'rename' && (
             <>
               <h2 className="zen-title">
-                {merge.kind === 'team' ? 'What is the merged team called?' : 'What is their team called?'}
+                What is their team called?
               </h2>
               <input
                 className="zen-input"
@@ -2641,9 +3074,7 @@ export default function GrowLab({
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                 {[
                   ...new Set(
-                    merge.kind === 'team'
-                      ? [byId[merge.a]?.name, byId[merge.b]?.name, ...TEAM_NAMES]
-                      : TEAM_NAMES,
+                    TEAM_NAMES,
                   ),
                 ]
                   .filter((v): v is string => !!v?.trim())
@@ -2668,13 +3099,13 @@ export default function GrowLab({
                       : runMerge(merge.kind, merge.a, merge.b, merge.name)
                   }
                 >
-                  {pairHomes ? 'Next' : merge.kind === 'team' ? 'Merge' : 'Create the team'}
+                  {pairHomes ? 'Next' : 'Create the team'}
                 </button>
               </div>
             </>
           )}
 
-          {merge.stage === 'home' && pairHomes && (
+          {merge.kind !== 'team' && merge.stage === 'home' && pairHomes && (
             <>
               <h2 className="zen-title">Where does {merge.name.trim() || 'their team'} sit?</h2>
               <p style={{ fontSize: 13, color: INK_SOFT, margin: '-6px 0 14px' }}>
@@ -2700,27 +3131,17 @@ export default function GrowLab({
             </>
           )}
 
-          {merge.stage === 'parent' && (
+          {merge.kind !== 'team' && merge.stage === 'parent' && (
             <>
               <h2 className="zen-title">
-                {merge.kind === 'team' ? 'What do they both sit under?' : 'Which team?'}
+                Which team?
               </h2>
               <div style={{ display: 'grid', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
-                {merge.kind === 'team' && (
-                  <button className="zen-choice" onClick={() => giveSharedParent(merge.a, merge.b, null)}>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>Something new</span>
-                    <span style={{ fontSize: 12, color: INK_SOFT }}>A new node, made to hold the two of them</span>
-                  </button>
-                )}
                 {parentChoices.map((t) => (
                   <button
                     key={t.id}
                     className="zen-choice"
-                    onClick={() =>
-                      merge.kind === 'team'
-                        ? giveSharedParent(merge.a, merge.b, t.id)
-                        : movePairInto(merge.a, merge.b, t.id)
-                    }
+                    onClick={() => movePairInto(merge.a, merge.b, t.id)}
                   >
                     <span style={{ fontWeight: 600, fontSize: 14 }}>{t.name}</span>
                     <span style={{ fontSize: 12, color: INK_SOFT }}>Already on the map</span>
@@ -3002,6 +3423,8 @@ function NodeShape({
   selected,
   dragging,
   joining,
+  carried,
+  carriedRoot,
   interactive,
   depth,
   radius,
@@ -3020,6 +3443,8 @@ function NodeShape({
   selected: boolean;
   dragging: boolean;
   joining: boolean;
+  carried: boolean;
+  carriedRoot: boolean;
   interactive: boolean;
   depth: number;
   /** Decided once, by the layout — never recomputed here, or the drawing and
@@ -3076,12 +3501,12 @@ function NodeShape({
   return (
     <g
       transform={`translate(${mo.x} ${mo.y}) scale(${(0.62 + 0.38 * mo.a) * (dragging ? 1.06 : 1) * visualScale})`}
-      opacity={mo.a * presence * visualPresence}
+      opacity={mo.a * presence * visualPresence * (carried ? 0.32 : 1)}
       // Until it has arrived it is invisible but still hit-testable, and it is
       // sitting on top of its parent — so it must not take the click.
       // A person nobody can see is a person nobody can grab.
       style={{
-        cursor: dragging ? 'grabbing' : 'grab',
+        cursor: dragging ? 'grabbing' : carried ? 'pointer' : 'grab',
         pointerEvents: interactive && presence > 0.35 ? 'auto' : 'none',
       }}
       onMouseEnter={() => onHover(true)}
@@ -3109,6 +3534,7 @@ function NodeShape({
         fill={SURFACE}
         stroke={hue}
         strokeWidth={px(NODE_STROKE_PX)}
+        strokeDasharray={carried ? `${px(5)} ${px(4)}` : undefined}
         opacity={unnamed ? 0.55 : 1}
         style={{ filter: 'drop-shadow(0 5px 8px rgba(86,103,179,.2))' }}
       />
@@ -3149,6 +3575,13 @@ function NodeShape({
         </g>;
       })}
       {missingDetails && <circle cx={r * 0.72} cy={-r * 0.72} r={6} fill={ALERT} stroke={SURFACE} strokeWidth={2} />}
+      {carriedRoot && (
+        <g transform={`translate(${r * 0.7} ${-r * 0.7})`}>
+          <circle r={px(9)} fill={SURFACE} stroke={TEAM_HUE} strokeWidth={px(1.5)} />
+          <path d={`M ${-px(3.5)} 0 H ${px(3.5)} M 0 ${-px(3.5)} V ${px(3.5)}`}
+            stroke={TEAM_HUE} strokeWidth={px(1.4)} strokeLinecap="round" />
+        </g>
+      )}
       {isTeam ? (
         // Deliberately empty. The three dots that used to sit here read as a
         // symbol nobody could name (Greg, 2026-09-20: "I don't know what that

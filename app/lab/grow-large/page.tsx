@@ -5,6 +5,7 @@ export default function GrowLargeLabPage() {
   return <GrowLab initialNodes={largeNodes} sampleRings={largeRings} sampleWork={largeWork}
     studyTitle="A messy 1,000-person company · 30 levels · two families"
     scaleMode="large" focusedRings
+    initialFocusId="large-field-1"
     focusStops={[
       { id: 'large-centre', label: 'Main centre', zoom: 0.75 },
       { id: 'large-deep-15', label: 'Continuity · level 15', zoom: 1.5 },
