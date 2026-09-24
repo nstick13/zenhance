@@ -18,8 +18,8 @@ Multi-tenant SaaS, live in production on Vercel (Neon Postgres + Clerk auth). **
 Speed comes first (rule 2), but never across these.
 - **A company's data is theirs, and nobody else can see it — not other companies, and not us.** The aim is for it to live encrypted on the customer's own systems. We may one day ask for abstractions, but never anything that ties a datapoint to a person or a decision. *This is the principle, not yet the build: org data currently sits in Zenhance's own database. Don't build anything that makes it harder to get there.*
 - **Demo mode uses invented data only.** No real people in fixtures, seeds, screenshots or commits.
-- **`main` always builds.** It deploys straight to production.
-- **Nothing irreversible without a human's yes** — rewriting `main`'s history, deleting data, changing the production database.
+- **`main` is production, and only Greg or Nate put work there.** It deploys straight to production on push, so it shows customers only what is ready. Agents never merge to `main`. Work goes to **`next`** (see *Two branches*).
+- **Nothing irreversible without a human's yes** — rewriting history on `main` or `next`, deleting data, changing the production database.
 
 ## How agents work here
 1. **Deliver great experiences.**
@@ -28,10 +28,18 @@ Speed comes first (rule 2), but never across these.
 4. **Be truthful and plain about what you did, whenever asked.** You don't need to narrate everything, but you must be able to explain any action at any time, in plain English, without spin. This matters most in QA: say what you actually verified, what you didn't, and what you're unsure of.
 5. **Collaborate, don't fight.** Respectful disagreement about how code is written is expected. When one needs a decision, bring Greg a plain-English case: the options, the trade-offs, and your recommendation.
 
+### Two branches
+- **`main` is production.** What customers see. Agents never push to it.
+- **`next` is the trunk.** Everything in progress lives here. Branch from `next`, squash-merge back to `next`. Vercel builds it as a *preview*, never as production.
+- **Landing `next` on `main` is a release, and a human decides when.** Not an agent, and not as a side effect of finishing a story.
+- **Nothing is ever lost.** Retired branches live on as `archive/*` tags — `git tag -l 'archive/*'`, then `git show <tag>` or `git checkout -b recover <tag>`. Clean up freely; the history is there.
+
 ### Working alongside other agents
+- **One repo, one trunk, no agent's private corner.** Greg (2026-09-24): *"There shouldn't be differing branches for Codex or Claude — I want you to read and edit as much Codex-written stuff as Codex does yours."* So: **no `codex/` or `claude/` branch prefixes.** Branches are named for the work (`<feature>-<slug>`), whoever does it, and any agent may read, edit, critique or fix any file regardless of who wrote it.
 - **The repo is the only shared channel.** Agents can't see each other's chats or private memory. Decisions and their reasons go in the docs under *Where things live* — including approaches tried and abandoned, so nobody spends a day rediscovering a dead end. Commit messages say *why*, not just what.
-- **`git fetch` before starting, and again before any merge or push.** `main` moves underneath you.
+- **`git fetch` before starting, and again before any merge or push.** `next` moves underneath you.
 - **An unfamiliar commit is someone's deliberate work.** Read it before you build over it or revert it.
+- **Don't work in a private worktree.** Three stale worktrees on 2026-09-24 held 46 uncommitted files between them, invisible to everyone else. Work in the repo, commit often, push to `next`.
 
 ### Customer feedback
 - Greg and Nate relay what prospects say. It's logged in [docs/FEEDBACK.md](docs/FEEDBACK.md); anything that changes what we build also gets a *Customer signal* write-up in the roadmap.
@@ -54,13 +62,14 @@ This is a small repo, but `components/viz/RadialOrg.tsx` alone is ~1400 lines. *
 - **What to build next:** [docs/ROADMAP.md](docs/ROADMAP.md) — start at **▶ Next build**. Features → Stories. **Analytics is design-first: discuss before coding.**
 - **Product/design *why* (personas, formal-vs-delivery, analytics design language, packaging):** [docs/PRODUCT.md](docs/PRODUCT.md). Read once; don't re-derive it in chat.
 - **Codebase map:** [docs/CODEMAP.md](docs/CODEMAP.md).
+- **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/orbital/`.
 - **Design sandboxes (feel studies) + archive convention:** [docs/LAB.md](docs/LAB.md).
 - **Customer feedback:** [docs/FEEDBACK.md](docs/FEEDBACK.md).
 - **Durable facts** (running locally, gotchas) belong in `docs/`, where every agent can read them — not in any one agent's private memory. *Some still live only in Nate's Claude memory (`~/.claude/projects/-Users-natetgreat-zenhance/memory/`); Nate's agent should move them into `docs/`.*
 
 ## House rules
-- **Branch per story** (`<feature>-<slug>`), squash-merge to `main`. Patch-bump `package.json` per merge; minor bump when a Feature completes.
-- **Make every commit on `main` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
+- **Branch per story** (`<feature>-<slug>`, no agent prefix), squash-merge to `next`. Patch-bump `package.json` per merge; minor bump when a Feature completes.
+- **Make every commit on `next` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
 - **Delete a branch once it's merged or abandoned** — locally and on the remote. Don't delete a branch you didn't create unless it's merged, or its owner has said it's finished.
 - **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser on Sparrow Jam and Digital Tailoring, plus running the large-org layout fixture where relevant. Cheap checks (`npx tsc --noEmit`, tests) still come first.
 - Commit/push only when asked.

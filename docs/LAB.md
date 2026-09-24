@@ -10,17 +10,19 @@
 - **Verify:** `npx tsc --noEmit`, then inspect the interaction in a browser. Map studies are checked against all three demo-company scales.
 - **Not production.** A lab proves a feel; the real build re-implements it against real data/components.
 
-## Lifecycle → archive (don't delete, don't leave routes live)
+## Lifecycle → retire (delete the code, keep the learning)
 When an experiment is done — **graduated** to prod *or* **abandoned**:
-1. Move `app/lab/<name>/` → `app/lab/_archive/<name>/`. The `_archive` underscore makes it a **private folder** (Next App Router won't route it) — the code is preserved, the route is killed.
-2. Record the verdict in the registry below (so future sessions reuse the *learning*, not re-derive it).
+1. **Record the verdict in the registry below first.** The learning is the asset; the code is not. Future sessions must be able to reuse the verdict without reading the experiment.
+2. **Delete `app/lab/<name>/`.** Git has it, and `docs/ENGINES.md` § Getting retired work back says how to read it again.
+
+*Changed 2026-09-24.* The old rule was to move studies into `app/lab/_archive/` and keep them in-tree forever. That earned its keep when a deleted branch was genuinely hard to find; it stopped earning it once every retired branch became an `archive/*` tag. `_archive` held 1,445 lines of two experiments that had **both already graduated to production** — a second copy of finished ideas, which every future agent had to read past. Deleted.
 
 ## Registry
 | Experiment | Status | Verdict / learnings to carry forward |
 |---|---|---|
 | `grow` / `grow-established` / `grow-large` | **active** | The blank-canvas start, 45-person company, and 1,000-person stress fixture share `GrowLab.tsx`. All support wheel/pinch zoom, pan and Fit; the large study also has branch jumps. Human avatars and explicit sample team rings test convergence with `/org`. State remains in memory only. A **forest**, not a tree. Rules + open questions below. |
 | `canvas` | **active** | v2 canvas map feel study (Konva). Proved the four-rung zoom ladder (Value streams→Teams→People→Roles), free-form drag, layer toggles, search-with-halo, and zones. Direction + staged plan: [V2.md](V2.md). **Two files, not one** — Konva needs `ssr: false`, and Next requires that dynamic import to live in a Client Component, so `page.tsx` is a shell around `CanvasMap.tsx`. |
-| `analytics` | **archived** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx`. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
+| `analytics` | **retired** | Graduated to prod (2026-06-16) as `lib/analytics/findings.ts` + `FindingsRail` in `RadialOrg.tsx` — **which was itself retired 2026-09-24, taking the rail's UI with it.** The maths is intact and unreferenced; see ENGINES.md. Design rationale: `PRODUCT.md` § Analytics design language. Feel: ambient = presence dots (category colour, equal weight); focus = spotlight + Signal→Narrative. |
 | `orbital-focus` | **archived** | Graduated to the production `OrbitalMap` (2026-09-15). Carried forward: focus-relative fixed rings; double-click/double-tap and card focus; progressive whole-company marks; dimmed context with a violet route home; nested focus; and focus-aware dragging with meaningful snap modes. The lab's aggregate summaries were deliberately dropped because every real unit remains visible. |
 
 

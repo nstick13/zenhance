@@ -3,21 +3,22 @@
 Find the file (and region) that owns your concern, read **only** that, then `grep -n` the symbol and `Read` with `offset`/`limit`. Line numbers drift — treat them as "jump near here," and re-grep to confirm. Whole-file reads are occasionally right, but justify it from this map first.
 
 ## Stack
-Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgres (`postgres.js`) · Clerk auth (dev-auth bypass locally) · D3 (`d3-hierarchy/shape/zoom/selection/transition`) + SVG for the shipped viz · Konva + react-konva for the v2 canvas map (see [V2.md](V2.md)) · SheetJS + Zod for import. Deployed on Vercel + Neon.
+Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgres (`postgres.js`) · Clerk auth (dev-auth bypass locally) · **Konva + react-konva** for the orbital map, the one shipped viz · SVG for the `grow` feel-study · SheetJS + Zod for import. Deployed on Vercel + Neon.
+
+> **The six engines.** The map is six separable machines — layout, growth, work, signal, camera, basket. Which files each owns, and the import rule a test enforces: **[ENGINES.md](ENGINES.md)**. Read it before moving code between them.
 
 ## "Which file do I touch?" — by concern
 
 | I'm working on… | Go to |
 |---|---|
-| **v2 canvas map (direction, staged plan, architecture impact)** | **[V2.md](V2.md)** — read before touching the viz |
-| v2 canvas feel study | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) |
+| **Team memberships (add / edit % / remove)** | `components/teams/TeamsManager.tsx`; `createAssignment`/`updateAssignment`/`deleteAssignment` in `lib/data/actions.ts`. *The map's own assignments panel retired with `OrgCanvas` on 2026-09-24 — the orbital map has no membership editing yet* |
+| **Person attributes (discipline / employment / location / timezone)** | `lib/db/schema.ts` `disciplines` + `people`; edit UI in `components/people/PeopleManager.tsx`. Discipline find-or-create lives *inside the import transaction* (`lib/data/importCommit.ts`), not as a standalone action |
+| **The lens — what colour/label mean** | `lib/canvas/lens.ts` (pure: `personColor`, `personLabel`, `buildLegend`, `normalizeLens`), persisted via `saveLens` → `workspaces.lens` jsonb. *Its map UI retired with `OrgCanvas`; the maths is intact and waiting for the orbital map — see ENGINES.md § Currently unreferenced* |
+| **What the org calls its two rungs** ("value stream" / "team") | `lib/vocabulary.ts` (pure: `Vocabulary`, `DEFAULT_VOCABULARY`, `PRESETS`, `normalizeVocabulary`, `lower`) → `workspaces.vocabulary` jsonb; passed to `OrbitalMap` as a prop |
+| **The retired maps** (Canvas, Radial) | Gone on 2026-09-24 — Orbital is the only map. History and rationale: [ENGINES.md](ENGINES.md) § Getting retired work back. [V2.md](V2.md) is now a record of where the canvas came from, not a guide to anything live |
+| Canvas feel study (Konva) | `app/lab/canvas/` (`page.tsx` shell + `CanvasMap.tsx` + generated `demoMap.ts`) — still a live sandbox |
 | **Blank-canvas start** (grow an org one node at a time; the team appears rather than being declared) | `app/lab/grow/GrowLab.tsx` — shared SVG feel-study engine with zoom/pan, in-memory creation, scale-specific orbit spacing and the large-study dot overview; `visualRules.ts` owns ring focus/reveal, colours and person spacing. Thin `page.tsx` route. `app/lab/grow-established/fixture.ts` supplies an invented 45-person fixture; `app/lab/grow-large/fixture.ts` supplies a 1,000-person, 30-level forest stress fixture. `/grow-established` and `/grow-large` alias their lab routes for review. No DB. Integration decisions and unfinished seams: [UNIFIED-ORBITAL.md](UNIFIED-ORBITAL.md); study history: [LAB.md](LAB.md) § `grow` |
-| **Team memberships (add / edit % / remove)** | `OrgCanvas.tsx` — `Assignments` panel component; `createAssignment`/`updateAssignment`/`deleteAssignment` in `lib/data/actions.ts`; Option-drag branch in `onNodeDragEnd` |
-| **Person attributes (discipline / employment / location / timezone)** | `lib/db/schema.ts` `disciplines` + `people`; edit UI in `OrgCanvas.tsx` `PersonForm`/`PersonBody` and `components/people/PeopleManager.tsx`. Discipline find-or-create now lives *inside the import transaction* (`lib/data/importCommit.ts`), not as a standalone action |
-| **The lens — what colour/label mean on the map** | `lib/canvas/lens.ts` (pure: `personColor`, `personLabel`, `buildLegend`, `normalizeLens`) + `LensChoice`/`S.lensPanel` in `OrgCanvas.tsx`; persisted via `saveLens` in `lib/data/actions.ts` → `workspaces.lens` jsonb |
 | **Paper palette tokens for non-canvas pages** | `app/globals.css` `@theme static` — `--color-paper|surface|ink|ink-soft|line|grow|alert` |
-| **v2 canvas look & feel** (stream identity hues, stream header block, intro choreography, open-on-a-view) | `OrgCanvas.tsx` — `STREAM_HUES`/`hueOf`, hull render block, `introT` + `phase()`, `frameBox` |
-| **v2 canvas data transform** (flat node list, cross-cutting tier classification, ring layout seed) | `lib/canvas/buildCanvasMap.ts` — `crossCuttingTier` on `CanvasPerson`; gap-based `ghostSeats` memo + ghost render block in `OrgCanvas.tsx`; `sharedPeople` memo + `S.rail` chips for the top rail |
 | **How big a unit draws** | One size for every unit: `geometry.UNIT_RADIUS` (twice a person's area), the company larger, grown only when its own people need the room (`layout.unitDiscRadius`). Size carries no meaning — headcount sizing is off behind `size.SIZE_BY_HEADCOUNT`, depth sizing behind `layout.SIZE_BY_DEPTH`. Overview floor and landmark names: `lib/orbital/lod.ts` (`screenFloorPx`, `isLandmark`) |
 | **The layout engine's rules** (pure function, land where released, authored placements, no crossings) | **[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md)** is the contract and `lib/orbital/__tests__/laws.test.ts` holds it. Placement maths: `lib/orbital/position.ts` (`Placement` = angle + optional distance round the parent); landing: `lib/orbital/insertion.ts`; circular orbits: `complexity.ts` `ALLOW_RADIAL_LOOSENESS` |
 | **The large demo company** | `lib/db/northwind.ts` — `npm run db:northwind` seeds ~2,560 invented people into the **local** database only (it refuses a hosted one). Same shape as `lib/orbital/__tests__/fixtures/deepOrg.ts` |
@@ -35,7 +36,6 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | **Saved orbital arrangement** | `orbital_nodes` table (migration 0008) + `saveOrbitalNodes`/`clearOrbitalNodes` in `lib/data/actions.ts`, `getOrbitalNodes` in `queries.ts`. `parent_id` there is an **arrangement override, not an org edit** — `org_units.parent_id` is never touched by a drag, so rearranging the map can't restructure the company by accident |
 | **Orbits / whiteboard mode** | `components/viz/orbital/OrbitalMap.tsx` owns the Break orbits and Tidy up controls, snapped versus free drag, and session-only placement offsets; `lib/orbital/position.ts` also turns saved angles into branch-local offsets so moving one branch does not repack unrelated siblings. Tidy up clears both local offsets and saved `orbital_nodes` arrangement rows, then returns to calculated Orbits. See `docs/ORBITAL-INTERACTION.md` for the current decision. |
 | Greg's original prototype (the v2 trigger) | `docs/reference/greg-preview-v1.html` — see `docs/reference/README.md` |
-| The radial visualization (anything on `/org`) | `components/viz/RadialOrg.tsx` — **see region table below** |
 | Color palettes / themes | `lib/theme.ts` (palette IDs + accent) **and** `app/globals.css` (the CSS-var blocks per palette). Adding a palette = both files. |
 | Analytics math (cost/ROI, gaps, allocation) | `lib/analytics/{rollup,gaps,allocation}.ts` — pure, client-safe, unit-testable |
 | Org-tree / allocation helpers (indexes, ancestry, utilization) | `lib/org/model.ts` |
@@ -55,30 +55,9 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | People / Teams CRUD pages | `components/people/PeopleManager.tsx`, `components/teams/TeamsManager.tsx` (pages are thin: `app/(app)/{people,teams}/page.tsx`) |
 | **Workspace settings (S5)** — vocabulary + discipline CRUD | `components/settings/SettingsManager.tsx` (page is thin: `app/(app)/settings/page.tsx`) |
 | **Discipline CRUD data work** (create/update/delete-with-reassign/merge/reorder) | `lib/data/disciplineOps.ts` — pure workspace-scoped data ops; `lib/data/actions.ts` wraps them with auth + Zod + revalidate. Integration script: `lib/data/__tests__/disciplines.integration.mts` |
-| **What the org calls its two rungs** ("value stream" / "team") | `lib/vocabulary.ts` (pure: `Vocabulary`, `DEFAULT_VOCABULARY`, `PRESETS`, `normalizeVocabulary`, `lower`) → `workspaces.vocabulary` jsonb; handed to the client tree by `components/VocabularyProvider.tsx` (`useVocabulary()`) |
 | Routing / auth middleware | `proxy.ts` (Next 16 — **not** `middleware.ts`) |
 | App shell / layout / empty-org screen | `app/(app)/layout.tsx`, `app/(app)/org/page.tsx`, `app/(app)/{error,not-found}.tsx` |
 | Onboarding banner, palette switcher | `components/OnboardingBanner.tsx`, `components/PaletteSwitcher.tsx` |
-
-## `components/viz/RadialOrg.tsx` region guide (~1400 lines)
-One client component. Jump to the region; don't read top-to-bottom.
-
-| Region | ~Lines | What's there |
-|---|---|---|
-| Imports, `OverlayType` / `NodeDatum` types, geometry consts + `pointRadial`/`arcPath` | 1–65 | Layout constants (`WIDTH/HEIGHT/INNER_RADIUS/DROP_RADIUS`), pure SVG-math helpers |
-| Component props + scenario state (`moves`, `effAssignments`) | 67–99 | What-if overlay over assignments |
-| Derived indexes & analytics memos | 101–122 | `unitsById`, `peopleById`, `childByParent`, `asgByUnit`, `overAlloc`, `allocByPerson`, `rollupMap`, `gapsMap`, `orgSummary` |
-| Focus state (drill-down) | 124–138 | `defaultFocusId`, `focusId`, `selectedPersonKey`, `showPanel` |
-| Zoom state + handlers | 140–191 | `d3-zoom` setup, scale extent `[0.3,5]`, dblclick disabled, zoom in/out/reset |
-| Drag state | 193–204 | pointer-drag reassignment refs |
-| Semantic-zoom (LOD) computation | 206–339 | `DETAIL_START/FULL`, `detailOpacity`, `zoomFocusTeamId`, **bloom sets** `detailMembers` / `detailSubTeams` / `detail2Members` |
-| Node/link layout | 213–264 | `hierarchy`/`tree` radial layout → `nodes`, `links` |
-| Focus/move/scenario handlers | 426–470 | `focusOn`, `performMove`, `applyScenario`, `discardScenario`, `toggleScenario` |
-| Pointer/drag handlers | 472–538 | `clientToLocal`, `beginMemberPointer`, `onSvgPointerMove`, `onSvgPointerUp` |
-| **Main JSX return** | 540–955 | `<SummaryBar>`, breadcrumb, scenario controls, `<svg>` defs (gradients/glow/heat), `nodes.map`, the 3 bloom render blocks, drag ghost, zoom controls, detail `<aside>` |
-| `onUnitClick` | 957–973 | two-phase center-click (reset zoom → navigate to parent) |
-| Overlay prop builder | 985–1043 | `getOverlayProps` + `NodeOverlay` type (per-node dim/badge/heat) |
-| Presentational components | 1045–1410 | `ContextSatellite`, `RadarNode` (the node art), `UnitPanel`, `PersonPanel`, `Row`, `OVERLAY_OPTIONS`, `SummaryBar`, `Metric` |
 
 ## Conventions worth knowing before you edit
 - **Tenancy:** every data read/write goes through `requireWorkspace()` and is scoped by `workspace_id`. Never query unscoped.
