@@ -88,6 +88,7 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 - **Never seed a hosted database.** Every seeder refuses a non-local `DATABASE_URL` (`requireLocalDatabase` in `lib/env.ts`). A seeder writes invented people over real ones and there is no undo.
 - **Make every commit on `next` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
 - **Delete a branch once it's merged or abandoned** — locally and on the remote. Don't delete a branch you didn't create unless it's merged, or its owner has said it's finished.
+- **Compare two stages side by side:** `npm run stage` lists what's checked out and what's unsaved in each; `npm run stage <lab|next|release|main>` runs one on its own port (3001–3004). Each is a git worktree sharing this history — about 1GB each, so `npm run stage:clean` when you're done. See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md).
 - **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser on Sparrow Jam and Digital Tailoring, plus running the large-org layout fixture where relevant. Cheap checks (`npx tsc --noEmit`, tests) still come first.
 - Commit/push only when asked.
 

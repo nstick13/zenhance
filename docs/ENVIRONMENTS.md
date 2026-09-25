@@ -126,6 +126,63 @@ people over real ones with no undo, and only `northwind` had that guard before
 
 ---
 
+## Comparing two stages side by side
+
+```
+npm run stage           what's checked out, on what port, and what's unsaved
+npm run stage lab       run lab on :3001  (creates the checkout the first time)
+npm run stage next      run next on :3002
+npm run stage:clean     remove the extra checkouts
+```
+
+| stage | port |
+|---|---|
+| `lab` | 3001 |
+| `next` | 3002 |
+| `release` | 3003 |
+| `main` | 3004 |
+
+Two windows, two ports, the same company on each. **That is the only honest
+way to judge whether one version of an engine feels better than another** —
+the thing you are judging often lives in the half-second of moving between
+them, which you cannot feel by rebuilding.
+
+**This is also why you don't need four copies of the codebase.** Each stage is
+a *git worktree*: a second working copy on a different branch, sharing one
+history. Git's objects are shared; only the working files and `node_modules`
+are duplicated.
+
+**Cost:** about 1GB per extra stage, nearly all of it `node_modules`. Create
+them when you need them, `npm run stage:clean` when you don't.
+
+`.env` and `.env.local` are symlinked into each checkout, so every stage reads
+the **same local database**. Same company, same data, different code — which
+is exactly what a comparison needs.
+
+### Two things this script does that plain `git worktree` doesn't
+
+Both learned the hard way on 2026-09-24, when three forgotten worktrees held
+46 uncommitted files between them, invisible to everyone, and one was serving
+a three-week-old build on :3000.
+
+- **`npm run stage` shows unsaved work in every checkout at once.** A worktree
+  is a private corner unless something makes it public.
+- **`stage:clean` refuses to remove a checkout with unsaved work.** It tells
+  you what is there and leaves it alone; it will not decide for you.
+
+### Versions of an engine
+
+Because each engine is a bounded module, a second version of one can live
+beside the first and be switched with a constant — `SIZE_BY_HEADCOUNT` and
+`SIZE_BY_DEPTH` in `lib/map/layout/` are exactly that today, keeping a whole
+alternative sizing pipeline alive and switched off while Greg decides.
+
+For a real comparison, put each version on a different stage and run both.
+When one wins, **delete the other** — a switch kept "just in case" becomes a
+switch nobody understands.
+
+---
+
 ## Starting work
 
 **An idea, feel unproven** → branch from `lab`, merge back to `lab`. Study goes

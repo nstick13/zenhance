@@ -78,6 +78,7 @@ Next.js 16 (App Router) · TypeScript · Tailwind v4 · Drizzle ORM over Postgre
 | Onboarding banner, palette switcher | `components/OnboardingBanner.tsx`, `components/PaletteSwitcher.tsx` |
 
 ## Conventions worth knowing before you edit
+- **Comparing two stages:** `npm run stage <lab|next|release|main>` runs each on its own port from its own git worktree — see [ENVIRONMENTS.md](ENVIRONMENTS.md).
 - **Tenancy:** every data read/write goes through `requireWorkspace()` and is scoped by `workspace_id`. Never query unscoped.
 - **Analytics are pure functions** in `lib/analytics/*` (no React, no DB) — add a Vitest fixture when you change the math.
 - **Tailwind v4 gotcha:** CSS vars referenced only from JS/SVG get tree-shaken by Lightning CSS → blanked gradients. Keep palette tokens inside `@theme static` in `globals.css`. (See memory `zenhance-tailwind-css-var-pruning`.)
