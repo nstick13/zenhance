@@ -1,163 +1,150 @@
 # Where to experiment, and what reaches customers
 
-Four stages. Work moves forward one at a time, and each step has a bar it has
-to clear. Nothing skips.
-
 ```
   lab  ─────▶  next  ─────▶  release  ─────▶  main
-  wild         build it      dress            live
-  west         for real      rehearsal
+  wild         build it      last stop        live
+  west         for real      before live
 ```
 
-| Stage | What it's for | Who can break it | Where it runs |
-|---|---|---|---|
-| **`lab`** | Trying an idea. Does this *feel* right? | Anyone, anytime | Preview URL, demo data |
-| **`next`** | Building a proven idea properly | Nobody knowingly | Preview URL, demo data |
-| **`release`** | Dress rehearsal for going live | Nobody | Preview URL, **production-shaped data** |
-| **`main`** | What customers see | — | zenhance.app, real data |
+**Only `main` is for the public.** Everything else runs on a real URL, and
+none of them are for online users.
 
-## What each one is
+**Moving between stages needs a human's yes. That is the whole gate** — not a
+checklist, not a robot. Greg or Nate says "promote it", and it moves.
+
+---
+
+## Before starting anything, ask which stage
+
+**The first question of any piece of work is: *lab, next, or release?***
+
+Ask it out loud before writing code. It decides what the work is allowed to
+be, what bar it has to clear, and who will see it. Guessing wrong means doing
+it twice.
+
+- *Trying an idea, unsure if it feels right* → **lab**
+- *Building something we've decided on* → **next**
+- *Fixing something already staged to go live* → **release**
+
+If the answer isn't obvious from what's being asked, ask. A one-line question
+is cheaper than a branch in the wrong place.
+
+---
+
+## The four stages
 
 ### `lab` — the wild west
-
 Where an idea gets tried. Break it freely; nobody is watching. Half-finished
-is the normal state, tests are optional, and code here is allowed to be ugly
-if ugly is faster.
+is normal, tests are optional, ugly is fine if ugly is faster.
 
-**The lab exists to answer one question: does this feel right?** Not "is this
-built well" — that comes next, and asking it too early kills ideas that
-deserved a chance.
-
-The grow flow lives here. So does anything with a feel worth arguing about
-before anyone commits to building it.
+**The lab answers one question: does this feel right?** Not "is this built
+well" — asking that too early kills ideas that deserved a chance.
 
 ### `next` — build it for real
+An idea that earned its place gets built properly: typed, tested, working on
+both demo companies, living inside the engines rather than beside them.
 
-An idea that earned its place in the lab gets built properly here: typed,
-tested, working on both demo companies, and living inside the engines rather
-than beside them.
+This is the trunk. Stories branch from here and squash-merge back.
 
-This is the trunk. Every story branches from here and squash-merges back.
+**Lab code isn't promoted by copy-paste.** What crosses is the *idea*; what
+lands is an implementation that belongs here. Usually a rewrite, and that
+isn't waste — the lab version was answering a different question.
 
-**Code doesn't get promoted from `lab` by copy-paste.** What crosses is the
-*idea*; what lands is an implementation that meets this stage's bar. In
-practice that usually means a rewrite, and that is not waste — the lab version
-was answering a different question. See LAB.md.
+### `release` — last stop before live
+A frozen candidate. **Assume everything here is going to production**, so it
+gets looked at as if it already were.
 
-### `release` — the dress rehearsal
+Its real job: **migrations get rehearsed here before production.** Apply to
+`release`, watch it work, then apply to production. The `0005` outage in
+ROADMAP.md happened because there was nowhere to practise.
 
-**This is the stage we were missing.** A frozen candidate, running as close to
-the real thing as we can make it, so that the only difference between it and
-production is who is looking.
-
-Its job is to catch what preview builds cannot: a migration applied in the
-wrong order, a query that is fine on ten people and slow on two thousand, an
-environment variable nobody set. Every one of those has bitten us or nearly
-has.
-
-**Migrations get rehearsed here first.** Apply to `release`, watch it work,
-then apply to production. The `0005` outage in ROADMAP.md happened because
-there was nowhere to practise.
-
-Only fixes land on `release`. New work goes to `next` and waits for the next
-promotion — otherwise it stops being a rehearsal and becomes another trunk.
+Only fixes land here. New work goes to `next` and waits for the next
+promotion, or this stops being a last stop and becomes a second trunk.
 
 ### `main` — live
+What customers see. Pushing here deploys automatically.
 
-What customers see. Vercel deploys it automatically on push.
+**Only Greg or Nate, only from `release`.** Never an agent, never directly,
+never as a side effect of finishing something.
 
-**Only Greg or Nate put anything here, and only from `release`.** Never an
-agent, never directly, never as a side effect of finishing something.
+---
 
-## The bars between stages
+## Who can reach what
 
-### `lab` → `next`
-- A human — normally Greg — has looked at it and said the feel is right.
-- Somebody can say in a sentence what the idea *is*, separate from how the
-  prototype happened to do it.
+| Stage | URL | Who sees it |
+|---|---|---|
+| `main` | the real domain | Everyone. This is the product. |
+| `release`, `next`, `lab` | Vercel preview URLs | **Not for online users** |
 
-### `next` → `release`
-- `npx tsc --noEmit` clean
-- `npx vitest run` all passing
-- `npm run build` succeeds
-- Looked at in a browser on **both** demo companies
-- **Every migration on the branch is already applied to the `release`
-  database** — this is the step that exists to stop another `0005`
-- `docs/TASKS.md` has nothing left under *Blocking a release*
+Two things are done in code:
 
-### `release` → `main`
-- The rehearsal has actually been used, not just deployed
-- Every migration applied to **production**, before the push, not after
-- Greg or Nate says go
+- **Search engines are told to stay away** from every non-production stage
+  (`robots: noindex, nofollow, noarchive` in `app/layout.tsx`), so a
+  half-built deployment never appears in results beside the real product.
+- **The lab pages 404 in production** (`app/lab/layout.tsx`), so a customer
+  can't find an experiment by guessing a URL. Verified: 404 in a production
+  build, 200 in a preview one.
 
-## The lab pages
+**What is not done, and needs a dashboard:** none of that stops someone who
+*has* a preview link from opening it. The fix is **Vercel Deployment
+Protection** — set it to require Vercel authentication for all preview
+deployments, so only people on the team can open one. One setting, and it is
+the only thing that actually makes previews private.
 
-Separate from the `lab` branch, and worth not confusing: `app/lab/*` holds
-feel-studies that ship *inside every build*.
+*Until that is on, treat preview URLs as semi-public: fine for invented demo
+companies, not somewhere to point a customer's real data.*
 
-**They are reachable everywhere except production**, enforced in
-`app/lab/layout.tsx` via `labPagesVisible()` in `lib/env.ts`. So anyone can
-open a preview and look at an experiment, and no customer can find one by
-guessing a URL.
+---
 
-Gating beats deleting: nothing has to be stripped out before a release, so
-nobody has to remember to strip it. Tests in `lib/__tests__/env.test.ts`.
+## Databases
 
-*Two things called lab, doing different jobs: the `lab` **branch** is where
-raw work happens; the `/lab` **pages** are where finished experiments can be
-looked at from any stage.*
+Everything goes through one `DATABASE_URL`, and no code distinguishes a
+production database from a demo one, so **a deployment writes to whatever it
+is handed.**
 
-## Databases — the part that needs deciding
-
-Everything the app does with data goes through one `DATABASE_URL`. There is
-no code that knows a production database from a demo one, which means **a
-preview deployment writes to whatever Vercel hands it.**
-
-Unless preview environment variables were set separately in Vercel, that is
-the production database. Nobody has confirmed either way, and it is worth
-five minutes in the dashboard.
-
-What it should be:
-
-| Stage | Database |
+| Stage | Should point at |
 |---|---|
-| `main` | Production Neon |
-| `release` | A Neon **branch** — a copy of production's shape and volume, with none of its consequences |
+| `main` | Production |
+| `release` | A Neon **branch** — production's shape and volume, none of its consequences |
 | `next`, `lab`, story previews | A demo database. Never production. |
 | local | Postgres on your own machine |
 
-**Decision needed from Greg or Nate:** creating that Neon branch for `release`
-costs something and is not an agent's call. Until it exists, `release` is a
-rehearsal in costume — better than nothing, but it will not catch the
-volume-and-migration problems it is there for.
+**Two things for Greg or Nate, in dashboards:**
 
-### What is guarded already
+1. **Check what preview deployments use today.** If Vercel's preview variables
+   were never set separately, every preview has been reading and writing
+   **production**. Five minutes settles it, and nothing else on this page
+   matters as much.
+2. **Give `release` its own Neon branch.** Until it has one, it is a rehearsal
+   in costume — it won't catch the volume-and-migration problems it exists
+   for.
 
-Every seeder now refuses to run against a database that is not on your own
-machine — `db:seed`, `db:companies`, `db:scale`, `db:northwind`, via
-`requireLocalDatabase()` in `lib/env.ts`.
+**Already guarded:** every seeder refuses a database that isn't on your own
+machine (`requireLocalDatabase` in `lib/env.ts`). A seeder writes invented
+people over real ones with no undo, and only `northwind` had that guard before
+2026-09-25.
 
-That matters because a seeder fills a workspace with invented people. Pointed
-at production it would write Sparrow Jam over a customer's org, and there is
-no undo. Only `northwind` had this guard before 2026-09-25; the other three
-were equally capable of the damage.
+---
 
-## Starting a piece of work
+## Starting work
 
-**A new idea, feel unproven** → branch from `lab`, merge back to `lab`.
-Put the study under `app/lab/<name>/` and record the verdict in LAB.md.
+**An idea, feel unproven** → branch from `lab`, merge back to `lab`. Study goes
+under `app/lab/<name>/`, verdict in LAB.md.
 
 **A known thing to build** → branch from `next` (`<feature>-<slug>`, no agent
 prefix), squash-merge back to `next`.
 
-**A fix for something already staged** → branch from `release`, merge to
-`release`, and **cherry-pick or re-merge it back to `next`** so the trunk
-doesn't lose it. A fix that only exists on `release` disappears at the next
-promotion.
+**A fix for something staged** → branch from `release`, merge to `release`,
+and **get it back onto `next` too** — a fix that only exists on `release`
+disappears at the next promotion.
 
-## What this does not do
+---
 
-**Nothing is automated yet.** No CI checks these bars — they hold because
-people follow them. `docs/TASKS.md` has the CI job that would enforce the
-`next → release` bar mechanically; until that exists, the bars are honour
-system, and the honour is mostly an agent's.
+## A note on what agents owe regardless
+
+Promotion is a human's call. But the verification in AGENTS.md — `tsc`, the
+tests, looking at it in a browser on both companies — is what an agent owes on
+*any* change, at any stage above `lab`. That isn't a gate; it's the job.
+
+The difference: nobody needs to see a checklist before saying "promote it".
+They need to be able to trust that the agent did its work.

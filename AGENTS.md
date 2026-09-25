@@ -31,15 +31,17 @@ Speed comes first (rule 2), but never across these.
 ### Four stages — see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)
 ```
 lab ──▶ next ──▶ release ──▶ main
-wild    build    dress        live
-west    for real rehearsal
+wild    build    last stop    live
+west    for real before live
 ```
+- **Ask which stage before you start. Every time.** *"Lab, next, or release?"* It decides what the work may be, what bar it clears, and who sees it — guessing wrong means doing it twice. If the answer isn't obvious from the request, ask; a one-line question is cheaper than a branch in the wrong place.
+- **Moving between stages needs a human's yes. That is the whole gate** — not a checklist, not a robot. Greg or Nate says "promote it", and it moves.
 - **`lab`** — trying an idea. Break it freely; half-finished is normal. Answers *does this feel right*, nothing else.
 - **`next`** — the trunk. A proven idea built properly: typed, tested, on both demo companies, inside the engines. Branch from here for a story, squash-merge back.
-- **`release`** — a frozen candidate running as close to the real thing as we can make it. **Migrations get rehearsed here before production.** Only fixes land on it; new work waits for the next promotion.
-- **`main`** — production. **Only Greg or Nate, only from `release`.** Never an agent, never directly.
-- **Work moves one stage at a time and never skips.** Each step has a written bar in ENVIRONMENTS.md; clearing it is the promotion.
-- **`lab` code is not promoted by copy-paste.** What crosses is the *idea*; what lands meets `next`'s bar. Usually a rewrite, and that is not waste.
+- **`release`** — the last stop. **Assume everything here is going to production**, and that **migrations get rehearsed here first**. Only fixes land on it; new work waits for the next promotion.
+- **`main`** — production, deployed on push. **Only Greg or Nate, only from `release`.** Never an agent, never directly.
+- **Only `main` is for the public.** Every other stage runs on a real URL that is not for online users — non-production is `noindex`, and the `/lab` pages 404 in production.
+- **`lab` code is not promoted by copy-paste.** What crosses is the *idea*; what lands belongs on `next`. Usually a rewrite, and that is not waste.
 - **Nothing is ever lost.** Retired branches live on as `archive/*` tags — `git tag -l 'archive/*'`, then `git show <tag>` or `git checkout -b recover <tag>`. Clean up freely; the history is there.
 
 ### Working alongside other agents

@@ -150,6 +150,22 @@ in what form, and whether the untouched maths gets rebuilt on or deleted.
 `lineRouting.ts` — listed in [ENGINES.md](ENGINES.md) § *Currently
 unreferenced, kept on purpose*.
 
+### ☐ Make preview URLs private — one Vercel setting
+
+`lab`, `next` and `release` each run on a real, working URL. Search engines
+are now told to stay away from them, and the lab pages have vanished from
+production — but **none of that stops anyone who has a link from opening
+one.** Right now a preview URL is effectively semi-public.
+
+The fix is one setting: **Vercel Deployment Protection**, set to require
+Vercel authentication on all preview deployments. Then only people on the
+team can open one.
+
+Until it's on, previews are fine for invented demo companies and are not
+somewhere to point a customer's real data.
+
+*Greg or Nate — it's in the Vercel dashboard, not something an agent can do.*
+
 ### ☐ Give `release` a database of its own
 
 The `release` stage exists to be a dress rehearsal — as close to the real
