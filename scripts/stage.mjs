@@ -130,7 +130,18 @@ function run(stage) {
 
   if (!existsSync(join(path, "node_modules"))) {
     console.log("  Installing dependencies (a few minutes, and about 600MB)…\n");
-    execFileSync("npm", ["install"], { cwd: path, stdio: "inherit" });
+    // `ci`, not `install`: it installs exactly what the lockfile says and
+    // never rewrites it. `install` quietly syncs the lockfile's version field
+    // to package.json, which leaves every checkout showing a modified file
+    // forever — and an edit nobody made is an edit somebody eventually
+    // commits by accident.
+    try {
+      execFileSync("npm", ["ci"], { cwd: path, stdio: "inherit" });
+    } catch {
+      console.log("\n  `npm ci` failed (lockfile out of step?) — falling back to `npm install`.");
+      console.log("  Check `git status` in that checkout afterwards.\n");
+      execFileSync("npm", ["install"], { cwd: path, stdio: "inherit" });
+    }
   }
 
   console.log(`\n  ${stage} → http://localhost:${port}\n`);
