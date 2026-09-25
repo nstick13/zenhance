@@ -1,3 +1,4 @@
+import { requireLocalDatabase } from "@/lib/env";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -196,6 +197,7 @@ export async function seedDemoCompanyInto(
 }
 
 async function main() {
+  requireLocalDatabase("the demo companies seeder (Sparrow Jam, Digital Tailoring)");
   // CLI-only bootstrap. Kept inside main() so importing this module from the
   // app (for the in-app "start from an example" action) doesn't run dotenv or
   // open a second connection pool.

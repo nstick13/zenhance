@@ -28,10 +28,18 @@ Speed comes first (rule 2), but never across these.
 4. **Be truthful and plain about what you did, whenever asked.** You don't need to narrate everything, but you must be able to explain any action at any time, in plain English, without spin. This matters most in QA: say what you actually verified, what you didn't, and what you're unsure of.
 5. **Collaborate, don't fight.** Respectful disagreement about how code is written is expected. When one needs a decision, bring Greg a plain-English case: the options, the trade-offs, and your recommendation.
 
-### Two branches
-- **`main` is production.** What customers see. Agents never push to it.
-- **`next` is the trunk.** Everything in progress lives here. Branch from `next`, squash-merge back to `next`. Vercel builds it as a *preview*, never as production.
-- **Landing `next` on `main` is a release, and a human decides when.** Not an agent, and not as a side effect of finishing a story.
+### Four stages — see [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md)
+```
+lab ──▶ next ──▶ release ──▶ main
+wild    build    dress        live
+west    for real rehearsal
+```
+- **`lab`** — trying an idea. Break it freely; half-finished is normal. Answers *does this feel right*, nothing else.
+- **`next`** — the trunk. A proven idea built properly: typed, tested, on both demo companies, inside the engines. Branch from here for a story, squash-merge back.
+- **`release`** — a frozen candidate running as close to the real thing as we can make it. **Migrations get rehearsed here before production.** Only fixes land on it; new work waits for the next promotion.
+- **`main`** — production. **Only Greg or Nate, only from `release`.** Never an agent, never directly.
+- **Work moves one stage at a time and never skips.** Each step has a written bar in ENVIRONMENTS.md; clearing it is the promotion.
+- **`lab` code is not promoted by copy-paste.** What crosses is the *idea*; what lands meets `next`'s bar. Usually a rewrite, and that is not waste.
 - **Nothing is ever lost.** Retired branches live on as `archive/*` tags — `git tag -l 'archive/*'`, then `git show <tag>` or `git checkout -b recover <tag>`. Clean up freely; the history is there.
 
 ### Working alongside other agents
@@ -66,6 +74,7 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 - **What to build next:** [docs/ROADMAP.md](docs/ROADMAP.md) — start at **▶ Next build**. Features → Stories. **Analytics is design-first: discuss before coding.**
 - **Loose ends and open decisions:** [docs/TASKS.md](docs/TASKS.md) — the shared to-do list. Check it at the start of a session; add to it whenever you notice something you shouldn't fix silently inside someone else's change.
 - **Product/design *why* (personas, formal-vs-delivery, analytics design language, packaging):** [docs/PRODUCT.md](docs/PRODUCT.md). Read once; don't re-derive it in chat.
+- **Where to experiment and what reaches customers:** [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) — the four stages, the bar between each, and the database rules.
 - **Codebase map:** [docs/CODEMAP.md](docs/CODEMAP.md).
 - **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/map/`.
 - **Design sandboxes (feel studies) + archive convention:** [docs/LAB.md](docs/LAB.md).
@@ -73,7 +82,8 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 - **Durable facts** (running locally, gotchas) belong in `docs/`, where every agent can read them — not in any one agent's private memory. *Some still live only in Nate's Claude memory (`~/.claude/projects/-Users-natetgreat-zenhance/memory/`); Nate's agent should move them into `docs/`.*
 
 ## House rules
-- **Branch per story** (`<feature>-<slug>`, no agent prefix), squash-merge to `next`. Patch-bump `package.json` per merge; minor bump when a Feature completes.
+- **Branch per story** (`<feature>-<slug>`, no agent prefix), squash-merge to the stage you branched from — `next` for real work, `lab` for experiments. Patch-bump `package.json` per merge; minor bump when a Feature completes.
+- **Never seed a hosted database.** Every seeder refuses a non-local `DATABASE_URL` (`requireLocalDatabase` in `lib/env.ts`). A seeder writes invented people over real ones and there is no undo.
 - **Make every commit on `next` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
 - **Delete a branch once it's merged or abandoned** — locally and on the remote. Don't delete a branch you didn't create unless it's merged, or its owner has said it's finished.
 - **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser on Sparrow Jam and Digital Tailoring, plus running the large-org layout fixture where relevant. Cheap checks (`npx tsc --noEmit`, tests) still come first.

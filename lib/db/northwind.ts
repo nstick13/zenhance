@@ -22,6 +22,7 @@
  *
  * CLI: `npm run db:northwind` (add `--people=6000 --depth=13` to stress it).
  */
+import { requireLocalDatabase } from "@/lib/env";
 import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
@@ -32,17 +33,6 @@ type Db = PostgresJsDatabase<typeof schema>;
 /** The workspace name. Invented carrier, invented people. */
 export const NORTHWIND_WORKSPACE = "Northwind Trading Group";
 const OWNER = "dev-user";
-
-/** Postgres on this machine. Anything else is someone's real data. */
-export function isLocalDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Fill a workspace with the Northwind shape. Chunked inserts: ~2,500 people
@@ -107,14 +97,7 @@ async function main() {
   config({ path: ".env.local" });
   config();
 
-  const url = process.env.DATABASE_URL;
-  if (!isLocalDatabase(url)) {
-    console.error(
-      "Refusing to seed: DATABASE_URL is not a local database.\n" +
-      "Northwind is a development fixture and must never be written to a hosted database.",
-    );
-    process.exit(1);
-  }
+  requireLocalDatabase("Northwind (~2,560 invented people)");
 
   const arg = (name: string) => {
     const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -123,7 +106,7 @@ async function main() {
 
   const postgres = (await import("postgres")).default;
   const { drizzle } = await import("drizzle-orm/postgres-js");
-  const sql = postgres(url!, { max: 1 });
+  const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
   const db = drizzle(sql, { schema });
 
   const { workspaces, memberships } = schema;

@@ -1,3 +1,4 @@
+import { requireLocalDatabase } from "@/lib/env";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
@@ -467,6 +468,7 @@ async function insertInChunks<T extends Record<string, unknown>>(
 }
 
 async function main() {
+  requireLocalDatabase("the scale fixture (thousands of invented people)");
   const opts = parseArgs();
   const resolved = { ...RESOLVED_DEFAULTS, ...opts };
   const sql = postgres(process.env.DATABASE_URL!, { max: 1 });

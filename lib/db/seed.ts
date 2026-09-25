@@ -1,3 +1,4 @@
+import { requireLocalDatabase } from "@/lib/env";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
@@ -19,6 +20,7 @@ import { applyDemoOrg } from "../data/demoOrg";
 const OWNER = "dev-user";
 
 async function main() {
+  requireLocalDatabase("the demo org seeder");
   const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
   const db = drizzle(sql, { schema });
   const { workspaces, memberships } = schema;

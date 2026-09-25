@@ -150,6 +150,29 @@ in what form, and whether the untouched maths gets rebuilt on or deleted.
 `lineRouting.ts` — listed in [ENGINES.md](ENGINES.md) § *Currently
 unreferenced, kept on purpose*.
 
+### ☐ Give `release` a database of its own
+
+The `release` stage exists to be a dress rehearsal — as close to the real
+thing as we can make it, so a migration or a slow query fails there instead of
+in front of a customer. See [ENVIRONMENTS.md](ENVIRONMENTS.md).
+
+It can't do that job sharing the demo database. It wants a **Neon branch** —
+Neon can make a copy of production's shape and volume with none of its
+consequences — pointed at by `release` only.
+
+**Two things to check or decide, both in dashboards, neither an agent's call:**
+
+1. **What database do preview deployments use today?** If Vercel's preview
+   environment variables were never set separately, every preview build has
+   been reading and writing the **production** database. Five minutes in the
+   Vercel dashboard settles it, and it matters more than anything else on this
+   page.
+2. **Create the Neon branch for `release`** and set `DATABASE_URL` for that
+   branch's deployments. It costs something, so it is a call, not a chore.
+
+Until that exists, `release` is a rehearsal in costume: better than nothing,
+but it will not catch the volume-and-migration problems it is there for.
+
 ### ☐ Point GitHub at the working branch, not production
 
 GitHub has a "default" branch: the one people land on when they open the
@@ -198,21 +221,6 @@ do not let it grow.** Mostly `react-hooks/refs` and one
 `react-hooks/set-state-in-effect`. Real smells in a 3,600-line component with
 54 refs. Best done alongside the runtime extraction below, since several are
 the frame loop reaching into render.
-
-### ☐ Two experiments are sitting in the front room
-
-Experimental pages live under `/lab`, which is effectively a back room nobody
-stumbles into. Two of the "grow" experiments ended up at the front door
-instead — reachable at `/grow-established` and `/grow-large`.
-
-Harmless while this work isn't public. The moment it reaches customers, anyone
-guessing those addresses would find a half-finished experiment. Either move
-them into the back room or decide deliberately to leave them and say why.
-
-*For whoever picks it up:* `app/grow-established/page.tsx`,
-`app/grow-large/page.tsx` — thin aliases of the `app/lab/grow-*` routes.
-
----
 
 ## 🔵 Finishing the engine split
 
@@ -310,3 +318,8 @@ real record.*
   six engines, and make a test hold the line between them"
 - ☑ Camera · Basket · Work · Signal · Growth extracted, then Layout moved —
   "Give every engine its own directory — the split is finished"
+- ☑ Four stages (`lab` → `next` → `release` → `main`), the lab pages gated out
+  of production, and every seeder stopped from writing to a hosted database —
+  "Four stages, so experiments stop leaking into production"
+- ☑ The two grow experiments moved out of the front room (they were duplicate
+  aliases of pages already under `/lab`, so they were simply deleted)
