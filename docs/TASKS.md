@@ -205,6 +205,37 @@ Greg or Nate.
 
 Nothing here needs permission beyond the usual house rules.
 
+### ⏸ pnpm would make extra stages nearly free — attempted, stopped
+
+**The problem it solves:** `node_modules` is 572MB, and npm copies it into
+every checkout. Two stages side by side costs about 1.2GB; four costs 2.4GB.
+pnpm keeps one shared store and hard-links into each project, so the second
+checkout would cost almost nothing.
+
+**Why it's parked (2026-09-25):** corepack couldn't fetch pnpm from the
+sandbox this agent runs in. That left a broken `pnpm` on the PATH — since
+removed, and `npm` is unaffected — but it means the migration can't be
+*verified* here: not the install, not the build, not whether Vercel picks it
+up. Changing how everything installs, without being able to prove it works,
+is the opposite of reducing risk.
+
+**Worth knowing before anyone tries again:** the numbers say this is a
+convenience, not a necessity. Your code is 2.0MB. What a user downloads is
+2.1MB. What Vercel deploys is 23MB. The 572MB is compilers — 286MB of it is
+Next and its Rust compiler, which exist only to produce that 2.1MB. None of it
+ships.
+
+So the honest ranking: `npm run stage:clean` after a comparison keeps this at
+one checkout and costs nothing. pnpm is worth doing when someone wants three
+or four stages live at once, and should be done by a human who can watch a
+Vercel deploy succeed afterwards.
+
+*For whoever picks it up:* `corepack enable pnpm` then `pnpm import` to
+convert the lockfile; add `packageManager` to package.json; add a `preinstall`
+guard so a stray `npm install` can't recreate `package-lock.json`; check
+Vercel detects pnpm (it does, from the lockfile) **before** promoting to
+`main`.
+
 ### ☐ Nothing checks our work automatically
 
 Most software projects have a robot that inspects every change the moment it
@@ -339,3 +370,8 @@ real record.*
   "Four stages, so experiments stop leaking into production"
 - ☑ The two grow experiments moved out of the front room (they were duplicate
   aliases of pages already under `/lab`, so they were simply deleted)
+- ☑ Four stages runnable side by side on their own ports — "Run any two
+  stages at once, on their own ports"
+- ☑ README rewritten from `create-next-app` boilerplate; `puppeteer-core`,
+  a dead screenshot script and five screenshots of a deleted map removed —
+  "Clear out what nobody reads, and fix the front door"

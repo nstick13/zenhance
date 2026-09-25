@@ -27,7 +27,7 @@
  * of them at once, and cleaning up refuses to throw any of it away.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -172,6 +172,16 @@ function clean() {
     console.log(`  removed  ${stage} (${path})`);
   }
   git(["worktree", "prune"]);
+
+  // A build cache is ~200MB of regenerable noise. Clearing it in checkouts we
+  // had to keep gets most of the disk back without touching anyone's work.
+  for (const [stage] of Object.entries(STAGES)) {
+    const path = live[stage];
+    if (!path || path === REPO || !existsSync(join(path, ".next"))) continue;
+    rmSync(join(path, ".next"), { recursive: true, force: true });
+    console.log(`  cleared  ${stage}'s build cache (regenerates on next run)`);
+  }
+
   if (removed === 0 && kept === 0) console.log("  nothing to clean up");
   console.log("");
 }
