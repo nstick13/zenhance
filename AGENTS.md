@@ -37,6 +37,7 @@ Speed comes first (rule 2), but never across these.
 ### Working alongside other agents
 - **One repo, one trunk, no agent's private corner.** Greg (2026-09-24): *"There shouldn't be differing branches for Codex or Claude — I want you to read and edit as much Codex-written stuff as Codex does yours."* So: **no `codex/` or `claude/` branch prefixes.** Branches are named for the work (`<feature>-<slug>`), whoever does it, and any agent may read, edit, critique or fix any file regardless of who wrote it.
 - **The repo is the only shared channel.** Agents can't see each other's chats or private memory. Decisions and their reasons go in the docs under *Where things live* — including approaches tried and abandoned, so nobody spends a day rediscovering a dead end. Commit messages say *why*, not just what.
+- **Noticed something you shouldn't fix here? Write it in [docs/TASKS.md](docs/TASKS.md).** Fixing an unrelated thing inside someone else's change hides it; leaving it in a chat window loses it. Claim a task by marking it `▶` with your name **and pushing that** before you start, so two agents don't do the same work.
 - **`git fetch` before starting, and again before any merge or push.** `next` moves underneath you.
 - **An unfamiliar commit is someone's deliberate work.** Read it before you build over it or revert it.
 - **Don't work in a private worktree.** Three stale worktrees on 2026-09-24 held 46 uncommitted files between them, invisible to everyone else. Work in the repo, commit often, push to `next`.
@@ -62,6 +63,7 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 
 ## Where things live
 - **What to build next:** [docs/ROADMAP.md](docs/ROADMAP.md) — start at **▶ Next build**. Features → Stories. **Analytics is design-first: discuss before coding.**
+- **Loose ends and open decisions:** [docs/TASKS.md](docs/TASKS.md) — the shared to-do list. Check it at the start of a session; add to it whenever you notice something you shouldn't fix silently inside someone else's change.
 - **Product/design *why* (personas, formal-vs-delivery, analytics design language, packaging):** [docs/PRODUCT.md](docs/PRODUCT.md). Read once; don't re-derive it in chat.
 - **Codebase map:** [docs/CODEMAP.md](docs/CODEMAP.md).
 - **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/map/`.
