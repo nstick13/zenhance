@@ -197,13 +197,17 @@ export async function seedDemoCompanyInto(
 }
 
 async function main() {
-  requireLocalDatabase("the demo companies seeder (Sparrow Jam, Digital Tailoring)");
   // CLI-only bootstrap. Kept inside main() so importing this module from the
   // app (for the in-app "start from an example" action) doesn't run dotenv or
   // open a second connection pool.
   const { config } = await import("dotenv");
   config({ path: ".env.local" });
   config();
+
+  // After the env files load, never before: DATABASE_URL usually comes from
+  // .env.local, and a guard that runs first sees nothing and refuses a
+  // perfectly good local run.
+  requireLocalDatabase("the demo companies seeder (Sparrow Jam, Digital Tailoring)");
 
   const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
   const db = drizzle(sql, { schema });
