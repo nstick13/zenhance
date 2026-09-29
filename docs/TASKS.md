@@ -201,6 +201,36 @@ Greg or Nate.
 
 ---
 
+### ☐ One team fills the whole screen, and its neighbours vanish
+
+On the shipped map, zoom in far enough to see a team's people and that team
+takes over the screen — everything around it is off the edge. Greg described
+it on 2026-09-29 as having to *"zoom to practically Planck lengths"* to see a
+person, and losing all the context around them when you do.
+
+**This is not the layout's fault, which is why it needs its own task.** A
+team's own dot is about 13 units across. The room it must reserve for its
+people and their work boards is about 190 — **fourteen times bigger than the
+thing it belongs to** — and that room is reserved at every zoom, including the
+whole-company view where none of it is drawn. So the map is roughly an order
+of magnitude larger than the overview needs, which is also why crossing a big
+company takes so much zooming.
+
+The hex grid study on `lab` confirmed this is independent of how units are
+positioned: moving everything onto a grid packed the company 31 times smaller
+by area and the imbalance was completely unchanged.
+
+Nothing is being asked of Greg or Nate yet. Someone needs to decide what a
+person and a work board should claim at each zoom before this can be built.
+
+*For whoever picks it up:* `SEAT_RING_STEP` (136) and `UNIT_RADIUS` (13.4) in
+`lib/map/layout/geometry.ts` are the ratio. `unitOuterExtent` is what the
+layouts reserve. `REVEAL_BANDS.people` in `lib/map/camera/lod.ts` is 1.7x, so
+people are invisible for almost the whole zoom range the room is held for. The
+fix is probably that furniture claims *screen* size within a bounded set rather
+than world size — the same move `drawnUnitRadius` already makes for unit discs.
+Background and measurements: `docs/HEX-LAYOUT.md` § What it does not fix.
+
 ## 🟢 Ready for any agent
 
 Nothing here needs permission beyond the usual house rules.

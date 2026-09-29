@@ -36,6 +36,23 @@ export type DeepOrgOptions = {
   seed?: number;
   /** Name for the root unit. Defaults to the invented carrier's name. */
   rootName?: string;
+  /**
+   * How many children a unit may have. Default `[2, 5]`, which is the shape
+   * this fixture has always produced.
+   *
+   * It is an option because of what it hid. On 2026-09-29, sizing up the hex
+   * grid, every company we owned turned out to be capped at **four** children
+   * anywhere — Northwind, Digital Tailoring and Sparrow Jam alike. A real org
+   * has spans of ten to twenty (the practitioner in FEEDBACK.md ran 90 pods),
+   * and a layout's behaviour under a wide span is completely different from
+   * its behaviour under a narrow one. We had no fixture that could show it.
+   *
+   * The range applies to the deep rungs; the top two rungs branch one wider,
+   * as they always have. Existing callers are untouched: leave it out and the
+   * shape is bit-for-bit what it has always been, so every measurement
+   * recorded against this fixture still means what it said.
+   */
+  span?: [min: number, max: number];
 };
 
 export type DeepOrg = {
@@ -133,7 +150,10 @@ export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): De
    */
   const grow = (parent: OrgUnit, depth: number) => {
     if (peopleBudget <= 0) return;
-    const childCount = depth <= 1 ? 3 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 3);
+    const [spanMin, spanMax] = opts.span ?? [2, 4];
+    const spread = Math.max(1, spanMax - spanMin + 1);
+    const base = depth <= 1 ? spanMin + 1 : spanMin;
+    const childCount = base + Math.floor(rng() * spread);
     for (let i = 0; i < childCount && peopleBudget > 0; i++) {
       // Shallow rungs almost always branch; deep ones almost always deliver.
       const teamChance = depth < 2 ? 0.06 : Math.min(0.85, 0.12 + depth * 0.09);

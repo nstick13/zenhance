@@ -57,6 +57,12 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/map/layout/size.ts": "layout",
   "lib/map/layout/model.ts": "layout",
   "lib/map/layout/snap.ts": "layout",
+  // The hex grid study (2026-09-29). Layout, unambiguously: it answers
+  // "where does every node sit" and nothing else. It sits beside the
+  // orbital engine rather than replacing it — see docs/HEX-LAYOUT.md.
+  "lib/map/layout/hex/coords.ts": "layout",
+  "lib/map/layout/hex/allocate.ts": "layout",
+  "lib/map/layout/hex/scene.ts": "layout",
 
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
   "lib/map/camera/focus.ts": "camera",
