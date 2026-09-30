@@ -178,8 +178,10 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | Auto-arrange flavours (linear, spiral, geographical, radial) | **not built**; Tidy up returns to the calculated layout |
 | Siblings, parent and children shown on hover | **built** |
 | Connection lines routed along the lattice's own angles, chunky and dark | **built** |
-| A node inset in its cell, sized by how deep it sits | **built** |
+| A node inset in its cell, sized by how deep it sits | **built** — a tenth of the cell at the deepest rung |
 | Permanent self-coloured chains back to the parent | **built** |
+| No borders on the tiles; an occupied cell only a shade darker than the page | **built** |
+| The outline wraps the whole branch, or the immediate family for a leaf | **built** — `hoverGroup` |
 
 Nothing persists. A refresh returns the company to its calculated arrangement.
 
@@ -213,13 +215,21 @@ based on how many strata there are. Eg: master central: 100%; master central
 +1: 75%; team/master central +2: 50%."*
 
 `nodeAreaFraction(depth, maxDepth)` in `scene.ts`: the company keeps all of its
-cell, **the deepest rung keeps a quarter of the area** (halved again on
-2026-09-30 after Greg saw 50% — *"let's make the size of the team nodes 25% the
-size of the hosting tile"*), and the rungs between step evenly, so the step
-size follows from how many rungs a company has rather than being a number
-anyone tuned. `nodeScale` is the same rule as a *linear* scale, which is what a
-radius wants: a quarter of the area is **half** the width, not a quarter of it.
-Halving the radius instead would draw a team at a sixteenth of the area.
+cell, **the deepest rung keeps a tenth of the area** — stepped down from a half to a
+quarter to a tenth over one afternoon of Greg looking at it, *"the added
+variation in size is helping a lot"* — and the rungs between step evenly, so
+the step size follows from how many rungs a company has rather than being a
+number anyone tuned. `nodeScale` is the same rule as a *linear* scale, which is
+what a radius wants: a tenth of the area is **32%** of the width, not a tenth
+of it. Using the area figure as a radius scale would draw a team at one percent
+of what was asked for.
+
+**Deferred, and it will matter.** At a tenth of the cell, a team's node is
+smaller than the ring its people orbit on, so at the zoom where people appear
+they sit outside their own hexagon. Greg parked it on 2026-09-30 — *"we can
+worry about zoom and human nodes later"* — but it is the seam between this
+sizing rule and `geometry.ts`, and whichever gets decided second will have to
+give.
 
 Two things follow from the gap this opens up:
 
@@ -324,6 +334,18 @@ starves — the quota has to carry slack at *every* level, not only the top.
 The remaining 12% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
+
+### What the outline wraps
+
+Greg, 2026-09-30: *"the black outline should run around a node and all its
+children, grandchildren, and so on — it should wrap the whole branch the
+hovered tile births **unless** it's a child node with no children, in which case
+the outline should outline the immediate family group: siblings and parent."*
+
+`hoverGroup` in `arrange.ts`. Point at a manager and the outline asks *what do
+you run?* — the whole branch, however deep. Point at a team that runs nothing
+and that question has no answer, so it asks the only other one worth asking:
+*who are you with?* — your parent and your siblings.
 
 ### The outline bug that six tests missed
 

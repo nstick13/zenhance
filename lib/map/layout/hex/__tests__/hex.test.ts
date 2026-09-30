@@ -327,13 +327,16 @@ describe("a company that branches wider than a hexagon has sides", () => {
 });
 
 describe("how much of its cell a node fills", () => {
-  it("gives the company all of its cell and the deepest rung a quarter, by area", () => {
+  it("gives the company all of its cell and the deepest rung a tenth, by area", () => {
     expect(nodeAreaFraction(0, 12)).toBe(1);
-    expect(nodeAreaFraction(12, 12)).toBe(0.25);
+    expect(nodeAreaFraction(12, 12)).toBeCloseTo(0.1, 12);
   });
 
-  it("steps a three-rung company 100 / 62.5 / 25", () => {
-    expect([0, 1, 2].map((d) => nodeAreaFraction(d, 2))).toEqual([1, 0.625, 0.25]);
+  it("steps a three-rung company 100 / 55 / 10", () => {
+    const [a, b, c] = [0, 1, 2].map((d) => nodeAreaFraction(d, 2));
+    expect(a).toBe(1);
+    expect(b).toBeCloseTo(0.55, 12);
+    expect(c).toBeCloseTo(0.1, 12);
   });
 
   it("steps evenly however many rungs there are", () => {
@@ -348,17 +351,17 @@ describe("how much of its cell a node fills", () => {
     for (const max of [1, 3, 12]) {
       for (let d = 0; d <= max; d++) {
         expect(nodeAreaFraction(d, max)).toBeLessThanOrEqual(1);
-        expect(nodeAreaFraction(d, max)).toBeGreaterThanOrEqual(0.25);
+        expect(nodeAreaFraction(d, max)).toBeGreaterThanOrEqual(0.1 - 1e-12);
         if (d > 0) expect(nodeAreaFraction(d, max)).toBeLessThan(nodeAreaFraction(d - 1, max));
       }
     }
   });
 
-  it("converts area to size through the square root, not by halving", () => {
-    // A quarter of the area is *half* the width. Halving the radius instead
-    // would draw a team at a sixteenth of the area asked for, which is the
-    // whole reason this is two functions rather than one.
-    expect(nodeScale(12, 12)).toBeCloseTo(0.5, 12);
+  it("converts area to size through the square root, not by scaling the radius", () => {
+    // A tenth of the area is 32% of the width. Using the area figure as a
+    // radius scale would draw a team at one percent of what was asked for,
+    // which is the whole reason this is two functions rather than one.
+    expect(nodeScale(12, 12)).toBeCloseTo(Math.sqrt(0.1), 12);
     expect(nodeScale(0, 12)).toBe(1);
   });
 

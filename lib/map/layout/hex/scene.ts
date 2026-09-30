@@ -108,7 +108,7 @@ export function hexSizeFor(density: HexDensity): number {
  * the gap is what tells two peers apart — and what gives the chain lines
  * somewhere to run.
  */
-const TEAM_SHARE_LOSS = 0.75;
+const TEAM_SHARE_LOSS = 0.9;
 
 export function nodeAreaFraction(depth: number, maxDepth: number): number {
   if (maxDepth <= 0) return 1;

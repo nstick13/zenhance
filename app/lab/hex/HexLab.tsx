@@ -30,7 +30,7 @@ import { allocate } from "@/lib/map/layout/hex/allocate";
 import {
   branchOf,
   dropOutcome,
-  metaConnected,
+  hoverGroup,
   outline,
   placeIsland,
   type DropOutcome,
@@ -134,7 +134,6 @@ export default function HexLab({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
   const [density, setDensity] = useState<HexDensity>(initialDensity);
-  const [showGrid, setShowGrid] = useState(true);
   const [mode, setMode] = useState<"hex" | "orbits">("hex");
   const [hover, setHover] = useState<string | null>(null);
 
@@ -307,17 +306,11 @@ export default function HexLab({
       }
     }
 
-    // 2. The lattice, once a hexagon is big enough on screen to read as a
-    //    shape. Below that it is hatching, not a grid.
-    const cellPx = hexSize * scale;
-    if (hexScene && showGrid && cellPx > 12) {
-      ctx.lineWidth = Math.max(0.4, 0.8 / scale);
-      ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.5, (cellPx - 12) / 90)})`;
-      for (const unit of visible) {
-        const cell = hexScene.hex.cells.get(unit.id);
-        if (cell) { hexPath(cell); ctx.stroke(); }
-      }
-    }
+    // 2. No borders on the tiles themselves. Greg, 2026-09-30: *"grid tiles
+    //    (background) should not show borders; but I like that occupied grid
+    //    tiles are slightly darker than the aether grid."* The wash above is
+    //    the whole of it — an occupied cell is a shade darker than the page and
+    //    nothing draws its edges.
 
     // 2b. The chains. Greg, 2026-09-30: *"sibling nodes should have
     //     self-coloured connection lines that are permanently visible and chain
@@ -341,7 +334,9 @@ export default function HexLab({
         for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
-        ctx.lineWidth = Math.max(0.6, hexSize * 0.09 * nodeScale(unit.depth, maxDepth));
+        // Three times what it was (Greg, 2026-09-30). Still scaled by the
+        // node, so the trunk stays heavier than the twigs.
+        ctx.lineWidth = Math.max(0.6, hexSize * 0.27 * nodeScale(unit.depth, maxDepth));
         ctx.strokeStyle = css(hueFor(unit.id), unit.depth, maxDepth, 0.95);
         ctx.stroke();
       }
@@ -393,7 +388,9 @@ export default function HexLab({
     const childIds = new Set(focusUnit?.childIds ?? []);
 
     if (hexScene && focusId) {
-      const family = metaConnected(tree, focusId);
+      // The whole branch when the tile runs something; its parent and siblings
+      // when it runs nothing. See `hoverGroup`.
+      const family = hoverGroup(tree, focusId);
       const cells = [...family].map((id) => hexScene.hex.cells.get(id)).filter(Boolean) as Cell[];
       if (cells.length) {
         ctx.beginPath();
@@ -583,7 +580,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, size, hover, showGrid, regions, regionOrder, maxDepth, drag, pending, tree]);
+  }, [camera, scene, hexScene, size, hover, regions, regionOrder, maxDepth, drag, pending, tree]);
 
   // --- input ---------------------------------------------------------------
 
@@ -789,7 +786,6 @@ export default function HexLab({
           {(["roomy", "tight"] as HexDensity[]).map((d) => (
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
           ))}
-          <Btn small onClick={() => setShowGrid((g) => !g)} active={showGrid && mode === "hex"} disabled={mode !== "hex"}>grid</Btn>
           <Btn small onClick={fit}>fit</Btn>
         </Row>
         {(moves.size > 0 || reparents.size > 0) && (

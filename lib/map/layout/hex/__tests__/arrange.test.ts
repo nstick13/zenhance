@@ -9,6 +9,7 @@ import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import {
   branchOf,
   dropOutcome,
+  hoverGroup,
   metaConnected,
   nearestFreeCell,
   outline,
@@ -229,6 +230,25 @@ describe("the outline round meta-connected tiles", () => {
   it("goes round a family including a tile sitting apart from it", () => {
     const family = metaConnected(tree, "north");
     expect(family).toEqual(new Set(["sales", "north", "south"]));
+  });
+
+  it("wraps the whole branch when the tile runs something", () => {
+    expect(hoverGroup(tree, "sales")).toEqual(new Set(["sales", "north", "south"]));
+    expect(hoverGroup(tree, "company"))
+      .toEqual(new Set(["company", "sales", "eng", "north", "south", "web", "api"]));
+  });
+
+  it("wraps the immediate family when the tile runs nothing", () => {
+    // north has no children, so the question becomes "who are you with".
+    expect(hoverGroup(tree, "north")).toEqual(new Set(["sales", "north", "south"]));
+    expect(hoverGroup(tree, "web")).toEqual(new Set(["eng", "web", "api"]));
+  });
+
+  it("does not reach sideways out of a branch it wraps", () => {
+    // Pointing at Sales must never pull Engineering in, however they sit.
+    const group = hoverGroup(tree, "sales");
+    expect(group.has("eng")).toBe(false);
+    expect(group.has("company")).toBe(false);
   });
 });
 

@@ -190,6 +190,25 @@ export function metaConnected(tree: OrbitalTree, unitId: string): Set<string> {
   return new Set([anchor.id, ...anchor.childIds]);
 }
 
+/**
+ * What the outline goes round when you point at a tile (Greg, 2026-09-30).
+ *
+ * *"The black outline should run around a node and all its children,
+ * grandchildren, and so on — it should wrap the whole branch the hovered tile
+ * births **unless** it's a child node with no children, in which case the
+ * outline should outline the immediate family group: siblings and parent."*
+ *
+ * So the question the outline answers depends on what you pointed at. Point at
+ * a manager and it asks *what do you run?* — the whole branch. Point at a team
+ * that runs nothing and that question has no answer, so it asks the only other
+ * one worth asking: *who are you with?* — your parent and your siblings.
+ */
+export function hoverGroup(tree: OrbitalTree, unitId: string): Set<string> {
+  const unit = tree.units.get(unitId);
+  if (!unit) return new Set();
+  return unit.childIds.length > 0 ? branchOf(tree, unitId) : metaConnected(tree, unitId);
+}
+
 export type Segment = { from: Point; to: Point };
 
 /**
