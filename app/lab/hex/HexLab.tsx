@@ -692,12 +692,13 @@ export default function HexLab({
       const target = worldToCell(world, hexScene.hex.size);
       if (cellKey(target) === cellKey(drag.target)) return;
       const landing = placeIsland(allocation.occupants, drag.members, drag.unitId, target);
+      const asks = landing.kind === "reshaped";
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
       setDrag({
         ...drag, world, target,
         landing: landing.kind === "no-room" ? null : landing.cells,
-        reshaped: landing.kind === "reshaped",
+        reshaped: asks,
         heldOver: over && !drag.members.has(over) ? over : null,
         holdSince: stillOver ? drag.holdSince : performance.now(),
       });
@@ -732,6 +733,8 @@ export default function HexLab({
     } else if (!drag.landing) {
       setPending({ kind: "blocked", unitId: drag.unitId, occupiedBy: "", cells: null });
     } else if (drag.reshaped) {
+      // Only a family that was whole gets asked about. One already in pieces is
+      // being gathered, and there is nothing to mourn.
       setPending({ kind: "reshape", unitId: drag.unitId, cells: drag.landing });
     } else if (outcome.kind === "offer-reparent") {
       setPending({
@@ -878,8 +881,9 @@ export default function HexLab({
             </Row>
             {tidyReport && (
               <Small style={{ color: "#166534" }}>
-                gathered {tidyReport.gathered}, turned {tidyReport.turned} ·
-                {" "}cousin clashes {tidyReport.before.cousins} → {tidyReport.after.cousins}
+                gathered {tidyReport.gathered}, turned {tidyReport.turned} · chains through
+                tiles {tidyReport.tilesBefore} → {tidyReport.tilesAfter} · line-on-line{" "}
+                {tidyReport.before.cousins} → {tidyReport.after.cousins}
               </Small>
             )}
           </>

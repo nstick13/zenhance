@@ -160,12 +160,61 @@ const chainsCross = (a: Chain, b: Chain): boolean => {
   return false;
 };
 
+/**
+ * How close a chain passes to a tile it does not belong to.
+ *
+ * **This is the measure that matters, and it took a while to find.** Chain-on-
+ * chain clashes were 32 across the whole 2,562-person company while
+ * *"connection lines now seem to cross a lot more"* was the complaint — because
+ * 54% of chains were running through the middle of somebody's tile, which the
+ * chain-on-chain count cannot see at all. An X between two lines reads as a
+ * junction; a line through a tile reads as a mistake.
+ *
+ * A run along a corner direction is tangent to the cells it passes — exactly
+ * one inradius from each centre — so the threshold sits well inside that.
+ */
+const THROUGH_SHARE = 0.55;
+
+const distanceToSegment = (p: Point, q: Point, c: Point): number => {
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((c.x - p.x) * dx + (c.y - p.y) * dy) / len2)) : 0;
+  return Math.hypot(c.x - (p.x + dx * t), c.y - (p.y + dy * t));
+};
+
+/** How many (chain, tile) pairs have the chain running through the tile. */
+export function countTilesCrossed(
+  chains: readonly Chain[],
+  cells: ReadonlyMap<string, Cell>,
+  size: number,
+): number {
+  const room = (size * Math.sqrt(3)) / 2;
+  const world: [string, Point][] = [...cells].map(([id, c]) => [id, cellToWorld(c, size)]);
+  let total = 0;
+  for (const chain of chains) {
+    for (const [id, centre] of world) {
+      if (id === chain.unitId || id === chain.parentId) continue;
+      for (let i = 0; i + 1 < chain.points.length; i++) {
+        if (distanceToSegment(chain.points[i], chain.points[i + 1], centre) < room * THROUGH_SHARE) {
+          total++;
+          break;
+        }
+      }
+    }
+  }
+  return total;
+}
+
 export type NeatenResult = {
   cells: Map<string, Cell>;
   /** How many branches travelled back to their family, and how many were
    *  turned to face the right way — with what it did to the crossings. */
   gathered: number;
   turned: number;
+  /** (chain, tile) pairs where the chain runs through the tile. */
+  tilesBefore: number;
+  tilesAfter: number;
   before: { siblings: number; cousins: number };
   after: { siblings: number; cousins: number };
 };
@@ -196,6 +245,7 @@ export function neaten(
   let gathered = 0;
   let allChains = chainsOf(tree, placed, size);
   const before = countCrossings(allChains);
+  const tilesBefore = countTilesCrossed(allChains, placed, size);
   let turned = 0;
 
   // --- phase one: gather the stragglers ------------------------------------
@@ -351,14 +401,22 @@ export function neaten(
           else cousinHits++;
         }
       }
+      // And the one that actually reads as a mess: a chain through a tile.
+      const throughTiles = countTilesCrossed(branchChains, turnedCells, size);
 
       // Cousins are what Greg asked to clear; siblings are allowed to converge
       // on their shared parent and cost a tenth as much. Facing the right way
       // is the tie-break, and a tie goes to leaving the branch alone — turning
       // one that gains nothing is churn, and churn in a hand-made arrangement
       // is its own cost.
+      // A chain through a tile is worth more than a chain across a chain: one
+      // looks like a mistake, the other looks like a junction. Cousins then
+      // count ten times siblings, because siblings are bound to converge on
+      // their shared parent. Facing the right way is the tie-break.
       const score =
-        -(cousinHits * 10 + siblingHits) + outward * 0.5 + (steps === 0 ? 1e-6 : 0);
+        -(throughTiles * 30 + cousinHits * 10 + siblingHits)
+        + outward * 0.5
+        + (steps === 0 ? 1e-6 : 0);
       if (score > bestScore) { bestScore = score; bestSteps = steps; }
     }
 
@@ -371,11 +429,14 @@ export function neaten(
     turned++;
   }
 
+  const finalChains = chainsOf(tree, placed, size);
   return {
     cells: placed,
     turned,
     gathered,
     before,
-    after: countCrossings(chainsOf(tree, placed, size)),
+    after: countCrossings(finalChains),
+    tilesBefore,
+    tilesAfter: countTilesCrossed(finalChains, placed, size),
   };
 }

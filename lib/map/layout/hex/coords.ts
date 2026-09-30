@@ -69,6 +69,21 @@ export const DIRECTIONS: readonly Cell[] = [
   { q: 0, r: 1 },   // south-east
 ] as const;
 
+/**
+ * The six **corner** directions: where two neighbour directions point together.
+ * In world space they run at 0°, 60°, 120°, 180°, 240° and 300° — the other
+ * half of the angles a flat-top hexagon defines, and the line from a cell to
+ * one of these is tangent to the two cells it passes between rather than
+ * through either of them.
+ */
+export const DIAGONALS: readonly Cell[] = [
+  { q: 1, r: 1 }, { q: 2, r: -1 }, { q: 1, r: -2 },
+  { q: -1, r: -1 }, { q: -2, r: 1 }, { q: -1, r: 2 },
+] as const;
+
+/** All twelve, nearest first — a neighbour is a shorter hop than a corner. */
+export const ALL_DIRECTIONS: readonly Cell[] = [...DIRECTIONS, ...DIAGONALS];
+
 export const add = (a: Cell, b: Cell): Cell => ({ q: a.q + b.q, r: a.r + b.r });
 export const subtract = (a: Cell, b: Cell): Cell => ({ q: a.q - b.q, r: a.r - b.r });
 export const scale = (cell: Cell, k: number): Cell => ({ q: cell.q * k, r: cell.r * k });
@@ -226,6 +241,28 @@ export const corners = (cell: Cell, size: number): Point[] =>
 export function axialRoute(from: Cell, to: Cell, size: number): Point[] {
   const delta = subtract(to, from);
   if (delta.q === 0 && delta.r === 0) return [cellToWorld(from, size)];
+
+  // A single straight run, if the destination lies along **any** of the twelve
+  // directions a hexagon offers — not just the six that lead to a neighbour.
+  //
+  // This was six until 2026-09-30, and the omission was expensive. The six
+  // neighbour directions are the edge normals, at 30°, 90°, 150° and their
+  // opposites. A hexagon also has six *corner* directions, at 0°, 60°, 120° and
+  // theirs, and those are just as much "angles that define the hexagon".
+  //
+  // The cell two steps away between two neighbours sits along a corner
+  // direction. Routed on the six, it needs a bend — and the only place to bend
+  // is the middle of the cell in between, which on a fan of children is always
+  // occupied. **Every one of the 169 two-step chains on the 2,562-person
+  // company ran through the centre of a sibling.** Along the corner direction
+  // it is one straight line, tangent to both neighbours, crossing nothing.
+  for (const dir of ALL_DIRECTIONS) {
+    const k = dir.q !== 0 ? delta.q / dir.q : delta.r / dir.r;
+    if (!Number.isInteger(k) || k <= 0) continue;
+    if (dir.q * k === delta.q && dir.r * k === delta.r) {
+      return [cellToWorld(from, size), cellToWorld(to, size)];
+    }
+  }
 
   for (let i = 0; i < 6; i++) {
     const d1 = DIRECTIONS[i];

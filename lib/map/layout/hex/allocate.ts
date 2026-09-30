@@ -73,7 +73,7 @@ import {
   cellKey,
   hexDistance,
   neighbours,
-  ring,
+  ring as ringCells,
   spiral,
   worldAngle,
 } from "@/lib/map/layout/hex/coords";
@@ -210,13 +210,57 @@ export function allocate(tree: OrbitalTree): Allocation {
   };
 
   /**
-   * The best free cell on the edge of a family — the parent plus every sibling
-   * already seated — for a child heading `desired` from its parent.
+   * Where a child sits: on a **fan round its own parent**, not on the family's
+   * outer edge.
    *
-   * This is rule 1. Everything else in this file was already here; letting the
-   * search consider a sibling's edge as well as the parent's is the whole
-   * change, and it is what makes a span of twenty cost nothing.
+   * This replaced a search over every cell touching any already-seated sibling,
+   * which produced tightly packed blobs. Blobs measured well on the thing being
+   * counted — chain-on-chain clashes were 32 across the whole 2,562-person
+   * company — and terribly on the thing that actually reads as a mess:
+   * **54% of chains ran straight over somebody else's tile**, because a chain
+   * from a parent to the far side of its own blob has to cross the siblings in
+   * between. Greg saw it immediately and the metric did not.
+   *
+   * So: ring 1 first (six cells, five once the way home is taken), then ring 2
+   * for the overflow — which is Greg's *"if a parent has more than six
+   * children, then we can push a bunch of the child nodes out further so we can
+   * see the connection line."*
+   *
+   * **Ring 2 has two kinds of cell and only one of them is any use.** Six sit
+   * directly behind a ring-1 cell, two steps along the same axis, so a chain to
+   * one of them runs straight through whoever is in front. The other six sit
+   * between two ring-1 cells, and a chain threads the gap. Corners are
+   * therefore heavily penalised, and taken only when nothing else is free.
    */
+  const RING_COST = 1000;
+  const BEHIND_A_SIBLING = 420;
+
+  const findFanCell = (parentCell: Cell, desired: number): Cell | null => {
+    let best: Cell | null = null;
+    let bestScore = -Infinity;
+    for (let ring = 1; ring <= 2; ring++) {
+      for (const candidate of ringCells(parentCell, ring)) {
+        if (occupants.has(cellKey(candidate))) continue;
+        const deviation = (angleGap(worldAngle(parentCell, candidate, SIZE), desired) * 180) / Math.PI;
+        // A ring-2 cell two steps along an axis has a ring-1 cell in front of
+        // it; one between two axes has clear ground to the parent.
+        const behind = ring === 2 && DIRECTIONS.some(
+          (d) => candidate.q - parentCell.q === d.q * 2 && candidate.r - parentCell.r === d.r * 2,
+        );
+        const score =
+          -ring * RING_COST
+          - (behind ? BEHIND_A_SIBLING : 0)
+          - deviation * DEGREE_PENALTY
+          + elbowRoom(candidate) * SPACE_WEIGHT;
+        if (score > bestScore) { bestScore = score; best = candidate; }
+      }
+      if (best) return best; // never reach further out than we have to
+    }
+    return best;
+  };
+
+  /** Any free cell touching the family — the fallback when a parent's own fan
+   *  is completely built over. Keeps a family connected when the fan cannot. */
   const findFamilyCell = (family: readonly Cell[], parentCell: Cell, desired: number): Cell | null => {
     const seen = new Set<string>();
     let best: Cell | null = null;
@@ -227,8 +271,6 @@ export function allocate(tree: OrbitalTree): Allocation {
         if (seen.has(key) || occupants.has(key)) continue;
         seen.add(key);
         const deviation = (angleGap(worldAngle(parentCell, candidate, SIZE), desired) * 180) / Math.PI;
-        // Close to the parent keeps a family compact rather than snaking, and
-        // compactness is now the only thing saying "these belong together".
         const score =
           elbowRoom(candidate) * SPACE_WEIGHT
           - deviation * DEGREE_PENALTY
@@ -245,7 +287,7 @@ export function allocate(tree: OrbitalTree): Allocation {
     for (let k = 1; k <= MAX_SEARCH_RING; k++) {
       let best: Cell | null = null;
       let bestScore = -Infinity;
-      for (const candidate of ring(from, k)) {
+      for (const candidate of ringCells(from, k)) {
         if (occupants.has(cellKey(candidate))) continue;
         const deviation = (angleGap(worldAngle(from, candidate, SIZE), desired) * 180) / Math.PI;
         const score = elbowRoom(candidate) * SPACE_WEIGHT - deviation * DEGREE_PENALTY;
@@ -287,7 +329,8 @@ export function allocate(tree: OrbitalTree): Allocation {
     const family: Cell[] = [parentCell];
     kids.forEach((kid, i) => {
       const branch = parent.id === root.id ? kid.id : branchOf.get(parent.id) ?? kid.id;
-      const onEdge = findFamilyCell(family, parentCell, wanted[i]);
+      const onFan = findFanCell(parentCell, wanted[i]);
+      const onEdge = onFan ?? findFamilyCell(family, parentCell, wanted[i]);
       const cell = onEdge ?? findCell(parentCell, wanted[i])?.cell ?? null;
       if (!cell) return; // pathological only; MAX_SEARCH_RING is generous
       take(kid, cell, hexDistance(cell, parentCell), branch, onEdge !== null);

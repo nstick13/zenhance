@@ -264,8 +264,42 @@ export function outline(cells: readonly Cell[], size: number): Segment[] {
  */
 export type IslandLanding =
   | { kind: "fits"; cells: Map<string, Cell> }
+  /** It would not go in as it stood, and it was worth keeping — so the caller
+   *  should ask before this is committed. */
   | { kind: "reshaped"; cells: Map<string, Cell> }
+  /** It would not go in as it stood and it was already in pieces, so being
+   *  reflowed is a tidy rather than a loss. Greg, 2026-09-30: *"if we drag a
+   *  parental node that's got exclave child nodes on it to an area of vacant
+   *  space large enough for the whole family, then it should auto-tidy that
+   *  family grouping."* No dialog — there is nothing to mourn. */
+  | { kind: "gathered"; cells: Map<string, Cell> }
   | { kind: "no-room" };
+
+/** Is this set of cells one connected patch? */
+export function isOnePatch(cells: Iterable<Cell>): boolean {
+  // Materialise once. `Map.values()` is an iterator, and spreading it twice
+  // leaves the second spread empty — which quietly reported every scattered
+  // family as whole.
+  const list = [...cells];
+  const keys = new Set(list.map(cellKey));
+  const first = list[0];
+  if (!first) return true;
+  const seen = new Set([cellKey(first)]);
+  const queue = [first];
+  while (queue.length) {
+    const c = queue.pop()!;
+    for (const n of neighbours(c)) {
+      const k = cellKey(n);
+      if (keys.has(k) && !seen.has(k)) { seen.add(k); queue.push(n); }
+    }
+  }
+  return seen.size === keys.size;
+}
+
+/** How far a landing may be nudged to keep a branch's shape. Two rings is
+ *  eighteen cells — enough to slip past a stray neighbour, small enough that
+ *  the branch still lands where the hand meant. */
+const NUDGE_RINGS = 2;
 
 export function placeIsland(
   occupancy: Occupancy,
@@ -281,18 +315,53 @@ export function placeIsland(
     return !who || moving.has(who);
   };
 
-  // The silhouette people have learnt, offset to the new anchor.
-  const shifted = new Map<string, Cell>();
-  let fits = true;
-  for (const [id, cell] of members) {
-    const moved = {
-      q: cell.q - anchor.q + target.q,
-      r: cell.r - anchor.r + target.r,
-    };
-    if (!free(moved)) fits = false;
-    shifted.set(id, moved);
+  /** The silhouette people have learnt, offset to a candidate anchor. */
+  const shapeAt = (at: Cell) => {
+    const out = new Map<string, Cell>();
+    let fits = true;
+    for (const [id, cell] of members) {
+      const moved = { q: cell.q - anchor.q + at.q, r: cell.r - anchor.r + at.r };
+      if (!free(moved)) fits = false;
+      out.set(id, moved);
+    }
+    return { fits, cells: out };
+  };
+
+  // **A family already in pieces is gathered, not carried.** Its silhouette is
+  // not a shape anybody chose — it is where the ground happened to be free when
+  // it was laid out — so translating it intact preserves nothing. Greg,
+  // 2026-09-30: *"if we drag a parental node that's got exclave child nodes on
+  // it to an area of vacant space large enough for the whole family, then it
+  // should auto-tidy that family grouping."*
+  const wasWhole = isOnePatch(members.values());
+
+  if (wasWhole) {
+    const exact = shapeAt(target);
+    if (exact.fits) return { kind: "fits", cells: exact.cells };
   }
-  if (fits) return { kind: "fits", cells: shifted };
+
+  /**
+   * **Nudge before reshaping.** Greg, 2026-09-30: *"when I move a particularly
+   * large parental node, it sometimes rearranges itself, even if I'm moving it
+   * in free space."*
+   *
+   * A branch that has exclaves is enormous — its silhouette spans everything
+   * between its mainland and its furthest outpost — so almost anywhere it lands,
+   * *something* in that span touches *something*, and one colliding cell out of
+   * a hundred and sixty was reshaping the whole branch. Open ground under the
+   * cursor said nothing about the far end.
+   *
+   * So the shape is tried on the cells around the target before it is given up
+   * on. A cell or two is imperceptible where the hand let go; losing a shape
+   * somebody built is not.
+   */
+  if (wasWhole) {
+    for (const nearby of spiral(target, NUDGE_RINGS)) {
+      if (cellKey(nearby) === cellKey(target)) continue;
+      const nudged = shapeAt(nearby);
+      if (nudged.fits) return { kind: "fits", cells: nudged.cells };
+    }
+  }
 
   // It will not go. Reflow, keeping the anchor where the hand put it and
   // seating the rest in the nearest free ground that touches what is placed.
@@ -319,7 +388,7 @@ export function placeIsland(
     taken.set(cellKey(cell), id);
     placed.push(cell);
   }
-  return { kind: "reshaped", cells: out };
+  return { kind: wasWhole ? "reshaped" : "gathered", cells: out };
 }
 
 export { cellFromKey, cellKey };

@@ -31,6 +31,7 @@ import {
   spiralSize,
   worldToCell,
   axialRoute,
+  DIAGONALS,
 } from "@/lib/map/layout/hex/coords";
 import { allocate } from "@/lib/map/layout/hex/allocate";
 import {
@@ -126,8 +127,13 @@ describe("the lattice", () => {
 
 describe("connection lines run along the lattice's own angles", () => {
   const SIZE = 40;
-  /** The six directions a flat-top lattice offers, in degrees. */
-  const AXES = [30, 90, 150, 210, 270, 330];
+  /**
+   * The twelve angles a flat-top hexagon defines: six edge normals at 30°, 90°,
+   * 150° and their opposites, and six corner directions at 0°, 60°, 120° and
+   * theirs. It was only the first six until 2026-09-30, which forced every
+   * two-step hop to bend through the middle of the cell in between.
+   */
+  const AXES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
   const headings = (points: { x: number; y: number }[]): number[] =>
     points.slice(1).map((p, i) => {
       const a = points[i];
@@ -142,7 +148,7 @@ describe("connection lines run along the lattice's own angles", () => {
     }
   });
 
-  it("never runs along anything but the six axes", () => {
+  it("never runs along anything but those twelve", () => {
     for (let q = -6; q <= 6; q++) {
       for (let r = -6; r <= 6; r++) {
         for (const h of headings(axialRoute({ q: 0, r: 0 }, { q, r }, SIZE))) {
@@ -167,12 +173,38 @@ describe("connection lines run along the lattice's own angles", () => {
   });
 
   it("leaves along the direction it is mostly heading", () => {
-    // Four steps east-ish, one step south-east: the first run is the long one.
     const route = axialRoute({ q: 0, r: 0 }, { q: 4, r: 1 }, SIZE);
     expect(route).toHaveLength(3);
     const first = Math.hypot(route[1].x - route[0].x, route[1].y - route[0].y);
     const second = Math.hypot(route[2].x - route[1].x, route[2].y - route[1].y);
     expect(first).toBeGreaterThanOrEqual(second);
+  });
+
+  it("goes straight to a corner cell rather than bending through a neighbour", () => {
+    // The cell two steps away between two neighbours. Bending would put the
+    // line through the middle of whichever sibling sits in between; along the
+    // corner direction it is one run, tangent to both.
+    for (const diagonal of DIAGONALS) {
+      expect(axialRoute({ q: 0, r: 0 }, diagonal, SIZE)).toHaveLength(2);
+      expect(axialRoute({ q: 0, r: 0 }, { q: diagonal.q * 3, r: diagonal.r * 3 }, SIZE))
+        .toHaveLength(2);
+    }
+  });
+
+  it("keeps a straight run clear of the cells it passes", () => {
+    // A corner-direction run is tangent to its neighbours: exactly one inradius
+    // from each centre, so it grazes the shared edge and enters neither.
+    const size = 100;
+    const room = inradius(size);
+    const route = axialRoute({ q: 0, r: 0 }, { q: 1, r: 1 }, size);
+    for (const n of neighbours({ q: 0, r: 0 })) {
+      const c = cellToWorld(n, size);
+      const [a, b] = route;
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+      const t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / len2));
+      const gap = Math.hypot(c.x - (a.x + dx * t), c.y - (a.y + dy * t));
+      expect(gap).toBeGreaterThanOrEqual(room - 1e-9);
+    }
   });
 });
 
