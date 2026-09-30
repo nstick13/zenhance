@@ -184,8 +184,6 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | Permanent self-coloured chains back to the parent | **built** |
 | No borders on the tiles; an occupied cell only a shade darker than the page | **built** |
 | The outline wraps the whole branch, or the immediate family for a leaf | **built** — `hoverGroup` |
-| A branch keeps its shape when moved through open ground | **built** — it nudges up to two rings before it will reshape |
-| A scattered family gathers itself when dropped | **built** — and without a dialog, because there is no shape to mourn |
 
 **Arrangements persist**, in `localStorage`, per browser and per company — a
 lab has no database by house rule, and an arrangement is worth more than the ten
@@ -285,56 +283,6 @@ tens of thousands of units across the map and crossed territories they had
 nothing to do with; these are stubs between touching cells, living in the gap
 the node sizing just opened. The exception is an exclave, where the chain is
 genuinely long — and that is the case where you want to see it.
-
-### A hexagon has twelve angles, not six (2026-09-30, later)
-
-Greg: *"connection lines now seem to cross a lot more — even though I've
-intended to prevent that, it's made that a bit worse."* He was right, and the
-metric said the opposite, which is the interesting part.
-
-**Chain-on-chain clashes were 32 across the whole 2,562-person company.** What
-he was seeing was chains running *through tiles* — **54% of them** — which that
-count cannot see at all. An X between two lines reads as a junction; a line
-through the middle of a tile reads as a mistake. `countTilesCrossed` in
-`tidy.ts` is the measure now, and the tidy pass optimises it.
-
-The cause was the routing. A flat-top hexagon's six **edge normals** run at 30°,
-90°, 150° and their opposites — the directions to its neighbours. It also has
-six **corner directions** at 0°, 60°, 120° and theirs, and those are just as
-much angles the hexagon defines. Routing on only the first six meant the cell
-two steps away *between* two neighbours needed a bend, and the only place to
-bend was the middle of the cell in between — which on a fan of children is
-always occupied. **Every one of the 169 two-step chains ran through the centre
-of a sibling.** Along a corner direction it is one straight line, tangent to
-both neighbours, entering neither.
-
-| | chains through tiles | line-on-line (cousins) |
-|---|---|---|
-| six directions, blob packing | 54% | 32 |
-| twelve directions, fanned children | **23%** | 66 |
-
-Line-on-line went up, and that is the right trade: the diagonals now cut across
-other lines instead of through tiles, and a crossing is much cheaper to read
-than a tile with a line drawn over it. After a tidy pass both fall.
-
-### Children fan, they do not pile up
-
-Greg: *"if a parent has more than six children, then we can push a bunch of the
-child nodes out further so we can see the connection line."*
-
-`findFanCell` in `allocate.ts`. A child takes a cell on ring 1 of its **parent**
-— six cells, five once the way home is taken — and the overflow goes to ring 2.
-Ring 2 has two kinds of cell and only one is any use: six sit directly behind a
-ring-1 cell and a chain to one runs through whoever is in front, while six sit
-between two ring-1 cells and a chain threads the gap. Corners are heavily
-penalised and taken only when nothing else is free.
-
-This replaced a search over every cell touching any already-seated sibling,
-which packed families into blobs. Blobs measured well on chain-on-chain clashes
-and terribly on the thing that reads as a mess, because a chain to the far side
-of a blob has to cross the siblings in between. Connectivity went **88% → 96%**
-and exclaves **48 → 16**; the company got rounder (11,448 × 15,698 →
-14,394 × 13,779) and slightly larger in area, which is the price of legibility.
 
 ### Lines that belong to the grid
 
@@ -446,28 +394,6 @@ ordering at all. Six shapes, including a flower where the middle cell must
 contribute nothing and a ring with a hole. **If you touch this function, that is
 the test that matters.**
 
-### Moving a branch without breaking it
-
-Greg: *"when I move a particularly large parental node, it sometimes rearranges
-itself, even if I'm moving it in free space."*
-
-A branch with exclaves is enormous — its silhouette spans everything between its
-mainland and its furthest outpost — so almost anywhere it lands, something in
-that span touches something, and **one colliding cell out of a hundred and sixty
-was reshaping the whole branch**. Open ground under the cursor said nothing
-about the far end.
-
-`placeIsland` now tries the shape on the cells around the target before giving
-up on it: two rings, eighteen cells. A cell or two is imperceptible where the
-hand let go; losing a shape somebody built is not.
-
-And the opposite case, which Greg asked for in the same breath: **a family
-already in pieces is gathered rather than carried.** Its silhouette is not a
-shape anybody chose — it is where the ground happened to be free when it was
-laid out — so translating it intact preserves nothing. It reflows, and it does
-so *without a dialog*, because there is nothing to mourn. Only a family that was
-whole gets asked before it is broken up.
-
 ## Tidy up, in two presses
 
 Greg, 2026-09-30: *"make it so the 'clean up' function actually just neatens up
@@ -496,14 +422,14 @@ it is the orbital engine's Law 3 restated. `neaten` in `tidy.ts`, in two phases:
 Measured on the 2,562-person company, with twelve branches dragged about by
 hand and left pointing anywhere:
 
-| | chains through tiles | line-on-line (cousins) |
+| | sibling clashes | cousin clashes |
 |---|---|---|
-| calculated layout | 198 | 66 |
-| after hand-dragging | 181 | 84 |
-| **after one press** | **66** | **29** |
+| calculated layout | 6 | 32 |
+| after hand-dragging | 5 | 56 |
+| **after one press** | **0** | **21** |
 
-63% fewer chains through tiles and 65% fewer line-on-line clashes — both better
-than the calculated layout starts with. 207ms. Every hand placement preserved.
+63% fewer cousin clashes, and fewer than the calculated layout started with.
+94ms. Every hand placement preserved.
 
 **Gathering alone did most of it.** Rotation by itself managed 18%, because a
 turn can only change which way a branch faces, never how far away it is — and a

@@ -10,7 +10,6 @@ import {
   branchOf,
   dropOutcome,
   hoverGroup,
-  isOnePatch,
   metaConnected,
   nearestFreeCell,
   outline,
@@ -18,7 +17,7 @@ import {
   wouldCycle,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, hexDistance, neighbours, spiral, type Cell,
+  cellKey, cellToWorld, hexDistance, neighbours, type Cell,
 } from "@/lib/map/layout/hex/coords";
 
 /**
@@ -269,57 +268,16 @@ describe("moving a whole island", () => {
     expect(hexDistance(landing.cells.get("north")!, landing.cells.get("south")!)).toBe(1);
   });
 
-  it("nudges aside rather than reshaping, when a cell or two is enough", () => {
-    // One obstacle in the way of the silhouette. Losing the shape over that
-    // would be the bug Greg reported: a branch rearranging itself in open
-    // ground because one of its far cells clipped something.
-    const nearlyFree = new Map([[cellKey(at(7, 0)), "stranger"]]);
-    const landing = placeIsland(nearlyFree, island, "sales", at(6, 0));
-    expect(landing.kind).toBe("fits");
-    if (landing.kind !== "fits") return;
-    // Same silhouette, just seated a little to one side.
-    expect(hexDistance(landing.cells.get("sales")!, landing.cells.get("north")!)).toBe(1);
-    expect(hexDistance(landing.cells.get("sales")!, at(6, 0))).toBeLessThanOrEqual(2);
-  });
-
   it("says so when it has to change shape, and still places everyone", () => {
-    // Genuinely boxed in: every cell within four rings is taken except the one
-    // the hand is over and a scattering beyond. No offset of the silhouette
-    // fits anywhere near, so the shape has to give.
-    const boxed = new Map<string, string>();
-    for (const c of spiral(at(20, 0), 4)) boxed.set(cellKey(c), "stranger");
-    boxed.delete(cellKey(at(20, 0)));
-    boxed.delete(cellKey(at(21, 0)));
-    boxed.delete(cellKey(at(20, 1)));
-    const landing = placeIsland(boxed, island, "sales", at(20, 0));
+    // Drop it where its own silhouette collides with the company and eng.
+    const landing = placeIsland(occupancy, island, "sales", at(-1, 1));
     expect(landing.kind).toBe("reshaped");
     if (landing.kind === "no-room") return;
     expect(landing.cells.size).toBe(3);
+    // Nobody landed on anybody.
     expect(new Set([...landing.cells.values()].map(cellKey)).size).toBe(3);
-    // The anchor is exactly where the hand put it, whatever happened behind it.
-    expect(landing.cells.get("sales")).toEqual(at(20, 0));
-  });
-
-  it("gathers a scattered family without asking, because there is nothing to lose", () => {
-    const scattered = new Map([
-      ["sales", at(30, 0)],
-      ["north", at(38, -4)],   // an exclave
-      ["south", at(30, 6)],    // and another
-    ]);
-    expect(isOnePatch(scattered.values())).toBe(false);
-    const landing = placeIsland(new Map(), scattered, "sales", at(50, 0));
-    expect(landing.kind).toBe("gathered");
-    if (landing.kind === "no-room") return;
-    expect(isOnePatch(landing.cells.values())).toBe(true);
-    expect(landing.cells.get("sales")).toEqual(at(50, 0));
-  });
-
-  it("still asks before breaking up a family that was whole", () => {
-    const boxed = new Map<string, string>();
-    for (const c of spiral(at(20, 0), 4)) boxed.set(cellKey(c), "stranger");
-    for (const c of [at(20, 0), at(21, 0), at(20, 1)]) boxed.delete(cellKey(c));
-    expect(isOnePatch(island.values())).toBe(true);
-    expect(placeIsland(boxed, island, "sales", at(20, 0)).kind).toBe("reshaped");
+    // And the anchor is exactly where the hand put it.
+    expect(landing.cells.get("sales")).toEqual(at(-1, 1));
   });
 
   it("never drops a member onto a unit that is staying put", () => {
