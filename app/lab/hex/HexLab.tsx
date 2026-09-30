@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
+import { neaten } from "@/lib/map/layout/hex/tidy";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
 import { allocate } from "@/lib/map/layout/hex/allocate";
@@ -137,10 +138,56 @@ export default function HexLab({
   const [mode, setMode] = useState<"hex" | "orbits">("hex");
   const [hover, setHover] = useState<string | null>(null);
 
-  /** Hand placements and reparents. Nothing is persisted — this is a study. */
+  /** Hand placements and reparents, kept in this browser between visits. */
   const [moves, setMoves] = useState<Map<string, Cell>>(() => new Map());
   const [reparents, setReparents] = useState<Map<string, string>>(() => new Map());
+  /** Units somebody dragged themselves. Tidy up will not move these — it is
+   *  what separates "neaten what I have" from "throw it away". */
+  const [pinned, setPinned] = useState<Set<string>>(() => new Set());
+  /** 0 = as arranged, 1 = neatened. A second press compresses. */
+  const [tidyStage, setTidyStage] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
+
+  // --- keeping an arrangement -----------------------------------------------
+  //
+  // `localStorage`, because a lab has no database by house rule and an
+  // arrangement is worth more than the ten seconds it took to make. It is
+  // per-browser and per-company, and every read and write is wrapped: a private
+  // window or blocked site data throws rather than returning nothing, and an
+  // arrangement is not worth a blank page.
+  const storeKey = `zenhance.lab.hex.${companyKey}`;
+
+  useEffect(() => {
+    setLoaded(false);
+    try {
+      const raw = window.localStorage.getItem(storeKey);
+      const saved = raw ? (JSON.parse(raw) as {
+        moves?: [string, Cell][]; reparents?: [string, string][]; pinned?: string[];
+      }) : null;
+      setMoves(new Map(saved?.moves ?? []));
+      setReparents(new Map(saved?.reparents ?? []));
+      setPinned(new Set(saved?.pinned ?? []));
+    } catch {
+      setMoves(new Map());
+      setReparents(new Map());
+      setPinned(new Set());
+    }
+    setTidyStage(0);
+    setLoaded(true);
+  }, [storeKey]);
+
+  useEffect(() => {
+    if (!loaded) return; // never write back before the first read
+    try {
+      if (!moves.size && !reparents.size) window.localStorage.removeItem(storeKey);
+      else window.localStorage.setItem(storeKey, JSON.stringify({
+        moves: [...moves], reparents: [...reparents], pinned: [...pinned],
+      }));
+    } catch {
+      // A browser that will not keep it is not a reason to stop working.
+    }
+  }, [storeKey, loaded, moves, reparents, pinned]);
 
   const baseTree = useMemo(
     () => buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 }),
@@ -229,15 +276,21 @@ export default function HexLab({
     [camera],
   );
 
-  const commit = useCallback((cells: Map<string, Cell>, newParent?: { id: string; parentId: string }) => {
+  const commit = useCallback((
+    cells: Map<string, Cell>,
+    newParent?: { id: string; parentId: string },
+    anchorId?: string,
+  ) => {
     setMoves((prev) => {
       const next = new Map(prev);
       for (const [id, cell] of cells) next.set(id, cell);
       return next;
     });
+    if (anchorId) setPinned((prev) => new Set(prev).add(anchorId));
     if (newParent) {
       setReparents((prev) => new Map(prev).set(newParent.id, newParent.parentId));
     }
+    setTidyStage(0); // a hand has been in it again
   }, []);
 
   // --- drawing -------------------------------------------------------------
@@ -686,10 +739,35 @@ export default function HexLab({
         newParentId: outcome.newParentId, cells: drag.landing,
       });
     } else {
-      commit(drag.landing);
+      commit(drag.landing, undefined, drag.unitId);
     }
     setDrag(null);
   };
+
+  /**
+   * Greg's two presses, 2026-09-30.
+   *
+   * The first neatens what is there: stragglers travel back to their families
+   * and branches turn to face away from where their own chain arrives, while
+   * everything anybody placed by hand stays exactly where they put it. The
+   * second is the old behaviour — throw the arrangement away and go back to the
+   * calculated one.
+   */
+  const [tidyReport, setTidyReport] = useState<ReturnType<typeof neaten> | null>(null);
+  const tidy = useCallback(() => {
+    if (!hexScene || tidyStage > 0) {
+      setMoves(new Map());
+      setReparents(new Map());
+      setPinned(new Set());
+      setTidyStage(0);
+      setTidyReport(null);
+      return;
+    }
+    const result = neaten(tree, allocation.cells, pinned, hexScene.hex.size);
+    setMoves(new Map(result.cells));
+    setTidyReport(result);
+    setTidyStage(1);
+  }, [hexScene, tidyStage, tree, allocation, pinned]);
 
   const hovered = hover ? scene.unitById.get(hover) : null;
   const tier = tierAt(revealAt(camera.scale));
@@ -718,8 +796,8 @@ export default function HexLab({
                 exactly where you put it, keeping its own colour.
               </p>
               <Row>
-                <Btn onClick={() => { commit(pending.cells, { id: pending.unitId, parentId: pending.newParentId }); setPending(null); }} primary>Reparent</Btn>
-                <Btn onClick={() => { commit(pending.cells); setPending(null); }}>Just leave it there</Btn>
+                <Btn onClick={() => { commit(pending.cells, { id: pending.unitId, parentId: pending.newParentId }, pending.unitId); setPending(null); }} primary>Reparent</Btn>
+                <Btn onClick={() => { commit(pending.cells, undefined, pending.unitId); setPending(null); }}>Just leave it there</Btn>
               </Row>
             </>
           )}
@@ -731,7 +809,7 @@ export default function HexLab({
                 they will be reflowed into the nearest free ground.
               </p>
               <Row>
-                <Btn onClick={() => { commit(pending.cells); setPending(null); }} primary>Proceed</Btn>
+                <Btn onClick={() => { commit(pending.cells, undefined, pending.unitId); setPending(null); }} primary>Proceed</Btn>
                 <Btn onClick={() => setPending(null)}>Put it back</Btn>
               </Row>
             </>
@@ -747,7 +825,7 @@ export default function HexLab({
               </p>
               <Row>
                 {pending.cells && (
-                  <Btn onClick={() => { commit(pending.cells!); setPending(null); }} primary>Place it there</Btn>
+                  <Btn onClick={() => { commit(pending.cells!, undefined, pending.unitId); setPending(null); }} primary>Place it there</Btn>
                 )}
                 <Btn onClick={() => setPending(null)}>Put it back</Btn>
               </Row>
@@ -788,12 +866,23 @@ export default function HexLab({
           ))}
           <Btn small onClick={fit}>fit</Btn>
         </Row>
-        {(moves.size > 0 || reparents.size > 0) && (
-          <Row>
-            <Btn small onClick={() => { setMoves(new Map()); setReparents(new Map()); }}>
-              tidy up ({moves.size} moved, {reparents.size} reparented)
-            </Btn>
-          </Row>
+        {loaded && (moves.size > 0 || reparents.size > 0) && (
+          <>
+            <Row>
+              <Btn small onClick={tidy}>
+                {tidyStage === 0 ? "tidy up" : "tidy up again — compress"}
+              </Btn>
+              <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                {moves.size} moved · {reparents.size} reparented
+              </span>
+            </Row>
+            {tidyReport && (
+              <Small style={{ color: "#166534" }}>
+                gathered {tidyReport.gathered}, turned {tidyReport.turned} ·
+                {" "}cousin clashes {tidyReport.before.cousins} → {tidyReport.after.cousins}
+              </Small>
+            )}
+          </>
         )}
         <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
         <Small suppressHydrationWarning>

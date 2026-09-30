@@ -175,7 +175,9 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | A chunky outline round everything meta-connected | **built** — exact on a lattice, and it is what shows an exclave |
 | Offer to **de-parent** a tile dragged away from its family | **not built** |
 | **Gather** scattered children back to their parent | **not built** |
-| Auto-arrange flavours (linear, spiral, geographical, radial) | **not built**; Tidy up returns to the calculated layout |
+| Auto-arrange flavours (linear, spiral, geographical, radial) | **not built** |
+| Tidy up neatens in place; a second press compresses | **built** — see below |
+| Arrangements survive a refresh | **built** — `localStorage`, per company |
 | Siblings, parent and children shown on hover | **built** |
 | Connection lines routed along the lattice's own angles, chunky and dark | **built** |
 | A node inset in its cell, sized by how deep it sits | **built** — a tenth of the cell at the deepest rung |
@@ -183,7 +185,11 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | No borders on the tiles; an occupied cell only a shade darker than the page | **built** |
 | The outline wraps the whole branch, or the immediate family for a leaf | **built** — `hoverGroup` |
 
-Nothing persists. A refresh returns the company to its calculated arrangement.
+**Arrangements persist**, in `localStorage`, per browser and per company — a
+lab has no database by house rule, and an arrangement is worth more than the ten
+seconds it took to make. Every read and write is wrapped: a private window or
+blocked site data throws rather than returning nothing, and an arrangement is
+not worth a blank page.
 
 ### Seeing the family (2026-09-30, later)
 
@@ -387,6 +393,53 @@ halfway between the two cell centres, which needs no knowledge of corner
 ordering at all. Six shapes, including a flower where the middle cell must
 contribute nothing and a ring with a hole. **If you touch this function, that is
 the test that matters.**
+
+## Tidy up, in two presses
+
+Greg, 2026-09-30: *"make it so the 'clean up' function actually just neatens up
+islands rather than dragging everything back to the centre… an additional press
+would pull the whole picture back to the compressed view."*
+
+**The first press neatens what is there. Anything anybody placed by hand stays
+exactly where they put it** — that is the whole difference from the reset, and
+it is the orbital engine's Law 3 restated. `neaten` in `tidy.ts`, in two phases:
+
+1. **Gather the stragglers.** Any branch that has drifted off its family, and
+   that nobody placed there on purpose, travels back to its family's own edge
+   carrying its shape with it. This is the allocator's rule applied locally, and
+   it is what *"makes the islands neat"* actually means — a division's teams
+   gather round the division rather than trailing across the map to it.
+2. **Turn each branch to face the right way.** On a lattice the natural move is
+   a rotation by a sixth of a turn about a cell: it keeps every unit on the
+   grid, keeps a branch's shape exactly, and is the only transform that changes
+   which way a branch faces without changing what it looks like. Each branch
+   tries all six, discards any that would land on somebody, and keeps the one
+   that clashes least — **a cousin crossing counts ten times a sibling one**,
+   because siblings are bound to converge on their shared parent and cousins
+   have no business meeting at all. Facing away from the incoming chain is the
+   tie-break, which is what stops a line leaving a parent and looping back.
+
+Measured on the 2,562-person company, with twelve branches dragged about by
+hand and left pointing anywhere:
+
+| | sibling clashes | cousin clashes |
+|---|---|---|
+| calculated layout | 6 | 32 |
+| after hand-dragging | 5 | 56 |
+| **after one press** | **0** | **21** |
+
+63% fewer cousin clashes, and fewer than the calculated layout started with.
+94ms. Every hand placement preserved.
+
+**Gathering alone did most of it.** Rotation by itself managed 18%, because a
+turn can only change which way a branch faces, never how far away it is — and a
+chain that runs half the company is unreadable whichever way it points.
+
+**One pass is one pass, not a fixed point.** Gathering settles, since a branch
+already against its family is skipped. Turning does not, because turning one
+branch changes the world the next is scored against. A test holds the property
+that matters: a second pass may not make it worse. The product never runs one,
+because the second press compresses instead.
 
 ## The orbits mode is parked, not finished with
 
