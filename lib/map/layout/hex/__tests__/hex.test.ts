@@ -156,18 +156,24 @@ describe("Law 4 — nothing sits on top of anything else", () => {
 });
 
 describe("the cells a company gets", () => {
-  it("puts most children next to their parent, and says so when it cannot", () => {
+  it("joins most children to their family, and says so when it cannot", () => {
     const a = allocate(treeOf(deep(2400, 11)));
     const children = a.stats.placed - 1;
-    // 71% measured on 2026-09-29. The floor guards against a regression to the
-    // breadth-first allocator, which managed 7%.
-    expect(a.stats.adjacent / children).toBeGreaterThan(0.6);
-    expect(a.stats.adjacent + a.stats.jumped).toBe(children);
+    // 88% measured on 2026-09-30. The rest are exclaves, which rule 8 treats as
+    // a legitimate arrangement rather than a failure.
+    expect(a.stats.connected / children).toBeGreaterThan(0.8);
+    expect(a.stats.connected + a.stats.exclaves).toBe(children);
+  });
+
+  it("keeps most families in one patch, which is all that says they are a family", () => {
+    const a = allocate(treeOf(deep(2400, 11)));
+    expect(a.stats.wholeFamilies / a.stats.families).toBeGreaterThan(0.6);
   });
 
   it("gives a small company a perfect tessellation", () => {
     const a = allocate(treeOf(deep(45, 4)));
-    expect(a.stats.jumped).toBe(0);
+    expect(a.stats.exclaves).toBe(0);
+    expect(a.stats.wholeFamilies).toBe(a.stats.families);
   });
 
   it("records a jump as a real distance, so the renderer can curve the link", () => {
@@ -215,16 +221,22 @@ describe("a company that branches wider than a hexagon has sides", () => {
     expect(a.occupants.size).toBe(tree.units.size);
   });
 
-  it("cannot seat more than six children adjacent, and says so rather than overlapping", () => {
+  it("cannot seat more than six children against the parent itself", () => {
     const tree = treeOf(wide);
     const a = allocate(tree);
     for (const unit of tree.units.values()) {
-      const adjacentKids = unit.childIds.filter((id) => (a.steps.get(id) ?? 99) === 1);
-      // Six neighbours, one of which is the way home — so a unit with a parent
-      // can seat at most five children next to it. This is the geometry, not a
-      // tuning choice, and it is why the jump exists at all.
-      expect(adjacentKids.length).toBeLessThanOrEqual(unit.parentId ? 5 : 6);
+      const touching = unit.childIds.filter((id) => (a.steps.get(id) ?? 99) === 1);
+      // Six neighbours, one of which is the way home. This is the geometry, and
+      // it is the ceiling rule 1 exists to get around.
+      expect(touching.length).toBeLessThanOrEqual(unit.parentId ? 5 : 6);
     }
+  });
+
+  it("still joins the overwhelming majority of a wide company to its family", () => {
+    const a = allocate(treeOf(wide));
+    // The number that used to collapse. Seating against siblings holds it at
+    // 92% where seating against the parent alone managed 32%.
+    expect(a.stats.connected / (a.stats.placed - 1)).toBeGreaterThan(0.85);
   });
 
   it("draws it with nothing on top of anything else", () => {

@@ -6,10 +6,18 @@
  *
  * ## What it is trying to do
  *
- * 1. **A child sits next to its parent.** A parent has six neighbouring cells.
- *    Up to six children can be adjacent, and Greg's model says exactly that:
- *    *"If a node has six child nodes, great — it's a hexagon tessellation. If
- *    more, then we can move child nodes to 'jump' to the next one."*
+ * 1. **A family is one connected patch.** Greg, 2026-09-30: *"child nodes do
+ *    not have to directly snap to their parent nodes, they can snap to sibling
+ *    nodes."* A child takes a free cell on the edge of its family — its parent
+ *    or any sibling already seated — so a family of any size is a blob, which
+ *    is always achievable.
+ *
+ *    That sentence removed a hard ceiling. Seating every child against its
+ *    parent means at most five can touch (six neighbours, one is the way
+ *    home), and on companies with realistic spans adjacency fell to **24%**.
+ *    It matters more than it sounds, because there are no connection lines any
+ *    more: adjacency and colour are the only things saying these units belong
+ *    together.
  * 2. **A branch runs away from where it came from**, so direction carries
  *    meaning: if you are travelling east you are going deeper.
  * 3. **Branches do not interleave.** A big division's territory should read as
@@ -30,12 +38,23 @@
  * rings out it is, whether taking it would wedge it among another branch's
  * cells, and how far off its desired direction it sits.
  *
- * A child that cannot get an adjacent cell **jumps**: it takes a cell further
- * out and the renderer draws a curve back to its parent rather than a
- * straight line. That is Greg's mechanism, and it is also this allocator's
- * failure mode — which is the happy accident that makes the whole design
- * work. When contention pushes a branch away, the drawing already has a way
- * to say so.
+ * A child whose family is completely walled in becomes an **exclave**: it
+ * takes the nearest free cell it can reach and sits apart, joined to its
+ * family by colour alone. That is not a failure state — it is the arrangement
+ * Greg described in rule 8, where a tile dragged away from its family stays
+ * structurally linked and the two are drawn inside one outline, the way an
+ * atlas draws Kaliningrad. About one unit in ten lands this way on the
+ * 2,562-person company.
+ *
+ * **Three rewrites were tried and abandoned before this one**, all aiming to
+ * get exclaves to zero by reserving ground before placing anyone: growing
+ * regions outward from each child at once, scoring cells by how much room a
+ * subtree would need, and partitioning the parent's ground into angular
+ * wedges. Each was worse than what it replaced — the best of them placed 201
+ * of 395 units, because a branch handed a territory one cell per unit has
+ * nothing left to subdivide and every rung below it starves. If you are about
+ * to try reservation again, that is the wall you will hit, and it needs the
+ * quota to carry slack at every level rather than only at the top.
  *
  * ## What it does not do yet
  *
@@ -53,6 +72,7 @@ import {
   add,
   cellKey,
   hexDistance,
+  neighbours,
   ring,
   spiral,
   worldAngle,
@@ -63,16 +83,28 @@ export type Allocation = {
   cells: Map<string, Cell>;
   /** cell key → the unit sitting there. */
   occupants: Map<string, string>;
-  /** unit id → how many steps from its parent. 1 is adjacent; more is a jump
-   *  and the renderer curves the link. */
+  /** unit id → how many steps from its parent. 1 means it touches the parent
+   *  itself; more means it reached its family through a sibling. */
   steps: Map<string, number>;
+  /** Units that could not touch their family and sit apart from it. */
+  exclaves: Set<string>;
   /** unit id → the top-level branch it belongs to, for territory colouring. */
   branchOf: Map<string, string>;
   /** Furthest ring any unit reached, for a quick extent. */
   radius: number;
-  /** How many units had to jump, and the worst jump. Study telemetry — a
-   *  layout where half the company jumps is a layout that did not work. */
-  stats: { placed: number; adjacent: number; jumped: number; worstJump: number };
+  stats: {
+    placed: number;
+    /** Touching the parent or a sibling — the promise this layout makes. */
+    connected: number;
+    /** Touching the parent itself. Cannot exceed five per parent, and since
+     *  2026-09-30 does not need to. */
+    touchingParent: number;
+    exclaves: number;
+    /** Families that are a single connected patch, out of all families. */
+    wholeFamilies: number;
+    families: number;
+    worstReach: number;
+  };
 };
 
 /** How far out to look before giving up on a child. A company would have to be
@@ -89,6 +121,10 @@ const LOOKAHEAD_RING = 2;
  *  direction the child wanted. Space wins ties; direction breaks them. */
 const SPACE_WEIGHT = 9;
 const DEGREE_PENALTY = 1.2;
+
+/** What a step away from the parent costs. Enough to keep a family bunched
+ *  rather than strung out, not enough to beat open ground. */
+const REACH_PENALTY = 200;
 
 const TAU = Math.PI * 2;
 
@@ -117,34 +153,38 @@ export function allocate(tree: OrbitalTree): Allocation {
   const steps = new Map<string, number>();
   const branchOf = new Map<string, string>();
   let radius = 0;
-  let adjacent = 0;
-  let jumped = 0;
-  let worstJump = 0;
+  const exclaves = new Set<string>();
+  let connected = 0;
+  let touchingParent = 0;
+  let worstReach = 0;
 
   const root = tree.units.get(tree.rootId);
   if (!root) {
     return {
-      cells, occupants, steps, branchOf, radius,
-      stats: { placed: 0, adjacent: 0, jumped: 0, worstJump: 0 },
+      cells, occupants, steps, branchOf, exclaves, radius,
+      stats: {
+        placed: 0, connected: 0, touchingParent: 0, exclaves: 0,
+        wholeFamilies: 0, families: 0, worstReach: 0,
+      },
     };
   }
 
   const SIZE = 1; // only angles are compared, and those are scale-free
 
-  const take = (unit: UnitNode, cell: Cell, fromParent: number, branch: string) => {
+  const take = (
+    unit: UnitNode, cell: Cell, fromParent: number, branch: string, touches: boolean,
+  ) => {
     cells.set(unit.id, cell);
     occupants.set(cellKey(cell), unit.id);
     steps.set(unit.id, fromParent);
     branchOf.set(unit.id, branch);
     const fromRoot = hexDistance(cell, { q: 0, r: 0 });
     if (fromRoot > radius) radius = fromRoot;
-    if (fromParent === 0) {
-      // The root has no parent, so it is neither adjacent nor a jump.
-    } else if (fromParent === 1) adjacent++;
-    else {
-      jumped++;
-      if (fromParent > worstJump) worstJump = fromParent;
-    }
+    if (fromParent === 0) return; // the root belongs to no family
+    if (touches) connected++;
+    else exclaves.add(unit.id);
+    if (fromParent === 1) touchingParent++;
+    if (fromParent > worstReach) worstReach = fromParent;
   };
 
   /** Heavier branches choose first, then by id so the order never depends on
@@ -169,10 +209,38 @@ export function allocate(tree: OrbitalTree): Allocation {
     return free;
   };
 
-  /** The best free cell for a child of a unit at `from` heading `desired`.
-   *  Adjacent cells are always preferred — a child next to its parent is the
-   *  whole point — and only when every neighbour is taken does it ring
-   *  outward, which is the jump Greg asked for. */
+  /**
+   * The best free cell on the edge of a family — the parent plus every sibling
+   * already seated — for a child heading `desired` from its parent.
+   *
+   * This is rule 1. Everything else in this file was already here; letting the
+   * search consider a sibling's edge as well as the parent's is the whole
+   * change, and it is what makes a span of twenty cost nothing.
+   */
+  const findFamilyCell = (family: readonly Cell[], parentCell: Cell, desired: number): Cell | null => {
+    const seen = new Set<string>();
+    let best: Cell | null = null;
+    let bestScore = -Infinity;
+    for (const member of family) {
+      for (const candidate of neighbours(member)) {
+        const key = cellKey(candidate);
+        if (seen.has(key) || occupants.has(key)) continue;
+        seen.add(key);
+        const deviation = (angleGap(worldAngle(parentCell, candidate, SIZE), desired) * 180) / Math.PI;
+        // Close to the parent keeps a family compact rather than snaking, and
+        // compactness is now the only thing saying "these belong together".
+        const score =
+          elbowRoom(candidate) * SPACE_WEIGHT
+          - deviation * DEGREE_PENALTY
+          - hexDistance(parentCell, candidate) * REACH_PENALTY;
+        if (score > bestScore) { bestScore = score; best = candidate; }
+      }
+    }
+    return best;
+  };
+
+  /** Last resort, when a family is so boxed in that not one of its members has
+   *  a free neighbour: the nearest free cell anywhere. Produces an exclave. */
   const findCell = (from: Cell, desired: number): { cell: Cell; steps: number } | null => {
     for (let k = 1; k <= MAX_SEARCH_RING; k++) {
       let best: Cell | null = null;
@@ -213,25 +281,67 @@ export function allocate(tree: OrbitalTree): Allocation {
     const outward = grandparent ? worldAngle(grandparent, parentCell, SIZE) : 0;
     const wanted = fanAngles(outward, kids.length);
 
+    // **Seat the whole family, then descend.** Placing a child and immediately
+    // recursing into it lets that child's own descendants wall in the ground
+    // its later siblings needed.
+    const family: Cell[] = [parentCell];
     kids.forEach((kid, i) => {
       const branch = parent.id === root.id ? kid.id : branchOf.get(parent.id) ?? kid.id;
-      const found = findCell(parentCell, wanted[i]);
-      if (!found) return; // pathological only; MAX_SEARCH_RING is generous
-      take(kid, found.cell, found.steps, branch);
-      place(kid);
+      const onEdge = findFamilyCell(family, parentCell, wanted[i]);
+      const cell = onEdge ?? findCell(parentCell, wanted[i])?.cell ?? null;
+      if (!cell) return; // pathological only; MAX_SEARCH_RING is generous
+      take(kid, cell, hexDistance(cell, parentCell), branch, onEdge !== null);
+      family.push(cell);
     });
+
+    for (const kid of kids) if (cells.has(kid.id)) place(kid);
   };
 
-  take(root, { q: 0, r: 0 }, 0, root.id);
+  take(root, { q: 0, r: 0 }, 0, root.id, true);
   place(root);
+
+  // How many families ended up as one patch — the property the design rests
+  // on now that nothing is joined by a line. Measured, not assumed.
+  let families = 0;
+  let wholeFamilies = 0;
+  for (const unit of tree.units.values()) {
+    if (unit.childIds.length === 0) continue;
+    families++;
+    const own = cells.get(unit.id);
+    if (!own) continue;
+    const patch = new Set([cellKey(own)]);
+    for (const id of unit.childIds) {
+      const c = cells.get(id);
+      if (c) patch.add(cellKey(c));
+    }
+    const seen = new Set([cellKey(own)]);
+    const queue: Cell[] = [own];
+    while (queue.length) {
+      const c = queue.pop()!;
+      for (const nb of neighbours(c)) {
+        const k = cellKey(nb);
+        if (patch.has(k) && !seen.has(k)) { seen.add(k); queue.push(nb); }
+      }
+    }
+    if (seen.size === patch.size) wholeFamilies++;
+  }
 
   return {
     cells,
     occupants,
     steps,
     branchOf,
+    exclaves,
     radius,
-    stats: { placed: cells.size, adjacent, jumped, worstJump },
+    stats: {
+      placed: cells.size,
+      connected,
+      touchingParent,
+      exclaves: exclaves.size,
+      wholeFamilies,
+      families,
+      worstReach,
+    },
   };
 }
 

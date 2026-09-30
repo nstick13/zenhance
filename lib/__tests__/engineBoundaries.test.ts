@@ -63,6 +63,7 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/map/layout/hex/coords.ts": "layout",
   "lib/map/layout/hex/allocate.ts": "layout",
   "lib/map/layout/hex/scene.ts": "layout",
+  "lib/map/layout/hex/arrange.ts": "layout",
 
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
   "lib/map/camera/focus.ts": "camera",

@@ -103,6 +103,8 @@ export type HexScene = OrbitalScene & {
     steps: Map<string, number>;
     /** unit id → the top-level branch it belongs to, for territory colour. */
     branchOf: Map<string, string>;
+    /** Units sitting apart from their family — rule 8's exclaves. */
+    exclaves: Set<string>;
     stats: Allocation["stats"];
   };
 };
@@ -239,6 +241,7 @@ export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): He
       cells: allocation.cells,
       steps: allocation.steps,
       branchOf: allocation.branchOf,
+      exclaves: allocation.exclaves,
       stats: allocation.stats,
     },
   };

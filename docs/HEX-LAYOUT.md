@@ -157,6 +157,77 @@ took adjacency from 7% (breadth-first) to 73%. A sweep of the two constants
 was attempted and was defeated by the module cache; the numbers here are from
 one configuration, not a best one.
 
+## Arrangement — Greg's rules, 2026-09-30
+
+The study can now be rearranged by hand. Greg's rules and where each one lives:
+
+| Rule | State |
+|---|---|
+| A child may snap to a **sibling**, not just its parent | **built** — this is the allocator's rule now |
+| Connection lines replaced by adjacency + colour | **built** — there are no lines at all in hex mode |
+| The route home lights up on demand | **built** — hover or drag a tile |
+| Islands need not touch; a sea of empty cells between them | **built** |
+| Free movement, snapping to the lattice on release | **built**, with the landing cells lit while the hand moves |
+| No tile on top of another; offer the nearest free cell with a warning | **built** — and the cell stays lit while the dialog asks |
+| Drop against another family → offer reparent, or leave it adjacent | **built** |
+| Islands move as one, reshaping only when they must, and asking first | **built** — one gesture: a tile always travels with its branch |
+| Hold over a tile → merge or reparent | **built**; merge itself stays disabled, as on the orbital map |
+| A chunky outline round everything meta-connected | **built** — exact on a lattice, and it is what shows an exclave |
+| Offer to **de-parent** a tile dragged away from its family | **not built** |
+| **Gather** scattered children back to their parent | **not built** |
+| Auto-arrange flavours (linear, spiral, geographical, radial) | **not built**; Tidy up returns to the calculated layout |
+
+Nothing persists. A refresh returns the company to its calculated arrangement.
+
+### Colour
+
+Greg: *"hue as the indicator of hierarchy, and colour as the indicator of
+subject… deep/dark red is 'CFO'; lightest wash purple is 'marketing interns'…
+the hues are relative — they step according to the number of hierarchical
+layers."*
+
+Built as: **hue says which part of the company, lightness says how deep**, with
+the lightness span scaling to the company's own depth so a two-rung company
+gets two adjacent shades rather than black against white.
+
+Hue comes from a **region** — the rung whose population is nearest the square
+root of the company's unit count, capped at twelve. Two earlier rules were
+wrong in opposite directions: "child of the root" painted all 395 units one
+blue, because this company's root has a single child; "the shallowest rung with
+at least six units" gave a thirteen-unit company nine regions, which is a
+different hue for nearly every tile.
+
+It should come from **function or discipline** once a unit carries one. People
+have `disciplineId`; units have nothing, so the region is standing in.
+
+### What the allocator does now, measured
+
+| | 2,562 people | wide spans (max 20 children) |
+|---|---|---|
+| children touching their family | **88%** | **93%** |
+| children touching the parent itself | 46% | 10% |
+| families that are one patch | 86/131 | 9/16 |
+| exclaves | 48 | 10 |
+| layout | 7ms | 4ms |
+
+The wide-span collapse is gone. Seating children against the parent alone held
+adjacency at **24%** on a company with realistic spans; letting them seat
+against siblings holds connection at **93%**, and the difference is one search
+looking at a family's edge instead of a parent's.
+
+**Three rewrites were tried and abandoned** chasing exclaves to zero, all
+reserving ground before placing anyone: growing a region outward from each
+child at once (discs from adjacent seeds strangle each other), scoring cells by
+the room a subtree would need (a big branch abandons its parent to find room),
+and partitioning a parent's ground into angular wedges. The best of them placed
+**201 of 395 units**. If you try reservation again, the wall is that a branch
+handed one cell per unit has nothing left to subdivide, and every rung below it
+starves — the quota has to carry slack at *every* level, not only the top.
+
+The remaining 12% are exclaves, and that is not simply a failure: rule 8 makes
+a tile sitting apart from its family a legitimate arrangement, shown by the
+outline rather than a tether. **Gather**, when it is built, is the remedy.
+
 ## Recovering what came before
 
 Nothing was deleted. Three ways back, any one of which is enough:
