@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
-import { layoutHex, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
+import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
 import { allocate } from "@/lib/map/layout/hex/allocate";
@@ -269,6 +269,7 @@ export default function HexLab({
       (u) => u.x >= view.minX && u.x <= view.maxX && u.y >= view.minY && u.y <= view.maxY,
     );
     const hueFor = (id: string) => hueOf(regions.get(id) ?? id, regionOrder);
+    /** The cell's own hexagon, full size — the container. */
     const hexPath = (cell: Cell) => {
       const pts = corners(cell, hexSize);
       ctx.beginPath();
@@ -277,16 +278,32 @@ export default function HexLab({
       ctx.closePath();
     };
 
-    // 1. The tiles. Hue says which part of the company, lightness says how deep
-    //    — so a whole division reads at a glance and seniority reads within it.
+    /** The node inside it, concentric, sized by how deep the unit sits. */
+    const nodePath = (cell: Cell, depth: number, shrink = 1) => {
+      const pts = cornersAt(
+        cellToWorld(cell, hexSize),
+        hexSize * nodeScale(depth, maxDepth) * shrink,
+      );
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+    };
+
+    // 1a. The territory, as a faint wash over the whole cell. It is what makes
+    //     a division read as one place from far away, where the nodes are only
+    //     a few pixels — so it is strongest pulled back and fades as the nodes
+    //     themselves take over.
     if (hexScene) {
-      for (const unit of visible) {
-        const cell = hexScene.hex.cells.get(unit.id);
-        if (!cell) continue;
-        const moving = drag?.members.has(unit.id) ?? false;
-        hexPath(cell);
-        ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.18 : 0.82);
-        ctx.fill();
+      const wash = 0.30 - 0.24 * Math.min(1, scale / 1.1);
+      if (wash > 0.02) {
+        for (const unit of visible) {
+          const cell = hexScene.hex.cells.get(unit.id);
+          if (!cell) continue;
+          hexPath(cell);
+          ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, wash);
+          ctx.fill();
+        }
       }
     }
 
@@ -299,6 +316,48 @@ export default function HexLab({
       for (const unit of visible) {
         const cell = hexScene.hex.cells.get(unit.id);
         if (cell) { hexPath(cell); ctx.stroke(); }
+      }
+    }
+
+    // 2b. The chains. Greg, 2026-09-30: *"sibling nodes should have
+    //     self-coloured connection lines that are permanently visible and chain
+    //     back to the parent node… the connection lines follow the same
+    //     geometry as the hover-state path, but sit behind it on the z axis."*
+    //
+    //     Each line belongs to the child and wears the child's colour, runs
+    //     strictly along the lattice's own angles, and is drawn before the
+    //     nodes so it emerges from behind them rather than crossing them. The
+    //     trunk is thicker than the twigs, because a line's weight is the one
+    //     thing left that can carry standing once every node is the same shape.
+    if (hexScene) {
+      for (const unit of visible) {
+        if (!unit.parentId) continue;
+        const here = hexScene.hex.cells.get(unit.id);
+        const there = hexScene.hex.cells.get(unit.parentId);
+        if (!here || !there) continue;
+        const route = axialRoute(here, there, hexSize);
+        ctx.beginPath();
+        ctx.moveTo(route[0].x, route[0].y);
+        for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(0.6, hexSize * 0.09 * nodeScale(unit.depth, maxDepth));
+        ctx.strokeStyle = css(hueFor(unit.id), unit.depth, maxDepth, 0.95);
+        ctx.stroke();
+      }
+    }
+
+    // 2c. The nodes themselves, inset in their cells by depth — the company
+    //     fills its hexagon, a team keeps half the area, and the gap between a
+    //     node and its container is what tells two peers apart.
+    if (hexScene) {
+      for (const unit of visible) {
+        const cell = hexScene.hex.cells.get(unit.id);
+        if (!cell) continue;
+        const moving = drag?.members.has(unit.id) ?? false;
+        nodePath(cell, unit.depth);
+        ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
+        ctx.fill();
       }
     }
 
@@ -358,13 +417,16 @@ export default function HexLab({
     //    siblings, and the children in a dashed line so they read as the other
     //    direction rather than more of the same.
     if (hexScene && focusId) {
+      // The bands follow the *node*, not its container — the node is the thing
+      // a person is pointing at now that the two are different sizes.
       const band = (id: string, width: number, dash: number[] = []) => {
         const cell = hexScene.hex.cells.get(id);
-        if (!cell) return;
+        const unit = scene.unitById.get(id);
+        if (!cell || !unit) return;
         ctx.setLineDash(dash.map((d) => d / scale));
         ctx.lineWidth = Math.max(0.8, width / scale);
         ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        hexPath(cell);
+        nodePath(cell, unit.depth);
         ctx.stroke();
         ctx.setLineDash([]);
       };
@@ -376,15 +438,13 @@ export default function HexLab({
         // is the one tile in the family you cannot mistake for another.
         band(parentId, 5);
         const cell = hexScene.hex.cells.get(parentId);
-        if (cell) {
-          // Concentric with the cell, so take the centre at the real size and
-          // only shrink the radius — `corners(cell, size * 0.86)` would move
-          // the centre too, which is what displaced this band on 2026-09-30.
-          const pts = cornersAt(cellToWorld(cell, hexSize), hexSize * 0.86);
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
-          ctx.closePath();
+        const parent = scene.unitById.get(parentId);
+        if (cell && parent) {
+          // Concentric with the node, inside its white band. `nodePath` takes
+          // the centre at the real cell size and only shrinks the radius —
+          // shrinking through `corners` would move the centre too, which is
+          // what left this band floating off its tile on 2026-09-30.
+          nodePath(cell, parent.depth, 0.86);
           ctx.lineWidth = Math.max(0.8, 2.6 / scale);
           ctx.strokeStyle = "rgba(15,23,42,0.9)";
           ctx.stroke();
@@ -450,8 +510,12 @@ export default function HexLab({
 
     // 7. The unit itself, and its people once there is room for them.
     for (const unit of visible) {
-      const drawn = drawnUnitRadius(unit, scale, unit.drawCeiling);
-      if (drawn * scale < 0.35) continue;
+      // In hex mode the node carries "a unit is here", so the disc is only the
+      // thing people orbit and is drawn at its true size. Holding it above a
+      // screen floor, as the orbital map must, put a white dot on every tile at
+      // overview and said nothing the hexagon was not already saying.
+      const drawn = hexScene ? unit.r : drawnUnitRadius(unit, scale, unit.drawCeiling);
+      if (drawn * scale < 2) continue;
       const isParent = unit.childIds.length > 0;
       ctx.beginPath();
       ctx.arc(unit.x, unit.y, drawn, 0, Math.PI * 2);

@@ -178,6 +178,8 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | Auto-arrange flavours (linear, spiral, geographical, radial) | **not built**; Tidy up returns to the calculated layout |
 | Siblings, parent and children shown on hover | **built** |
 | Connection lines routed along the lattice's own angles, chunky and dark | **built** |
+| A node inset in its cell, sized by how deep it sits | **built** |
+| Permanent self-coloured chains back to the parent | **built** |
 
 Nothing persists. A refresh returns the company to its calculated arrangement.
 
@@ -199,6 +201,56 @@ Four treatments, in descending weight. Point at a tile and:
 The tile and its parent also carry their names whatever the zoom, overriding the
 usual label rules. Answering *who is the parent* is the point of the gesture,
 and a nameless hexagon does not answer it.
+
+### A node is smaller than the cell that holds it (2026-09-30, later)
+
+Greg: *"the visual distinction between peers is not as clear as it could be…
+team nodes should be smaller than the hexagonal tile they occupy — an offset
+within the boundary of the container hexagon… The master central node should
+occupy 100% of the hosting hexagonal area… nodes that stratify between team and
+master central should occupy an area that steps up, with each step calculated
+based on how many strata there are. Eg: master central: 100%; master central
++1: 75%; team/master central +2: 50%."*
+
+`nodeAreaFraction(depth, maxDepth)` in `scene.ts`: the company keeps all of its
+cell, the deepest rung keeps half the **area**, and the rungs between step
+evenly — so the step size follows from how many rungs a company has rather than
+being a number anyone tuned. A three-rung company gives exactly 100 / 75 / 50,
+which is Greg's own example; a twelve-rung company takes the same journey in
+smaller strides. `nodeScale` is the same rule as a *linear* scale, which is what
+a radius wants: half the area is 71% of the width, not half of it.
+
+Two things follow from the gap this opens up:
+
+- **The chains have somewhere to run** (below). Before, a line between two
+  touching tiles had nowhere to be seen.
+- **The white disc under each unit lost its screen floor.** The orbital map
+  holds that disc above a minimum size so a unit is visible when pulled back;
+  here the hexagon says a unit is there, so the disc went back to its true size
+  and stopped putting a white dot on all 395 tiles at overview.
+
+The territory did not go away — it became a faint wash over the whole cell,
+strongest pulled back and fading as the nodes take over. That wash is what made
+the mid-zoom band navigable in the first place, and losing it to get the node
+sizing would have been a poor trade.
+
+### Chains that are always there
+
+Greg: *"sibling nodes should have self-coloured connection lines that are
+permanently visible and chain back to the parent node. These do not do anything
+other than indicate 'chain to parent' relationships. The connection lines follow
+the same geometry as the hover-state path, but sit behind it on the z axis."*
+
+Every unit draws one line to its parent, in its own colour, along the lattice
+angles, under the nodes and under the hover route. Its weight scales with the
+node's, so the trunk is thicker than the twigs — which is the one bit of
+standing a drawing can still carry once every node is the same shape.
+
+**This is not a return to the connection lines that were removed.** Those ran
+tens of thousands of units across the map and crossed territories they had
+nothing to do with; these are stubs between touching cells, living in the gap
+the node sizing just opened. The exception is an exclave, where the chain is
+genuinely long — and that is the case where you want to see it.
 
 ### Lines that belong to the grid
 
