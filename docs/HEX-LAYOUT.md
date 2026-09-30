@@ -224,12 +224,27 @@ what a radius wants: a tenth of the area is **32%** of the width, not a tenth
 of it. Using the area figure as a radius scale would draw a team at one percent
 of what was asked for.
 
-**Deferred, and it will matter.** At a tenth of the cell, a team's node is
-smaller than the ring its people orbit on, so at the zoom where people appear
-they sit outside their own hexagon. Greg parked it on 2026-09-30 — *"we can
-worry about zoom and human nodes later"* — but it is the seam between this
-sizing rule and `geometry.ts`, and whichever gets decided second will have to
-give.
+**Deferred, and measured so it stays a known quantity.** Greg looked at it on
+2026-09-30 and parked it — *"I don't think I mind it right now. It's not
+elegant but it's not broken."* What actually happens, on either cell density:
+
+| | holds | people reach | |
+|---|---|---|---|
+| seat ring 0 | 6 people | 53 out | **inside** the node (87 roomy, 60 tight, edge to centre) |
+| seat ring 1 | 22 more | 189 out | outside it |
+
+So it is not that people do not fit — **it is the seventh person onward**. A
+team of six or fewer is entirely contained; beyond that the outer ring appears
+as an arc sitting outside its own hexagon, which is what Greg photographed on
+Pioneer Team 58. Northwind's median team is 8 and its p90 is 14, so most teams
+spill two or three and the largest spill a dozen.
+
+That also bounds the fix, whenever it is wanted. Either the first ring has to
+hold more than six, or the second ring has to come in much closer —
+`SEAT_RING_STEP` is 136 because a second ring must clear the *work capsules* of
+the first, and those are not drawn at the zoom where this is visible. It is the
+seam between this sizing rule and `geometry.ts`, and whichever is decided second
+will have to give.
 
 Two things follow from the gap this opens up:
 
