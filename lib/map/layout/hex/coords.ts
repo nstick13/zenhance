@@ -175,17 +175,32 @@ export function worldAngle(from: Cell, to: Cell, size: number): number {
   return Math.atan2(b.y - a.y, b.x - a.x);
 }
 
-/** A hexagon's six corners in world space, flat-top: the first corner is due
- *  east, then anticlockwise. */
-export function corners(cell: Cell, size: number): Point[] {
-  const c = cellToWorld(cell, size);
+/**
+ * The six corners of a hexagon of `radius` about a world point, flat-top: the
+ * first corner is due east, then anticlockwise.
+ *
+ * Separate from `corners` on purpose. `corners(cell, size)` uses its `size` for
+ * two different jobs — where the cell sits *and* how big its hexagon is — so
+ * asking it for a smaller hexagon by passing a smaller size quietly moves the
+ * centre too, by the same fraction of its distance from the origin. That is
+ * exactly what put a displaced dark outline on the parent tile on 2026-09-30:
+ * an inset band drawn at `size * 0.9` appeared a tenth of the way toward the
+ * middle of the company. To draw a hexagon that is *concentric* with a cell but
+ * a different size, take the centre with `cellToWorld` at the real size and
+ * come here.
+ */
+export function cornersAt(centre: Point, radius: number): Point[] {
   const out: Point[] = [];
   for (let i = 0; i < 6; i++) {
     const angle = (Math.PI / 3) * i;
-    out.push({ x: c.x + size * Math.cos(angle), y: c.y + size * Math.sin(angle) });
+    out.push({ x: centre.x + radius * Math.cos(angle), y: centre.y + radius * Math.sin(angle) });
   }
   return out;
 }
+
+/** A cell's own hexagon: centred where the cell sits, and the size of a cell. */
+export const corners = (cell: Cell, size: number): Point[] =>
+  cornersAt(cellToWorld(cell, size), size);
 
 /**
  * A route between two cells that only ever runs along the lattice's own axes.

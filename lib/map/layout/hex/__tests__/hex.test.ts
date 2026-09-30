@@ -22,6 +22,7 @@ import {
   cellKey,
   cellToWorld,
   corners,
+  cornersAt,
   hexDistance,
   inradius,
   neighbours,
@@ -90,6 +91,25 @@ describe("the lattice", () => {
       const a = cellToWorld({ q: 0, r: 0 }, size);
       const b = cellToWorld(d, size);
       expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(inradius(size) * 2, 6);
+    }
+  });
+
+  it("keeps an inset hexagon concentric with its cell", () => {
+    // The bug of 2026-09-30: drawing a smaller hexagon by calling
+    // `corners(cell, size * 0.9)` moved its centre a tenth of the way toward
+    // the origin, so the parent tile wore a visibly displaced dark band.
+    const size = 80;
+    const cell = { q: 5, r: -3 };
+    const centre = cellToWorld(cell, size);
+    const inset = cornersAt(centre, size * 0.86);
+    const mid = {
+      x: inset.reduce((t, p) => t + p.x, 0) / 6,
+      y: inset.reduce((t, p) => t + p.y, 0) / 6,
+    };
+    expect(mid.x).toBeCloseTo(centre.x, 6);
+    expect(mid.y).toBeCloseTo(centre.y, 6);
+    for (const p of inset) {
+      expect(Math.hypot(p.x - centre.x, p.y - centre.y)).toBeCloseTo(size * 0.86, 6);
     }
   });
 

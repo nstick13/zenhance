@@ -36,7 +36,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  axialRoute, cellKey, corners, worldToCell, type Cell,
+  axialRoute, cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -377,7 +377,10 @@ export default function HexLab({
         band(parentId, 5);
         const cell = hexScene.hex.cells.get(parentId);
         if (cell) {
-          const pts = corners(cell, hexSize * 0.9);
+          // Concentric with the cell, so take the centre at the real size and
+          // only shrink the radius — `corners(cell, size * 0.86)` would move
+          // the centre too, which is what displaced this band on 2026-09-30.
+          const pts = cornersAt(cellToWorld(cell, hexSize), hexSize * 0.86);
           ctx.beginPath();
           ctx.moveTo(pts[0].x, pts[0].y);
           for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
