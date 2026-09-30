@@ -327,13 +327,13 @@ describe("a company that branches wider than a hexagon has sides", () => {
 });
 
 describe("how much of its cell a node fills", () => {
-  it("gives the company all of it and the deepest rung half, by area", () => {
+  it("gives the company all of its cell and the deepest rung a quarter, by area", () => {
     expect(nodeAreaFraction(0, 12)).toBe(1);
-    expect(nodeAreaFraction(12, 12)).toBe(0.5);
+    expect(nodeAreaFraction(12, 12)).toBe(0.25);
   });
 
-  it("matches Greg's own three-rung example: 100, 75, 50", () => {
-    expect([0, 1, 2].map((d) => nodeAreaFraction(d, 2))).toEqual([1, 0.75, 0.5]);
+  it("steps a three-rung company 100 / 62.5 / 25", () => {
+    expect([0, 1, 2].map((d) => nodeAreaFraction(d, 2))).toEqual([1, 0.625, 0.25]);
   });
 
   it("steps evenly however many rungs there are", () => {
@@ -348,16 +348,17 @@ describe("how much of its cell a node fills", () => {
     for (const max of [1, 3, 12]) {
       for (let d = 0; d <= max; d++) {
         expect(nodeAreaFraction(d, max)).toBeLessThanOrEqual(1);
-        expect(nodeAreaFraction(d, max)).toBeGreaterThanOrEqual(0.5);
+        expect(nodeAreaFraction(d, max)).toBeGreaterThanOrEqual(0.25);
         if (d > 0) expect(nodeAreaFraction(d, max)).toBeLessThan(nodeAreaFraction(d - 1, max));
       }
     }
   });
 
   it("converts area to size through the square root, not by halving", () => {
-    // Half the area is about 71% of the width, which is the whole reason this
-    // is two functions rather than one.
-    expect(nodeScale(12, 12)).toBeCloseTo(Math.SQRT1_2, 12);
+    // A quarter of the area is *half* the width. Halving the radius instead
+    // would draw a team at a sixteenth of the area asked for, which is the
+    // whole reason this is two functions rather than one.
+    expect(nodeScale(12, 12)).toBeCloseTo(0.5, 12);
     expect(nodeScale(0, 12)).toBe(1);
   });
 

@@ -15,7 +15,9 @@ import {
   placeIsland,
   wouldCycle,
 } from "@/lib/map/layout/hex/arrange";
-import { cellKey, hexDistance, type Cell } from "@/lib/map/layout/hex/coords";
+import {
+  cellKey, cellToWorld, hexDistance, neighbours, type Cell,
+} from "@/lib/map/layout/hex/coords";
 
 /**
  *            company
@@ -156,10 +158,68 @@ describe("the outline round meta-connected tiles", () => {
     expect(perimeter).toBeCloseTo(60, 6); // six sides, each one circumradius long
   });
 
-  it("drops the shared edge between two touching hexagons", () => {
-    const segs = outline([at(0, 0), at(1, 0)], 10);
-    // Twelve edges less the two that face each other.
-    expect(segs).toHaveLength(10);
+  /**
+   * Derive the answer a second way and compare. An edge is on the boundary
+   * exactly when the cell across it is outside the set, and that edge's
+   * midpoint is halfway between the two cell centres — which needs no
+   * knowledge of corner ordering at all.
+   *
+   * Counting segments was the old test, and it is worthless here: the bug of
+   * 2026-09-30 mapped every edge to the wrong neighbour, which still drops the
+   * right *number* of edges. It has to check *which*.
+   */
+  // Rounded, and `+ 0` to collapse the -0 that rounding a tiny negative
+  // produces. A corner is `centre + radius × cos(90°)`, and `cos(90°)` is
+  // 6.1e-17 rather than zero, so the same point reached from two directions
+  // differs in the last bits and formats as "0.000000" one way and
+  // "-0.000000" the other.
+  const key = (x: number, y: number) =>
+    `${Math.round(x * 1000) / 1000 + 0},${Math.round(y * 1000) / 1000 + 0}`;
+
+  const expectedMidpoints = (cells: Cell[], size: number) => {
+    const set = new Set(cells.map(cellKey));
+    const out: string[] = [];
+    for (const cell of cells) {
+      const a = cellToWorld(cell, size);
+      for (const n of neighbours(cell)) {
+        if (set.has(cellKey(n))) continue;
+        const b = cellToWorld(n, size);
+        out.push(key((a.x + b.x) / 2, (a.y + b.y) / 2));
+      }
+    }
+    return new Set(out);
+  };
+  const actualMidpoints = (cells: Cell[], size: number) =>
+    new Set(outline(cells, size).map((s) =>
+      key((s.from.x + s.to.x) / 2, (s.from.y + s.to.y) / 2)));
+
+  it("draws every boundary edge and no internal one", () => {
+    const shapes: Cell[][] = [
+      [at(0, 0), at(1, 0)],                                   // a pair
+      [at(0, 0), at(1, 0), at(2, 0), at(3, 0)],               // a line
+      [at(0, 0), ...neighbours(at(0, 0))],                    // a full flower
+      [at(0, 0), at(1, 0), at(1, 1), at(0, 2), at(-1, 2)],    // a ragged blob
+      [at(0, 0), at(5, 0)],                                   // two islands
+      [at(0, 0), at(1, -1), at(2, -1), at(2, 0), at(1, 1)],   // a ring with a hole
+    ];
+    for (const shape of shapes) {
+      expect(actualMidpoints(shape, 30)).toEqual(expectedMidpoints(shape, 30));
+    }
+  });
+
+  it("leaves a fully surrounded cell with no outline of its own", () => {
+    // A flower: the middle cell touches only family, so none of its six edges
+    // may appear. The old mapping drew some of them, which is what made the
+    // outline snake through the shape instead of round it.
+    const flower = [at(0, 0), ...neighbours(at(0, 0))];
+    const segs = outline(flower, 30);
+    const centre = cellToWorld(at(0, 0), 30);
+    for (const s of segs) {
+      const mid = { x: (s.from.x + s.to.x) / 2, y: (s.from.y + s.to.y) / 2 };
+      // Every boundary midpoint of a flower is two inradii from the middle.
+      expect(Math.hypot(mid.x - centre.x, mid.y - centre.y)).toBeGreaterThan(30);
+    }
+    expect(segs).toHaveLength(18); // seven cells, six edges each, twelve shared
   });
 
   it("keeps both outlines when the tiles do not touch", () => {

@@ -98,23 +98,22 @@ export function hexSizeFor(density: HexDensity): number {
  * *"The master central node should occupy 100% of the hosting hexagonal
  * area… nodes that stratify between team and master central should occupy an
  * area that steps up, with each step calculated based on how many strata there
- * are. Eg: master central: 100%; master central +1: 75%; team/master central
- * +2: 50%."*
- *
- * So the deepest rung keeps half the cell's **area** and the company keeps all
- * of it, with the rungs between stepping evenly — and the step size follows
- * from how many rungs a company has, rather than being a number anyone tuned.
- * A three-rung company steps 100 / 75 / 50, which is Greg's own example; a
- * twelve-rung company takes the same journey in smaller strides.
+ * are."* The deepest rung keeps **a quarter** of its cell's area (Greg,
+ * 2026-09-30, after seeing half: *"let's make the size of the team nodes 25%
+ * the size of the hosting tile"*), the company keeps all of it, and the rungs
+ * between step evenly — so the step size follows from how many rungs a company
+ * has rather than being a number anyone tuned.
  *
  * The point is that a node smaller than the cell it sits in leaves a gap, and
  * the gap is what tells two peers apart — and what gives the chain lines
  * somewhere to run.
  */
+const TEAM_SHARE_LOSS = 0.75;
+
 export function nodeAreaFraction(depth: number, maxDepth: number): number {
   if (maxDepth <= 0) return 1;
   const t = Math.min(1, Math.max(0, depth / maxDepth));
-  return 1 - 0.5 * t;
+  return 1 - TEAM_SHARE_LOSS * t;
 }
 
 /** The same rule as a *linear* scale, which is what a radius wants. Area goes

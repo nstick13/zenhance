@@ -213,12 +213,13 @@ based on how many strata there are. Eg: master central: 100%; master central
 +1: 75%; team/master central +2: 50%."*
 
 `nodeAreaFraction(depth, maxDepth)` in `scene.ts`: the company keeps all of its
-cell, the deepest rung keeps half the **area**, and the rungs between step
-evenly — so the step size follows from how many rungs a company has rather than
-being a number anyone tuned. A three-rung company gives exactly 100 / 75 / 50,
-which is Greg's own example; a twelve-rung company takes the same journey in
-smaller strides. `nodeScale` is the same rule as a *linear* scale, which is what
-a radius wants: half the area is 71% of the width, not half of it.
+cell, **the deepest rung keeps a quarter of the area** (halved again on
+2026-09-30 after Greg saw 50% — *"let's make the size of the team nodes 25% the
+size of the hosting tile"*), and the rungs between step evenly, so the step
+size follows from how many rungs a company has rather than being a number
+anyone tuned. `nodeScale` is the same rule as a *linear* scale, which is what a
+radius wants: a quarter of the area is **half** the width, not a quarter of it.
+Halving the radius instead would draw a team at a sixteenth of the area.
 
 Two things follow from the gap this opens up:
 
@@ -323,6 +324,32 @@ starves — the quota has to carry slack at *every* level, not only the top.
 The remaining 12% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
+
+### The outline bug that six tests missed
+
+Greg, 2026-09-30, on the hover outline: *"a bit… weird. I need a contiguous
+outline of the whole joined shape, not a snaking millipede through some of
+them."*
+
+`outline` decides an edge is on the boundary when the cell across it is not in
+the set. Corner `i` sits at `i × 60°`, so the edge between corners `i` and `i+1`
+faces outward at `i × 60 + 30°` — and the six neighbour directions, in world
+space, lie at 30°, 330°, 270°, 210°, 150° and 90°, **descending**, because
+screen y grows downward while corners are generated counter-clockwise. The right
+mapping is `edge i → direction (6 - i) % 6`. The code had `(i + 1) % 6`, which
+is wrong for all six.
+
+**It is wrong in a way that survives counting.** A wrong bijection still drops
+exactly as many edges as a right one, so a family's shared edges stayed drawn
+while parts of its real boundary went missing — the millipede. The test that
+should have caught it asserted `segs).toHaveLength(10)`, which is the one thing
+a wrong bijection preserves.
+
+The test now derives the answer a second way and compares: an edge's midpoint is
+halfway between the two cell centres, which needs no knowledge of corner
+ordering at all. Six shapes, including a flower where the middle cell must
+contribute nothing and a ring with a hole. **If you touch this function, that is
+the test that matters.**
 
 ## The orbits mode is parked, not finished with
 

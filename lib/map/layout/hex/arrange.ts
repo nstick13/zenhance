@@ -201,6 +201,25 @@ export type Segment = { from: Point; to: Point };
  * per data change, and could still miss a corridor thinner than its sampler.
  * This cannot be wrong and is too cheap to measure.
  */
+/**
+ * Which neighbour each edge faces.
+ *
+ * Corner `i` sits at `i × 60°`, so the edge between corners `i` and `i+1` faces
+ * outward at `i × 60 + 30°`. The six neighbour directions, converted to world
+ * space, lie at 30°, 330°, 270°, 210°, 150° and 90° — **descending**, because
+ * screen y grows downward while the corners are generated counter-clockwise in
+ * maths. Matching the two lists gives edge `i` → direction `(6 - i) % 6`.
+ *
+ * It was `(i + 1) % 6` until 2026-09-30, which is wrong for all six. Because
+ * that mapping is still a bijection, the outline dropped exactly as many edges
+ * as it should have — just never the right ones. So a family's shared edges
+ * stayed drawn and some of its real boundary went missing, and the outline came
+ * out as what Greg called *"a snaking millipede"*. The test that should have
+ * caught it only counted segments, which is precisely the thing a wrong
+ * bijection preserves.
+ */
+const EDGE_FACES: readonly number[] = [0, 5, 4, 3, 2, 1];
+
 export function outline(cells: readonly Cell[], size: number): Segment[] {
   const set = new Set(cells.map(cellKey));
   const segments: Segment[] = [];
@@ -208,11 +227,7 @@ export function outline(cells: readonly Cell[], size: number): Segment[] {
     const pts = corners(cell, size);
     const around = neighbours(cell);
     for (let i = 0; i < 6; i++) {
-      // Corner i and corner i+1 span the edge facing neighbour i+... — the
-      // corner list starts due east and the direction list starts due east, so
-      // edge i sits between directions i and i-1. Walking both in the same
-      // order keeps them in step.
-      if (set.has(cellKey(around[(i + 1) % 6]))) continue;
+      if (set.has(cellKey(around[EDGE_FACES[i]]))) continue;
       segments.push({ from: pts[i], to: pts[(i + 1) % 6] });
     }
   }
