@@ -176,8 +176,52 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | Offer to **de-parent** a tile dragged away from its family | **not built** |
 | **Gather** scattered children back to their parent | **not built** |
 | Auto-arrange flavours (linear, spiral, geographical, radial) | **not built**; Tidy up returns to the calculated layout |
+| Siblings, parent and children shown on hover | **built** |
+| Connection lines routed along the lattice's own angles, chunky and dark | **built** |
 
 Nothing persists. A refresh returns the company to its calculated arrangement.
+
+### Seeing the family (2026-09-30, later)
+
+Greg: *"we need some visual rules that help a user see siblings, parents and so
+on… when I hover on a tile, its siblings should grow a white border too, and it
+should be apparent who the parent tile is."*
+
+Four treatments, in descending weight. Point at a tile and:
+
+| | treatment |
+|---|---|
+| the tile itself | a white band |
+| **its parent** | a heavier white band **and a dark one just inside it** — the one tile in the family you cannot mistake for another |
+| its siblings | a thinner white band |
+| its children | a thinner white band, **dashed**, so they read as the other direction rather than more of the same |
+
+The tile and its parent also carry their names whatever the zoom, overriding the
+usual label rules. Answering *who is the parent* is the point of the gesture,
+and a nameless hexagon does not answer it.
+
+### Lines that belong to the grid
+
+Greg: *"connection lines, where visible, should follow strict routing, meaning
+they flow along one of the angles that define the hexagons… they should also be
+chunkier and of a darker colour so they are visible on the very pale grey
+background."*
+
+On a flat-top lattice those angles are **30°, 90°, 150°, 210°, 270° and 330°**
+— six directions sixty degrees apart, offset thirty from the horizontal. A line
+along any of them is parallel to an edge of every hexagon it crosses, which is
+what makes it read as part of the grid rather than drawn over it.
+
+`axialRoute` in `coords.ts` does it: any hex vector decomposes into **two** of
+those directions with whole-number steps, because adjacent directions form a
+basis of the lattice and their determinant is one. So a route is at most two
+straight runs and one bend, with the longer run first. Neighbouring cells give
+a single straight run and no bend, which is the common case. A test sweeps 169
+destinations and checks that no segment ever runs along anything but the six
+axes.
+
+Drawn as a dark core over a white casing, so it stays readable over both a
+near-black executive tile and a pale wash one.
 
 ### Colour
 
@@ -227,6 +271,22 @@ starves — the quota has to carry slack at *every* level, not only the top.
 The remaining 12% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
+
+## The orbits mode is parked, not finished with
+
+The **layout** toggle still draws the company the way `/org` draws it today,
+through this same renderer — so it picks up the new colour system, the hover
+treatments and the routed lines for free.
+
+Greg, 2026-09-30: *"the orbits model you've got going on in this version
+seeeeeeems very close to what we want in that flavour of events. Let's stash
+that for now but don't delete it — it's showing up very nicely."*
+
+**So do not remove it.** It costs one branch in a `useMemo` and it is carrying a
+finding of its own: the layout that already ships looks markedly better once
+hue carries region and lightness carries depth. That is a change to `theme.ts`
+and the renderer, not to the layout engine, and it could reach `/org` without
+any of the hex work landing at all.
 
 ## Recovering what came before
 

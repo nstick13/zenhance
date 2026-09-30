@@ -36,7 +36,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, corners, worldToCell, type Cell,
+  axialRoute, cellKey, corners, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -326,6 +326,13 @@ export default function HexLab({
     //    to an exclave, instead of a tether. Exact on a lattice: an edge is on
     //    the boundary when the cell across it is not in the set.
     const focusId = drag?.unitId ?? hover;
+    const focusUnit = focusId ? tree.units.get(focusId) : null;
+    const parentId = focusUnit?.parentId ?? null;
+    const siblingIds = parentId
+      ? new Set((tree.units.get(parentId)?.childIds ?? []).filter((id) => id !== focusId))
+      : new Set<string>();
+    const childIds = new Set(focusUnit?.childIds ?? []);
+
     if (hexScene && focusId) {
       const family = metaConnected(tree, focusId);
       const cells = [...family].map((id) => hexScene.hex.cells.get(id)).filter(Boolean) as Cell[];
@@ -342,29 +349,80 @@ export default function HexLab({
       }
     }
 
-    // 5. The route home, on demand rather than always — which is what replaced
-    //    the connection lines. Point at a tile and the chain back to the
-    //    company lights up.
+    // 5. Who is family, at a glance. Greg, 2026-09-30: *"when I hover on a
+    //    tile, its siblings should grow a white border too, and it should be
+    //    apparent who the parent tile is."*
+    //
+    //    Four treatments, in descending weight: the tile you are pointing at,
+    //    the parent (heaviest, because it is the answer to the question), the
+    //    siblings, and the children in a dashed line so they read as the other
+    //    direction rather than more of the same.
     if (hexScene && focusId) {
-      let walk: string | null = focusId;
-      const chain: Cell[] = [];
-      while (walk) {
-        const c = hexScene.hex.cells.get(walk);
-        if (c) chain.push(c);
-        walk = tree.units.get(walk)?.parentId ?? null;
-      }
-      ctx.lineWidth = Math.max(0.8, 2.5 / scale);
-      ctx.strokeStyle = "rgba(255,255,255,0.95)";
-      for (const cell of chain) { hexPath(cell); ctx.stroke(); }
-      if (chain.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(chain[0].q * 0 + cornerCentre(chain[0], hexSize).x, cornerCentre(chain[0], hexSize).y);
-        for (let i = 1; i < chain.length; i++) {
-          const p = cornerCentre(chain[i], hexSize);
-          ctx.lineTo(p.x, p.y);
+      const band = (id: string, width: number, dash: number[] = []) => {
+        const cell = hexScene.hex.cells.get(id);
+        if (!cell) return;
+        ctx.setLineDash(dash.map((d) => d / scale));
+        ctx.lineWidth = Math.max(0.8, width / scale);
+        ctx.strokeStyle = "rgba(255,255,255,0.95)";
+        hexPath(cell);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      };
+      for (const id of siblingIds) band(id, 2.6);
+      for (const id of childIds) band(id, 2.6, [7, 5]);
+      band(focusId, 4);
+      if (parentId) {
+        // The parent wears the white band and a dark one just inside it, so it
+        // is the one tile in the family you cannot mistake for another.
+        band(parentId, 5);
+        const cell = hexScene.hex.cells.get(parentId);
+        if (cell) {
+          const pts = corners(cell, hexSize * 0.9);
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
+          ctx.closePath();
+          ctx.lineWidth = Math.max(0.8, 2.6 / scale);
+          ctx.strokeStyle = "rgba(15,23,42,0.9)";
+          ctx.stroke();
         }
-        ctx.lineWidth = Math.max(0.6, 1.6 / scale);
-        ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      }
+    }
+
+    // 6. The route home, on demand rather than always — which is what replaced
+    //    the connection lines. It runs strictly along the lattice's own angles
+    //    (30°, 90°, 150° and their opposites), so it lies parallel to an edge
+    //    of every hexagon it crosses instead of cutting across them. A white
+    //    casing under a dark core keeps it readable over both a near-black
+    //    executive tile and a pale wash one.
+    if (hexScene && focusId) {
+      const hops: Cell[][] = [];
+      let walk: string | null = focusId;
+      while (walk) {
+        const here = hexScene.hex.cells.get(walk);
+        const up: string | null = tree.units.get(walk)?.parentId ?? null;
+        const there = up ? hexScene.hex.cells.get(up) : null;
+        if (here && there) hops.push([here, there]);
+        walk = up;
+      }
+      if (hops.length) {
+        const trace = () => {
+          ctx.beginPath();
+          for (const [a, b] of hops) {
+            const route = axialRoute(a, b, hexSize);
+            ctx.moveTo(route[0].x, route[0].y);
+            for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
+          }
+        };
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        trace();
+        ctx.lineWidth = Math.max(1.6, 7 / scale);
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.stroke();
+        trace();
+        ctx.lineWidth = Math.max(0.9, 3.6 / scale);
+        ctx.strokeStyle = "rgba(15,23,42,0.92)";
         ctx.stroke();
       }
     }
@@ -428,16 +486,25 @@ export default function HexLab({
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const placed: { x: number; y: number; w: number; h: number }[] = [];
-    for (const unit of [...visible].sort((a, b) => a.depth - b.depth)) {
+    // The tile being pointed at and its parent are named first and always,
+    // whatever the zoom. Answering "who is the parent" is the whole point of
+    // the hover, and a nameless hexagon does not answer it.
+    const forced = new Set([focusId, parentId].filter(Boolean) as string[]);
+    const ordered = [...visible].sort(
+      (a, b) =>
+        Number(forced.has(b.id)) - Number(forced.has(a.id)) || a.depth - b.depth,
+    );
+    for (const unit of ordered) {
       const drawn = drawnUnitRadius(unit, scale, unit.drawCeiling);
-      const inside = unitLabelVisible(drawn, scale);
+      const inside = unitLabelVisible(drawn, scale) || forced.has(unit.id);
       const landmark = !inside && isLandmark(unit.depth);
       if (!inside && !landmark) continue;
       const sx = unit.x * scale + camera.x;
       const sy = unit.y * scale + camera.y;
       if (sx < -80 || sy < -30 || sx > size.width + 80 || sy > size.height + 30) continue;
       const fontPx = inside ? 12 : Math.max(10, 16 - unit.depth * 1.5);
-      ctx.font = `${unit.depth <= 1 ? 650 : 500} ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+      const bold = unit.depth <= 1 || forced.has(unit.id);
+      ctx.font = `${bold ? 650 : 500} ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
       const w = ctx.measureText(unit.name).width;
       const ly = inside ? sy : sy + drawn * scale + 10;
       const h = fontPx + 8;
@@ -701,15 +768,6 @@ export default function HexLab({
       </Panel>
     </>
   );
-}
-
-/** A cell's centre in world space — the route-home polyline needs it. */
-function cornerCentre(cell: Cell, size: number) {
-  const pts = corners(cell, size);
-  return {
-    x: pts.reduce((t, p) => t + p.x, 0) / 6,
-    y: pts.reduce((t, p) => t + p.y, 0) / 6,
-  };
 }
 
 const pStyle: React.CSSProperties = { margin: "6px 0 10px", fontSize: 12, lineHeight: 1.55, color: "#475569" };

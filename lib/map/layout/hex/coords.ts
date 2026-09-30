@@ -187,6 +187,49 @@ export function corners(cell: Cell, size: number): Point[] {
   return out;
 }
 
+/**
+ * A route between two cells that only ever runs along the lattice's own axes.
+ *
+ * Greg, 2026-09-30: *"connection lines, where visible, should follow strict
+ * routing, meaning they flow along one of the angles that define the
+ * hexagons."* On a flat-top lattice those angles are **30°, 90°, 150°, 210°,
+ * 270° and 330°** — six directions, sixty degrees apart, offset thirty from
+ * the horizontal. A line along any of them lies parallel to an edge of every
+ * hexagon it crosses, which is what makes it read as belonging to the grid
+ * rather than being drawn on top of it.
+ *
+ * Any hex vector decomposes into **two** of those directions with whole-number
+ * steps — adjacent directions form a basis of the lattice and their
+ * determinant is one — so a route is at most two straight runs and one bend.
+ * The longer run goes first, so a line leaves a tile along the direction it is
+ * mostly heading.
+ *
+ * Returns world points: start, the bend if there is one, and the end. Two
+ * cells that are neighbours give a single straight run and no bend at all,
+ * which is the common case.
+ */
+export function axialRoute(from: Cell, to: Cell, size: number): Point[] {
+  const delta = subtract(to, from);
+  if (delta.q === 0 && delta.r === 0) return [cellToWorld(from, size)];
+
+  for (let i = 0; i < 6; i++) {
+    const d1 = DIRECTIONS[i];
+    const d2 = DIRECTIONS[(i + 1) % 6];
+    const det = d1.q * d2.r - d2.q * d1.r;
+    if (det === 0) continue;
+    const a = (delta.q * d2.r - d2.q * delta.r) / det;
+    const b = (d1.q * delta.r - delta.q * d1.r) / det;
+    if (a < 0 || b < 0 || !Number.isInteger(a) || !Number.isInteger(b)) continue;
+    if (a === 0 || b === 0) return [cellToWorld(from, size), cellToWorld(to, size)];
+    // Longer run first.
+    const lead = a >= b ? scale(d1, a) : scale(d2, b);
+    const bend = add(from, lead);
+    return [cellToWorld(from, size), cellToWorld(bend, size), cellToWorld(to, size)];
+  }
+  // Unreachable for real cells; a straight line is a safe answer.
+  return [cellToWorld(from, size), cellToWorld(to, size)];
+}
+
 /** Which of the six directions points most nearly along `angle` (world
  *  radians). Used to turn "away from my parent" into a lattice direction. */
 export function directionNearest(angle: number, size: number): number {

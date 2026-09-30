@@ -29,6 +29,7 @@ import {
   spiral,
   spiralSize,
   worldToCell,
+  axialRoute,
 } from "@/lib/map/layout/hex/coords";
 import { allocate } from "@/lib/map/layout/hex/allocate";
 import { contentRadius, hexSizeFor, layoutHex } from "@/lib/map/layout/hex/scene";
@@ -98,6 +99,58 @@ describe("the lattice", () => {
     const pts = corners({ q: 2, r: -1 }, size);
     expect(pts).toHaveLength(6);
     for (const p of pts) expect(Math.hypot(p.x - centre.x, p.y - centre.y)).toBeCloseTo(size, 6);
+  });
+});
+
+describe("connection lines run along the lattice's own angles", () => {
+  const SIZE = 40;
+  /** The six directions a flat-top lattice offers, in degrees. */
+  const AXES = [30, 90, 150, 210, 270, 330];
+  const headings = (points: { x: number; y: number }[]): number[] =>
+    points.slice(1).map((p, i) => {
+      const a = points[i];
+      const deg = (Math.atan2(p.y - a.y, p.x - a.x) * 180) / Math.PI;
+      return ((deg % 360) + 360) % 360;
+    });
+
+  it("draws a single straight run between neighbours", () => {
+    for (const d of DIRECTIONS) {
+      const route = axialRoute({ q: 0, r: 0 }, d, SIZE);
+      expect(route).toHaveLength(2);
+    }
+  });
+
+  it("never runs along anything but the six axes", () => {
+    for (let q = -6; q <= 6; q++) {
+      for (let r = -6; r <= 6; r++) {
+        for (const h of headings(axialRoute({ q: 0, r: 0 }, { q, r }, SIZE))) {
+          expect(AXES.some((axis) => Math.abs(h - axis) < 1e-6)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("bends at most once", () => {
+    for (let q = -8; q <= 8; q++) {
+      for (let r = -8; r <= 8; r++) {
+        expect(axialRoute({ q: 0, r: 0 }, { q, r }, SIZE).length).toBeLessThanOrEqual(3);
+      }
+    }
+  });
+
+  it("starts and ends exactly on the two cell centres", () => {
+    const route = axialRoute({ q: 2, r: -5 }, { q: -3, r: 4 }, SIZE);
+    expect(route[0]).toEqual(cellToWorld({ q: 2, r: -5 }, SIZE));
+    expect(route.at(-1)).toEqual(cellToWorld({ q: -3, r: 4 }, SIZE));
+  });
+
+  it("leaves along the direction it is mostly heading", () => {
+    // Four steps east-ish, one step south-east: the first run is the long one.
+    const route = axialRoute({ q: 0, r: 0 }, { q: 4, r: 1 }, SIZE);
+    expect(route).toHaveLength(3);
+    const first = Math.hypot(route[1].x - route[0].x, route[1].y - route[0].y);
+    const second = Math.hypot(route[2].x - route[1].x, route[2].y - route[1].y);
+    expect(first).toBeGreaterThanOrEqual(second);
   });
 });
 
