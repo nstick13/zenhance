@@ -31,7 +31,6 @@ import {
   cellFromKey,
   cellKey,
   corners,
-  hexDistance,
   neighbours,
   spiral,
   worldToCell,
@@ -263,15 +262,71 @@ export function outline(cells: readonly Cell[], size: number): Segment[] {
  * lets the caller ask before anything moves.
  */
 export type IslandLanding =
-  | { kind: "fits"; cells: Map<string, Cell> }
-  | { kind: "reshaped"; cells: Map<string, Cell> }
+  /** The shape, exactly where the hand is. */
+  | { kind: "fits"; cells: Map<string, Cell>; anchor: Cell }
+  /** The shape, seated a cell or two aside because something clipped it. */
+  | { kind: "nudged"; cells: Map<string, Cell>; anchor: Cell }
+  /** It was already in pieces, so it has been gathered. No dialog — there is
+   *  no shape to mourn. Greg, 2026-09-30. */
+  | { kind: "gathered"; cells: Map<string, Cell>; anchor: Cell }
+  /** It was whole and would not go in, so it has been reflowed. Ask first. */
+  | { kind: "reshaped"; cells: Map<string, Cell>; anchor: Cell }
   | { kind: "no-room" };
 
+/** Is this set of cells one connected patch? */
+export function isOnePatch(cells: Iterable<Cell>): boolean {
+  // Materialise once. `Map.values()` is an iterator, and spreading it twice
+  // leaves the second spread empty — which quietly reported every scattered
+  // family as whole.
+  const list = [...cells];
+  const keys = new Set(list.map(cellKey));
+  const first = list[0];
+  if (!first) return true;
+  const seen = new Set([cellKey(first)]);
+  const queue = [first];
+  while (queue.length) {
+    const c = queue.pop()!;
+    for (const n of neighbours(c)) {
+      const k = cellKey(n);
+      if (keys.has(k) && !seen.has(k)) { seen.add(k); queue.push(n); }
+    }
+  }
+  return seen.size === keys.size;
+}
+
+/** How far a landing may be nudged to keep a branch's shape. Two rings is
+ *  eighteen cells — enough to slip past a stray neighbour, small enough that
+ *  the branch still lands where the hand meant. */
+const NUDGE_RINGS = 2;
+
+/**
+ * Where a whole island lands when it is dragged.
+ *
+ * **This always answers**, short of there being nowhere at all, and the answer
+ * is the one that commits. Greg, 2026-10-01: *"when it dropped it landed as
+ * something unlike what it was suggesting."*
+ *
+ * It did, and the reason was two mechanisms disagreeing. This returned
+ * `no-room` the moment the cell under the cursor was occupied — so there was no
+ * preview while the hand was over anybody — and the drop then asked
+ * `dropOutcome` instead, which found a free cell somewhere else and committed a
+ * landing nobody had been shown. **The preview is now the only thing that
+ * decides where a branch goes**; `dropOutcome` is left to answer the question
+ * it is actually for, which is whether a drop changes who reports to whom.
+ *
+ * In order: the shape where the hand is; the shape a cell or two aside; and
+ * only then a reflow. A branch already in pieces skips straight to the reflow,
+ * because its silhouette is not a shape anybody chose.
+ */
 export function placeIsland(
   occupancy: Occupancy,
   members: ReadonlyMap<string, Cell>,
   anchorId: string,
   target: Cell,
+  /** Who reports to whom inside the branch. A reflow needs it to seat a unit
+   *  against its own parent; without it the layout can only guess from the
+   *  shape, and guessing is what grew the crab arms. */
+  childrenOf?: (unitId: string) => readonly string[],
 ): IslandLanding {
   const anchor = members.get(anchorId);
   if (!anchor) return { kind: "no-room" };
@@ -281,45 +336,116 @@ export function placeIsland(
     return !who || moving.has(who);
   };
 
-  // The silhouette people have learnt, offset to the new anchor.
-  const shifted = new Map<string, Cell>();
-  let fits = true;
-  for (const [id, cell] of members) {
-    const moved = {
-      q: cell.q - anchor.q + target.q,
-      r: cell.r - anchor.r + target.r,
-    };
-    if (!free(moved)) fits = false;
-    shifted.set(id, moved);
-  }
-  if (fits) return { kind: "fits", cells: shifted };
+  /** The silhouette people have learnt, offset to a candidate anchor. */
+  const shapeAt = (at: Cell) => {
+    const out = new Map<string, Cell>();
+    let fits = true;
+    for (const [id, cell] of members) {
+      const moved = { q: cell.q - anchor.q + at.q, r: cell.r - anchor.r + at.r };
+      if (!free(moved)) fits = false;
+      out.set(id, moved);
+    }
+    return { fits, cells: out };
+  };
 
-  // It will not go. Reflow, keeping the anchor where the hand put it and
-  // seating the rest in the nearest free ground that touches what is placed.
+  const wasWhole = isOnePatch(members.values());
+
+  if (wasWhole) {
+    const exact = shapeAt(target);
+    if (exact.fits) return { kind: "fits", cells: exact.cells, anchor: target };
+
+    // **Nudge before reshaping.** A branch with exclaves is enormous — its
+    // silhouette spans everything between its mainland and its furthest
+    // outpost — so almost anywhere it lands, something in that span touches
+    // something, and one colliding cell out of a hundred and sixty was
+    // reshaping the whole branch. A cell or two is imperceptible where the hand
+    // let go; losing a shape somebody built is not.
+    for (const nearby of spiral(target, NUDGE_RINGS)) {
+      if (cellKey(nearby) === cellKey(target)) continue;
+      const nudged = shapeAt(nearby);
+      if (nudged.fits) return { kind: "nudged", cells: nudged.cells, anchor: nearby };
+    }
+  }
+
+  // The anchor needs somewhere of its own before anything can be laid out
+  // round it. If the hand is over somebody, take the nearest free ground —
+  // and show that, rather than refusing and springing a different answer at
+  // the moment of release.
+  const seat = free(target)
+    ? target
+    : nearestFreeCell(occupancy, target, { ignore: moving });
+  if (!seat) return { kind: "no-room" };
+
+  const laid = reflow(occupancy, members, anchorId, seat, moving, childrenOf);
+  if (!laid) return { kind: "no-room" };
+  return { kind: wasWhole ? "reshaped" : "gathered", cells: laid, anchor: seat };
+}
+
+/**
+ * Lay a branch out afresh around a seat, following the tree.
+ *
+ * The version before this placed each member on the nearest free cell touching
+ * *anything already placed*, in order of how far it had been from the anchor.
+ * That grows arms — Greg, 2026-10-01: *"it drew crab-like shapes as I moved
+ * it"* — because a unit would happily attach to a great-nephew rather than its
+ * own parent.
+ *
+ * This walks the tree instead, breadth-first from the seat, and seats each unit
+ * against **its own parent** wherever it can. The result is families in blobs
+ * and chains one step long, which is the shortest connection chain across the
+ * branch — which is what Greg asked for in rule 7.
+ */
+function reflow(
+  occupancy: Occupancy,
+  members: ReadonlyMap<string, Cell>,
+  anchorId: string,
+  seat: Cell,
+  moving: ReadonlySet<string>,
+  childrenOf?: (unitId: string) => readonly string[],
+): Map<string, Cell> | null {
   const taken = new Map<string, string>();
   for (const [key, id] of occupancy) if (!moving.has(id)) taken.set(key, id);
-  if (!free(target)) return { kind: "no-room" };
+  if (taken.has(cellKey(seat))) return null;
 
-  const out = new Map<string, Cell>([[anchorId, target]]);
-  taken.set(cellKey(target), anchorId);
-  const placed: Cell[] = [target];
-  const order = [...members.keys()]
-    .filter((id) => id !== anchorId)
-    .sort((a, b) => hexDistance(anchor, members.get(a)!) - hexDistance(anchor, members.get(b)!)
-      || a.localeCompare(b));
+  const out = new Map<string, Cell>([[anchorId, seat]]);
+  taken.set(cellKey(seat), anchorId);
 
-  for (const id of order) {
-    const want = {
-      q: members.get(id)!.q - anchor.q + target.q,
-      r: members.get(id)!.r - anchor.r + target.r,
-    };
-    const cell = nearestFreeCell(taken, want, { mustTouch: placed });
-    if (!cell) return { kind: "no-room" };
+  // Who is whose. With the tree, a unit seats against its own parent; without
+  // it, everything hangs off the anchor, which is a flat but honest fallback.
+  const kidsOf = new Map<string, string[]>();
+  if (childrenOf) {
+    for (const id of members.keys()) {
+      const kids = childrenOf(id).filter((k) => members.has(k));
+      if (kids.length) kidsOf.set(id, [...kids]);
+    }
+  } else {
+    kidsOf.set(anchorId, [...members.keys()].filter((id) => id !== anchorId));
+  }
+
+  const queue: string[] = [anchorId];
+  while (queue.length) {
+    const parentId = queue.shift()!;
+    const parentCell = out.get(parentId);
+    if (!parentCell) continue;
+    for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
+      const cell = nearestFreeCell(taken, parentCell, { maxRings: 14 });
+      if (!cell) return null;
+      out.set(childId, cell);
+      taken.set(cellKey(cell), childId);
+      queue.push(childId);
+    }
+  }
+
+  // Anyone the walk never reached — a member whose stand-in parent was itself
+  // unreachable — still has to go somewhere.
+  for (const id of members.keys()) {
+    if (out.has(id)) continue;
+    const cell = nearestFreeCell(taken, seat, { maxRings: 20 });
+    if (!cell) return null;
     out.set(id, cell);
     taken.set(cellKey(cell), id);
-    placed.push(cell);
   }
-  return { kind: "reshaped", cells: out };
+  return out;
 }
 
 export { cellFromKey, cellKey };

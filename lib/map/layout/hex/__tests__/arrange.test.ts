@@ -10,6 +10,7 @@ import {
   branchOf,
   dropOutcome,
   hoverGroup,
+  isOnePatch,
   metaConnected,
   nearestFreeCell,
   outline,
@@ -17,7 +18,7 @@ import {
   wouldCycle,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, hexDistance, neighbours, type Cell,
+  cellKey, cellToWorld, hexDistance, neighbours, spiral, type Cell,
 } from "@/lib/map/layout/hex/coords";
 
 /**
@@ -268,20 +269,74 @@ describe("moving a whole island", () => {
     expect(hexDistance(landing.cells.get("north")!, landing.cells.get("south")!)).toBe(1);
   });
 
+  it("nudges aside rather than reshaping, when a cell or two is enough", () => {
+    // One obstacle clipping the silhouette. Losing the shape over that is the
+    // bug Greg reported on 2026-09-30: a branch rearranging itself in open
+    // ground because one of its far cells caught something.
+    const landing = placeIsland(new Map([[cellKey(at(7, 0)), "stranger"]]), island, "sales", at(6, 0));
+    expect(landing.kind).toBe("nudged");
+    if (landing.kind === "no-room") return;
+    expect(hexDistance(landing.cells.get("sales")!, landing.cells.get("north")!)).toBe(1);
+    expect(hexDistance(landing.cells.get("sales")!, at(6, 0))).toBeLessThanOrEqual(2);
+  });
+
   it("says so when it has to change shape, and still places everyone", () => {
-    // Drop it where its own silhouette collides with the company and eng.
-    const landing = placeIsland(occupancy, island, "sales", at(-1, 1));
+    // Genuinely boxed in: everything within four rings is taken but the cell
+    // the hand is over, and the only other free ground is two isolated cells
+    // no offset of the silhouette can reach together. The shape has to give.
+    const boxed = new Map<string, string>();
+    for (const c of spiral(at(20, 0), 4)) boxed.set(cellKey(c), "stranger");
+    for (const c of [at(20, 0), at(20, -3), at(20, 3)]) boxed.delete(cellKey(c));
+    const landing = placeIsland(boxed, island, "sales", at(20, 0));
     expect(landing.kind).toBe("reshaped");
     if (landing.kind === "no-room") return;
     expect(landing.cells.size).toBe(3);
-    // Nobody landed on anybody.
     expect(new Set([...landing.cells.values()].map(cellKey)).size).toBe(3);
-    // And the anchor is exactly where the hand put it.
-    expect(landing.cells.get("sales")).toEqual(at(-1, 1));
+    expect(landing.cells.get("sales")).toEqual(at(20, 0));
+  });
+
+  it("always shows a landing when the hand is over somebody", () => {
+    // The bug of 2026-10-01: this returned "no-room" the moment the cell under
+    // the cursor was occupied, so there was no preview at all — and the drop
+    // then committed a landing from somewhere nobody had been shown.
+    const landing = placeIsland(occupancy, island, "sales", at(0, 1)); // on top of eng
+    expect(landing.kind).not.toBe("no-room");
+    if (landing.kind === "no-room") return;
+    expect(landing.cells.size).toBe(3);
+    // It says where it seated the anchor, so the preview and the commit are
+    // the same thing.
+    expect(landing.cells.get("sales")).toEqual(landing.anchor);
+    expect(occupancy.has(cellKey(landing.anchor))).toBe(false);
+  });
+
+  it("gathers a scattered family rather than carrying it", () => {
+    const scattered = new Map([
+      ["sales", at(30, 0)], ["north", at(38, -4)], ["south", at(30, 6)],
+    ]);
+    expect(isOnePatch(scattered.values())).toBe(false);
+    const landing = placeIsland(new Map(), scattered, "sales", at(50, 0));
+    expect(landing.kind).toBe("gathered");
+    if (landing.kind === "no-room") return;
+    expect(isOnePatch(landing.cells.values())).toBe(true);
+  });
+
+  it("seats a reflowed branch against its own parents, not in a crab", () => {
+    // Greg, 2026-10-01: "it drew crab-like shapes as I moved it." A member used
+    // to attach to whatever was already placed, however distant a relation.
+    const boxed = new Map<string, string>();
+    for (const c of spiral(at(40, 0), 3)) boxed.set(cellKey(c), "stranger");
+    for (const c of spiral(at(40, 0), 1)) boxed.delete(cellKey(c));
+    const landing = placeIsland(
+      boxed, island, "sales", at(40, 0),
+      (id) => tree.units.get(id)?.childIds ?? [],
+    );
+    if (landing.kind === "no-room") throw new Error("expected a landing");
+    expect(hexDistance(landing.cells.get("north")!, landing.cells.get("sales")!)).toBe(1);
+    expect(hexDistance(landing.cells.get("south")!, landing.cells.get("sales")!)).toBe(1);
   });
 
   it("never drops a member onto a unit that is staying put", () => {
-    const landing = placeIsland(occupancy, island, "sales", at(-1, 1));
+    const landing = placeIsland(occupancy, island, "sales", at(0, 1));
     if (landing.kind === "no-room") return;
     const staying = new Set(["company", "eng", "web", "api"]);
     for (const cell of landing.cells.values()) {

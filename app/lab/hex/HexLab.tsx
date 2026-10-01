@@ -270,6 +270,9 @@ export default function HexLab({
     world: { x: number; y: number };
     target: Cell;
     landing: Map<string, Cell> | null;
+    /** Where the landing actually seats the anchor — which is not the cell
+     *  under the cursor when that one was occupied. */
+    anchor: Cell | null;
     reshaped: boolean;
     heldOver: string | null;
     holdSince: number;
@@ -678,7 +681,8 @@ export default function HexLab({
       setDrag({
         unitId: hit, members, grabbed: hexScene.hex.cells.get(hit)!,
         from: world, world, target: hexScene.hex.cells.get(hit)!,
-        landing: null, reshaped: false, heldOver: null, holdSince: performance.now(),
+        landing: null, anchor: null, reshaped: false,
+        heldOver: null, holdSince: performance.now(),
       });
       return;
     }
@@ -696,12 +700,19 @@ export default function HexLab({
     if (drag && hexScene) {
       const target = worldToCell(world, hexScene.hex.size);
       if (cellKey(target) === cellKey(drag.target)) return;
-      const landing = placeIsland(allocation.occupants, drag.members, drag.unitId, target);
+      // One mechanism decides where the branch goes, and it is this one. What
+      // is drawn now is exactly what commits on release.
+      const landing = placeIsland(
+        allocation.occupants, drag.members, drag.unitId, target,
+        (id) => tree.units.get(id)?.childIds ?? [],
+      );
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
       setDrag({
         ...drag, world, target,
         landing: landing.kind === "no-room" ? null : landing.cells,
+        anchor: landing.kind === "no-room" ? null : landing.anchor,
+        // Only a shape somebody built and would now lose is worth a dialog.
         reshaped: landing.kind === "reshaped",
         heldOver: over && !drag.members.has(over) ? over : null,
         holdSince: stillOver ? drag.holdSince : performance.now(),
@@ -717,25 +728,24 @@ export default function HexLab({
     if (!drag || !hexScene) { setDrag(null); return; }
 
     const heldLongEnough = drag.heldOver && performance.now() - drag.holdSince > HOLD_MS;
+
+    // Nowhere at all is the only reason a drop is refused now.
+    if (!drag.landing || !drag.anchor) {
+      setPending({ kind: "blocked", unitId: drag.unitId, occupiedBy: "", cells: null });
+      setDrag(null);
+      return;
+    }
+
+    // `dropOutcome` is asked the question it is for — does this change who
+    // reports to whom — and asked it about where the branch is *actually*
+    // landing, not about the cell under the cursor.
     const outcome: DropOutcome = dropOutcome(
-      tree, allocation.occupants, drag.unitId, drag.target,
+      tree, allocation.occupants, drag.unitId, drag.anchor,
       { heldOver: heldLongEnough ? drag.heldOver : null },
     );
 
     if (outcome.kind === "offer-merge") {
       setPending({ kind: "merge", unitId: drag.unitId, withUnitId: outcome.withUnitId });
-    } else if (outcome.kind === "blocked") {
-      setPending({
-        kind: "blocked", unitId: drag.unitId, occupiedBy: outcome.occupiedBy,
-        cells: outcome.nearestFree
-          ? (() => {
-              const l = placeIsland(allocation.occupants, drag.members, drag.unitId, outcome.nearestFree!);
-              return l.kind === "no-room" ? null : l.cells;
-            })()
-          : null,
-      });
-    } else if (!drag.landing) {
-      setPending({ kind: "blocked", unitId: drag.unitId, occupiedBy: "", cells: null });
     } else if (drag.reshaped) {
       setPending({ kind: "reshape", unitId: drag.unitId, cells: drag.landing });
     } else if (outcome.kind === "offer-reparent") {
@@ -773,6 +783,14 @@ export default function HexLab({
     setTidyReport(result);
     setTidyStage(1);
   }, [hexScene, tidyStage, tree, allocation, pinned]);
+
+  /**
+   * Two units on one cell would make one of them impossible to point at, since
+   * hover reads the cell's occupant. Nothing is known to cause it — 120 random
+   * drags and reparents produce none — but Greg reported a tile he could not
+   * hover on 2026-10-01, and a number on the screen beats a mystery.
+   */
+  const buried = allocation.cells.size - allocation.occupants.size;
 
   const hovered = hover ? scene.unitById.get(hover) : null;
   const tier = tierAt(revealAt(camera.scale));
@@ -913,6 +931,12 @@ export default function HexLab({
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
         <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {buried > 0 && (
+          <Small style={{ color: "#b91c1c" }}>
+            <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
+            they cannot be pointed at. Please tell Claude what you just did.
+          </Small>
+        )}
         <Small style={{ color: "#94a3b8" }}>
           {mode === "hex" ? "drag a tile to move it and its branch · hold over another to merge" : "drag to pan"}
         </Small>
