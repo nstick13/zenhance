@@ -39,6 +39,7 @@ import type { OrbitalTree } from "@/lib/map/layout/model";
 import {
   type Cell,
   type Point,
+  DIRECTIONS,
   cellKey,
   cellToWorld,
   hexDistance,
@@ -63,6 +64,23 @@ const THROUGH_A_SIBLING = 6;
 /** Sharing ground with a chain already routed. Enough that the second chain
  *  through a gap takes the next one along if there is one. */
 const SHARED_WITH_A_CHAIN = 30;
+
+/**
+ * Leaving or arriving on a side of a node that another chain already uses.
+ *
+ * Greg, 2026-10-01: *"routing does not fan out, rather it can bullishly hold to
+ * whatever origin side of its original hexagon it was originally. Perhaps
+ * connection lines are too fixed to a given side of their host hexagon?"*
+ *
+ * They were. Nothing stopped six chains leaving a node through the same face
+ * and then running alongside each other, each pushed one cell further out by
+ * the shared-ground price — which is what drew those nested rounded
+ * rectangles. A hexagon has six sides and a node should use them.
+ *
+ * Priced at nine steps: enough to take another side whenever one is free, not
+ * enough to send a chain on a trek to find one.
+ */
+const SIDE_ALREADY_USED = 90;
 
 /** How far past the direct distance a chain may wander looking for clear
  *  ground. A chain that has to trek is a chain that should have been a
@@ -113,6 +131,8 @@ export class Router {
   private readonly size: number;
   /** cell key → how many routed chains already run through it. */
   private readonly used = new Map<string, number>();
+  /** cell key → which of the six sides already carry a chain in or out. */
+  private readonly sides = new Map<string, Set<number>>();
 
   constructor(occupied: ReadonlyMap<string, string>, size: number) {
     this.occupied = occupied;
@@ -135,6 +155,10 @@ export class Router {
    */
   route(from: Cell, to: Cell, siblings: ReadonlySet<string>): Cell[] {
     const goal = cellKey(to);
+    // Two neighbours always get the straight hop between them. Charging for a
+    // busy side there would send a child that is *touching* its parent on a
+    // detour, which is absurd whatever the fan is worth.
+    const adjacent = hexDistance(from, to) <= 1;
     const limit = hexDistance(from, to) + DETOUR_ALLOWANCE;
     const open: Node[] = [{ key: cellKey(from), cell: from, from: 0, cost: 0, prev: null }];
     const best = new Map<string, number>([[cellKey(from), 0]]);
@@ -159,9 +183,23 @@ export class Router {
         if (steps > limit) continue;
         if (hexDistance(next, to) + steps > limit) continue;
         // The two ends are the chain's own business, never an obstacle.
+        // A side already carrying a chain costs extra at both of them, so a
+        // node's six faces get used rather than one of them six times.
+        let sideCost = 0;
+        if (adjacent) {
+          // nothing to spread: the chain is one step long
+        } else if (!node.prev) {
+          const side = sideBetween(from, next);
+          if (side >= 0 && this.sides.get(cellKey(from))?.has(side)) sideCost += SIDE_ALREADY_USED;
+        }
+        if (!adjacent && key === goal) {
+          const side = sideBetween(to, node.cell);
+          if (side >= 0 && this.sides.get(goal)?.has(side)) sideCost += SIDE_ALREADY_USED;
+        }
         const cost = node.cost
           + (key === goal ? STEP : this.cellCost(key, siblings))
-          + (turns(node, next) ? TURN : 0);
+          + (turns(node, next) ? TURN : 0)
+          + sideCost;
         if (cost >= (best.get(key) ?? Infinity)) continue;
         best.set(key, cost);
         open.push({ key, cell: next, from: steps, cost, prev: node });
@@ -181,6 +219,18 @@ export class Router {
       const key = cellKey(cells[i]);
       this.used.set(key, (this.used.get(key) ?? 0) + 1);
     }
+    if (cells.length < 2) return;
+    // Both ends: the side this chain leaves by, and the side it arrives by.
+    const mark = (at: Cell, toward: Cell) => {
+      const side = sideBetween(at, toward);
+      if (side < 0) return;
+      const key = cellKey(at);
+      const taken = this.sides.get(key) ?? new Set<number>();
+      taken.add(side);
+      this.sides.set(key, taken);
+    };
+    mark(cells[0], cells[1]);
+    mark(cells[cells.length - 1], cells[cells.length - 2]);
   }
 
   /** How many tiles a walk passes under that are not its own ends or siblings. */
@@ -237,6 +287,10 @@ export function routeAll(
   }
   return out;
 }
+
+/** Which of the six directions leads from `from` to its neighbour `to`. */
+const sideBetween = (from: Cell, to: Cell): number =>
+  DIRECTIONS.findIndex((d) => d.q === to.q - from.q && d.r === to.r - from.r);
 
 const turns = (node: Node, next: Cell): boolean => {
   if (!node.prev) return false;

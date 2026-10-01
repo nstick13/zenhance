@@ -321,6 +321,32 @@ chains — 36 crossings. Priced below a two-cell detour and its two turns, a cha
 goes straight through its own family and the crossings fall to 21. Avoiding
 siblings was never the point.
 
+### Chains stuck to one side of a node — mechanism in, value undecided
+
+Greg, 2026-10-01: *"routing does not fan out, rather it can bullishly hold to
+whatever origin side of its original hexagon it was originally."*
+
+He is right: nothing stopped six chains leaving a node through the same face and
+then running alongside each other, each pushed one cell out by the shared-ground
+price, which is what drew those nested rounded rectangles. The `Router` now
+remembers which of a node's six sides already carry a chain, at both ends, and
+charges `SIDE_ALREADY_USED` to reuse one.
+
+**The price is set to 90, which is close to a no-op, and that is deliberate
+until somebody looks at it.** The sweep, on the 2,562-person company:
+
+| price | sides carrying 2+ chains | worst on one side | tiles crossed | bends (median/worst) |
+|---|---|---|---|---|
+| 0 (off) | 94 / 659 | 4 | 352 | 0 / 3 |
+| 90 | 90 / 666 | 4 | 374 | 0 / 3 |
+| 200 | 86 / 677 | 4 | 384 | 0 / 4 |
+| **400** | **18 / 769** | **3** | **475** | 1 / 6 |
+
+Only 400 actually fans, and it costs a third more chains running through tiles
+and puts a bend in the median chain. **That is a trade between two things Greg
+has asked for on different days, and it should be looked at rather than
+computed.** The lever is one constant in `route.ts`.
+
 ### What routing cannot fix, and the next lever
 
 **Sweeping every cost — sibling, turn, stranger, detour allowance from 6 to 40 —
