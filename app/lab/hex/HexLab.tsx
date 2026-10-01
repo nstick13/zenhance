@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
+import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
 import { allocate } from "@/lib/map/layout/hex/allocate";
@@ -37,7 +38,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  axialRoute, cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
+  cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -222,6 +223,14 @@ export default function HexLab({
     return { scene: s as OrbitalScene, hexScene: s as HexScene, ms: performance.now() - t0 };
   }, [tree, density, mode, allocation]);
 
+  /** Every chain, routed round the tiles rather than drawn across them. Once
+   *  per arrangement — it is 8ms on the 2,562-person company, which is far too
+   *  much to do per frame and nothing at all to do per drag. */
+  const chains = useMemo(
+    () => (hexScene ? routeAll(tree, hexScene.hex.cells, hexScene.hex.size) : []),
+    [hexScene, tree],
+  );
+
   const regions = useMemo(() => regionOf(scene.units), [scene]);
   const regionOrder = useMemo(() => {
     const weight = new Map<string, number>();
@@ -320,6 +329,7 @@ export default function HexLab({
     const visible = scene.units.filter(
       (u) => u.x >= view.minX && u.x <= view.maxX && u.y >= view.minY && u.y <= view.maxY,
     );
+    const visibleIds = new Set(visible.map((u) => u.id));
     const hueFor = (id: string) => hueOf(regions.get(id) ?? id, regionOrder);
     /** The cell's own hexagon, full size — the container. */
     const hexPath = (cell: Cell) => {
@@ -376,21 +386,20 @@ export default function HexLab({
     //     trunk is thicker than the twigs, because a line's weight is the one
     //     thing left that can carry standing once every node is the same shape.
     if (hexScene) {
-      for (const unit of visible) {
-        if (!unit.parentId) continue;
-        const here = hexScene.hex.cells.get(unit.id);
-        const there = hexScene.hex.cells.get(unit.parentId);
-        if (!here || !there) continue;
-        const route = axialRoute(here, there, hexSize);
+      for (const chain of chains) {
+        if (!visibleIds.has(chain.unitId) && !visibleIds.has(chain.parentId)) continue;
+        const unit = scene.unitById.get(chain.unitId);
+        if (!unit) continue;
         ctx.beginPath();
-        ctx.moveTo(route[0].x, route[0].y);
-        for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
+        ctx.moveTo(chain.points[0].x, chain.points[0].y);
+        for (let i = 1; i < chain.points.length; i++) {
+          ctx.lineTo(chain.points[i].x, chain.points[i].y);
+        }
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
-        // Three times what it was (Greg, 2026-09-30). Still scaled by the
-        // node, so the trunk stays heavier than the twigs.
+        // Still scaled by the node, so the trunk stays heavier than the twigs.
         ctx.lineWidth = Math.max(0.6, hexSize * 0.27 * nodeScale(unit.depth, maxDepth));
-        ctx.strokeStyle = css(hueFor(unit.id), unit.depth, maxDepth, 0.95);
+        ctx.strokeStyle = css(hueFor(chain.unitId), unit.depth, maxDepth, 0.95);
         ctx.stroke();
       }
     }
@@ -509,22 +518,18 @@ export default function HexLab({
     //    casing under a dark core keeps it readable over both a near-black
     //    executive tile and a pale wash one.
     if (hexScene && focusId) {
-      const hops: Cell[][] = [];
+      const home = new Set<string>();
       let walk: string | null = focusId;
-      while (walk) {
-        const here = hexScene.hex.cells.get(walk);
-        const up: string | null = tree.units.get(walk)?.parentId ?? null;
-        const there = up ? hexScene.hex.cells.get(up) : null;
-        if (here && there) hops.push([here, there]);
-        walk = up;
-      }
+      while (walk) { home.add(walk); walk = tree.units.get(walk)?.parentId ?? null; }
+      const hops = chains.filter((c) => home.has(c.unitId));
       if (hops.length) {
         const trace = () => {
           ctx.beginPath();
-          for (const [a, b] of hops) {
-            const route = axialRoute(a, b, hexSize);
-            ctx.moveTo(route[0].x, route[0].y);
-            for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
+          for (const chain of hops) {
+            ctx.moveTo(chain.points[0].x, chain.points[0].y);
+            for (let i = 1; i < chain.points.length; i++) {
+              ctx.lineTo(chain.points[i].x, chain.points[i].y);
+            }
           }
         };
         ctx.lineCap = "round";
@@ -633,7 +638,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, size, hover, regions, regionOrder, maxDepth, drag, pending, tree]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree]);
 
   // --- input ---------------------------------------------------------------
 

@@ -284,6 +284,67 @@ nothing to do with; these are stubs between touching cells, living in the gap
 the node sizing just opened. The exception is an exclave, where the chain is
 genuinely long — and that is the case where you want to see it.
 
+### Chains walk round the tiles (2026-10-01)
+
+Greg: *"preference non-overlapping connection lines — either they do not
+overlap other connection lines, and where possible connection lines do not run
+underneath other nodes except in cases of sibling chaining… we should preserve
+how the connection lines emanate from the tiles… we want [hexagon centre point]
+to [hexagon side midpoint]."*
+
+**The constraint comes first.** A chain only ever runs centre to side-midpoint —
+30°, 90°, 150° and their opposites. Those are the directions to a neighbour, so
+a chain is a **walk from cell to cell**, never a line drawn across them. The
+attempt on 2026-09-30 to add the centre-to-*vertex* directions measured
+beautifully and looked wrong; the angles are not negotiable.
+
+So `route.ts` routes rather than draws: A* across the lattice, where clear
+ground is cheap, a stranger's tile is expensive, and a **sibling** is nearly
+free — Greg's exemption, and the one case that cannot be designed away, because
+past five children somebody has to reach the parent past somebody. Cells already
+carrying a chain cost extra, so the second chain through a gap takes the next
+one along. Every chain is routed through one `Router`, shallowest first, so the
+trunk gets the clear ground and the twigs bend round it.
+
+| on the 2,562-person company | before | after |
+|---|---|---|
+| chains passing under a stranger | 152 (39%) | **133 (34%)** |
+| tiles passed under | 251 | 210 |
+| **chains crossing another chain** | **38** | **21** |
+
+Median zero bends, worst three — most chains are unchanged, which is the point.
+8ms for 394 chains, once per arrangement.
+
+**The sibling price is the interesting number.** Set high, the router detoured
+*around* family to avoid passing under it, and those detours wandered into other
+chains — 36 crossings. Priced below a two-cell detour and its two turns, a chain
+goes straight through its own family and the crossings fall to 21. Avoiding
+siblings was never the point.
+
+### What routing cannot fix, and the next lever
+
+**Sweeping every cost — sibling, turn, stranger, detour allowance from 6 to 40 —
+changes the stranger figure not at all.** It sits at 34% however the search is
+priced, which means the router is already finding the only paths that exist. The
+rest is forced by density, not by choice.
+
+Where it is forced, measured by how far a child sits from its parent:
+
+| distance | chains | still under a stranger |
+|---|---|---|
+| 1 step | 182 | **0%** |
+| 2 steps | 142 | 46% |
+| 3+ steps | 70 | ~100% |
+
+**18% of chains cause 69% of the crossings, and they are the long ones.** A
+chain of one step cannot cross anything; a chain of five has to walk through
+whatever is in the way. So the lever is not routing — it is **how far a child
+sits from its parent**, and after that, **leaving ground to route through**. The
+allocator packs families adjacently, so there are no corridors. A layout that
+reserved streets the way a town does would give the router something to work
+with; it would also spread the company out, which is a look Greg has not seen
+yet and should decide on before anyone builds it.
+
 ### Lines that belong to the grid
 
 Greg: *"connection lines, where visible, should follow strict routing, meaning
