@@ -8,7 +8,50 @@
  * itself, and nothing seeds a hosted one: the seeder refuses any database that
  * is not on this machine.
  */
-import { randomUUID } from "crypto";
+/**
+ * **Ids are derived, not random.** They used to come from `randomUUID`, which
+ * meant two builds of the same company agreed on every name and nothing else —
+ * and the `/lab/hex` study keeps hand arrangements in `localStorage` against
+ * those ids. Every refresh handed it a company whose units it had never seen,
+ * so a saved arrangement came back as cells belonging to units that no longer
+ * existed: ground that could not be stood on, tiles that could not be hovered,
+ * and a merge dialog naming a raw UUID (Greg, 2026-10-01).
+ *
+ * Still UUID-shaped, because `lib/db/northwind.ts` puts them in uuid columns.
+ * Derived from the workspace and a counter, so two workspaces never collide
+ * and the same workspace is the same company every time.
+ */
+function idMaker(workspaceId: string): () => string {
+  let counter = 0;
+  const hex = (seed: number, length: number) => {
+    let h = seed >>> 0;
+    let out = "";
+    while (out.length < length) {
+      // xorshift32 — short, deterministic, and good enough for an id nobody
+      // has to guess.
+      h ^= h << 13; h >>>= 0;
+      h ^= h >>> 17;
+      h ^= h << 5; h >>>= 0;
+      out += h.toString(16).padStart(8, "0");
+    }
+    return out.slice(0, length);
+  };
+  let base = 2166136261;
+  for (let i = 0; i < workspaceId.length; i++) {
+    base ^= workspaceId.charCodeAt(i);
+    base = Math.imul(base, 16777619) >>> 0;
+  }
+  return () => {
+    const n = (base ^ Math.imul(++counter, 2654435761)) >>> 0;
+    const a = hex(n, 8);
+    const b = hex(n + 1, 4);
+    const c = hex(n + 2, 3);
+    const d = hex(n + 3, 3);
+    const e = hex(n + 4, 12);
+    // Shaped as a v4 uuid: version nibble 4, variant nibble 8.
+    return `${a}-${b}-4${c}-8${d}-${e}`;
+  };
+}
 import type { Assignment, Discipline, OrgUnit, Person } from "@/lib/db/schema";
 
 /**
@@ -93,6 +136,7 @@ const GROUP_WORDS = [
 const PROPER = ["Aurora","Beacon","Cascade","Delta","Everest","Falcon","Granite","Harbour","Iris","Juniper","Keystone","Lumen","Meridian","Nimbus","Orchid","Pioneer","Quartz","Ridge","Summit","Trident","Union","Vertex","Willow","Zephyr","Anchor","Bluff","Copper","Dune"];
 
 export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): DeepOrg {
+  const randomUUID = idMaker(workspaceId);
   const targetPeople = opts.people ?? 2400;
   const maxDepth = opts.maxDepth ?? 11;
   const rng = mulberry32(opts.seed ?? 1);

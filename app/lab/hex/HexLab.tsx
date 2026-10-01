@@ -55,6 +55,18 @@ export type LabOrg = OrgInput;
 const HOLD_MS = 550;
 
 /**
+ * How far the hand may drift and still be holding, as a share of a cell.
+ *
+ * Without this the clock ran from the moment the pointer entered a tile and
+ * kept running while the hand was still moving, so dragging a branch slowly
+ * across the map armed a merge on whatever it happened to be over — Greg,
+ * 2026-10-01: *"pulling a family far away results in the reparent dialog
+ * appearing."* The orbital map learned the same lesson on 2026-09-23. **A
+ * dwell is a hold**: travel restarts the clock.
+ */
+const HOLD_SLACK = 0.25;
+
+/**
  * Colour, by Greg's rule of 2026-09-30: **hue says which part of the company,
  * lightness says how deep.** *"Deep/dark red is 'CFO'; lightest wash purple is
  * 'marketing interns'."*
@@ -150,6 +162,15 @@ export default function HexLab({
   const [loaded, setLoaded] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
 
+  const baseTree = useMemo(
+    () => buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 }),
+    [org],
+  );
+  const tree = useMemo(
+    () => (reparents.size ? applyOverrides(baseTree, { unitParent: reparents }) : baseTree),
+    [baseTree, reparents],
+  );
+
   // --- keeping an arrangement -----------------------------------------------
   //
   // `localStorage`, because a lab has no database by house rule and an
@@ -166,9 +187,17 @@ export default function HexLab({
       const saved = raw ? (JSON.parse(raw) as {
         moves?: [string, Cell][]; reparents?: [string, string][]; pinned?: string[];
       }) : null;
-      setMoves(new Map(saved?.moves ?? []));
-      setReparents(new Map(saved?.reparents ?? []));
-      setPinned(new Set(saved?.pinned ?? []));
+      // **Only keep what this company still contains.** An arrangement saved
+      // before the fixture's ids became deterministic names units that no
+      // longer exist, and keeping those entries puts phantom tiles on the map:
+      // ground nothing can be placed on, cells that cannot be hovered, and a
+      // dialog naming a raw id. Anything unrecognised is dropped on the floor.
+      const known = (id: string) => baseTree.units.has(id);
+      setMoves(new Map((saved?.moves ?? []).filter(([id]) => known(id))));
+      setReparents(new Map(
+        (saved?.reparents ?? []).filter(([id, parentId]) => known(id) && known(parentId)),
+      ));
+      setPinned(new Set((saved?.pinned ?? []).filter(known)));
     } catch {
       setMoves(new Map());
       setReparents(new Map());
@@ -176,7 +205,7 @@ export default function HexLab({
     }
     setTidyStage(0);
     setLoaded(true);
-  }, [storeKey]);
+  }, [storeKey, baseTree]);
 
   useEffect(() => {
     if (!loaded) return; // never write back before the first read
@@ -189,15 +218,6 @@ export default function HexLab({
       // A browser that will not keep it is not a reason to stop working.
     }
   }, [storeKey, loaded, moves, reparents, pinned]);
-
-  const baseTree = useMemo(
-    () => buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 }),
-    [org],
-  );
-  const tree = useMemo(
-    () => (reparents.size ? applyOverrides(baseTree, { unitParent: reparents }) : baseTree),
-    [baseTree, reparents],
-  );
 
   const baseAllocation = useMemo(() => allocate(baseTree), [baseTree]);
 
@@ -270,6 +290,8 @@ export default function HexLab({
     world: { x: number; y: number };
     target: Cell;
     landing: Map<string, Cell> | null;
+    /** Where the hand was when the hold clock last started. */
+    holdAt: { x: number; y: number };
     /** Where the landing actually seats the anchor — which is not the cell
      *  under the cursor when that one was occupied. */
     anchor: Cell | null;
@@ -682,7 +704,7 @@ export default function HexLab({
         unitId: hit, members, grabbed: hexScene.hex.cells.get(hit)!,
         from: world, world, target: hexScene.hex.cells.get(hit)!,
         landing: null, anchor: null, reshaped: false,
-        heldOver: null, holdSince: performance.now(),
+        heldOver: null, holdAt: world, holdSince: performance.now(),
       });
       return;
     }
@@ -699,7 +721,18 @@ export default function HexLab({
     const world = worldAt(e.clientX, e.clientY, rect);
     if (drag && hexScene) {
       const target = worldToCell(world, hexScene.hex.size);
-      if (cellKey(target) === cellKey(drag.target)) return;
+
+      // A hold is a hold. If the hand has travelled, the clock starts again —
+      // even when it has not left the tile it is over.
+      const travelled = Math.hypot(world.x - drag.holdAt.x, world.y - drag.holdAt.y);
+      const stillHolding = travelled <= hexScene.hex.size * HOLD_SLACK;
+
+      if (cellKey(target) === cellKey(drag.target)) {
+        if (!stillHolding) {
+          setDrag({ ...drag, world, holdAt: world, holdSince: performance.now() });
+        }
+        return;
+      }
       // One mechanism decides where the branch goes, and it is this one. What
       // is drawn now is exactly what commits on release.
       const landing = placeIsland(
@@ -715,7 +748,8 @@ export default function HexLab({
         // Only a shape somebody built and would now lose is worth a dialog.
         reshaped: landing.kind === "reshaped",
         heldOver: over && !drag.members.has(over) ? over : null,
-        holdSince: stillOver ? drag.holdSince : performance.now(),
+        holdAt: stillOver && stillHolding ? drag.holdAt : world,
+        holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
       });
       return;
     }
