@@ -345,3 +345,69 @@ describe("moving a whole island", () => {
     }
   });
 });
+
+/**
+ * Greg's "radiating" rule, 2026-10-02.
+ *
+ * *"if I drag a family group away from a shared parent, the highest-ranking
+ * node in the dragged group should position itself closest to its parent,
+ * regardless of how far that is. This should mean the connection line flows
+ * freely from that node to the parent uninterrupted — like a leaf on a
+ * branch."*
+ *
+ * The gesture that asks for it lives in the lab, because it is a clock and a
+ * short hop and this file has neither. What is testable here is the shape the
+ * request produces.
+ */
+describe("treeing a branch away from its parent", () => {
+  const island = new Map([
+    ["sales", at(1, 0)],
+    ["north", at(2, 0)],
+    ["south", at(2, -1)],
+  ]);
+  const kids = (id: string) => tree.units.get(id)?.childIds ?? [];
+  /** The branch dropped far to the east; home is the company at the origin. */
+  const treed = placeIsland(new Map(), island, "sales", at(9, 0), kids, at(0, 0));
+
+  it("is a landing of its own, not a reshape, because the hand asked for it", () => {
+    expect(treed.kind).toBe("radiated");
+  });
+
+  it("puts the governing node nearest its parent, and nobody in front of it", () => {
+    if (treed.kind === "no-room") throw new Error("no landing");
+    const home = at(0, 0);
+    const anchor = treed.cells.get("sales")!;
+    const reach = hexDistance(anchor, home);
+    for (const [id, cell] of treed.cells) {
+      if (id === "sales") continue;
+      expect(hexDistance(cell, home)).toBeGreaterThan(reach);
+    }
+  });
+
+  it("leaves the way home open, so the chain can run straight", () => {
+    if (treed.kind === "no-room") throw new Error("no landing");
+    // Every cell on the straight line from the anchor back to the parent is
+    // free of the branch itself — which is the whole point of the rule.
+    const anchor = treed.cells.get("sales")!;
+    const occupied = new Set([...treed.cells.values()].map(cellKey));
+    const steps = hexDistance(anchor, at(0, 0));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const q = Math.round(anchor.q + (0 - anchor.q) * t);
+      const r = Math.round(anchor.r + (0 - anchor.r) * t);
+      expect(occupied.has(cellKey({ q, r }))).toBe(false);
+    }
+  });
+
+  it("still seats everyone, and still seats them against their own parent", () => {
+    if (treed.kind === "no-room") throw new Error("no landing");
+    expect(treed.cells.size).toBe(3);
+    expect(hexDistance(treed.cells.get("north")!, treed.cells.get("sales")!)).toBe(1);
+    expect(hexDistance(treed.cells.get("south")!, treed.cells.get("sales")!)).toBe(1);
+  });
+
+  it("does nothing of the sort unless asked — a plain drop keeps its shape", () => {
+    const plain = placeIsland(new Map(), island, "sales", at(9, 0), kids);
+    expect(plain.kind).toBe("fits");
+  });
+});

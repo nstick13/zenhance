@@ -31,6 +31,7 @@ import {
   cellFromKey,
   cellKey,
   corners,
+  hexDistance,
   neighbours,
   spiral,
   worldToCell,
@@ -271,6 +272,9 @@ export type IslandLanding =
   | { kind: "gathered"; cells: Map<string, Cell>; anchor: Cell }
   /** It was whole and would not go in, so it has been reflowed. Ask first. */
   | { kind: "reshaped"; cells: Map<string, Cell>; anchor: Cell }
+  /** The second pick-up: the branch has been treed outward from its way home.
+   *  Asked for by the gesture, so no dialog. */
+  | { kind: "radiated"; cells: Map<string, Cell>; anchor: Cell }
   | { kind: "no-room" };
 
 /** Is this set of cells one connected patch? */
@@ -327,6 +331,22 @@ export function placeIsland(
    *  against its own parent; without it the layout can only guess from the
    *  shape, and guessing is what grew the crab arms. */
   childrenOf?: (unitId: string) => readonly string[],
+  /**
+   * Tree the branch outward from this cell — where its own parent sits.
+   *
+   * **Only set when the gesture asked for it.** Greg, 2026-10-02: *"When a user
+   * first moves the group of nodes, the rearrange shouldn't happen — the block
+   * should move as-is, since this is predictable. If a user then picks up the
+   * governing node of that block within, say, 30s, and moves it within the
+   * nearest 4x4 grid of hexagons, then the rearrange function should kick in."*
+   *
+   * So the first drop keeps the shape, always; the second pick-up is the
+   * sentence "now tree yourself", and nothing is ever rearranged behind a
+   * hand that did not ask. The clock and the short distance live in the lab —
+   * see `RADIATE_WINDOW_MS` and `RADIATE_RINGS` — because this file has no
+   * clock and does not know where the hand has been.
+   */
+  radiateFrom?: Cell | null,
 ): IslandLanding {
   const anchor = members.get(anchorId);
   if (!anchor) return { kind: "no-room" };
@@ -349,6 +369,17 @@ export function placeIsland(
   };
 
   const wasWhole = isOnePatch(members.values());
+
+  // The gesture asked for a tree, so skip straight past "keep the silhouette".
+  if (radiateFrom) {
+    const seat = free(target)
+      ? target
+      : nearestFreeCell(occupancy, target, { ignore: moving });
+    if (seat) {
+      const treed = reflow(occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom);
+      if (treed) return { kind: "radiated", cells: treed, anchor: seat };
+    }
+  }
 
   if (wasWhole) {
     const exact = shapeAt(target);
@@ -382,6 +413,76 @@ export function placeIsland(
 }
 
 /**
+ * How much a cell on the wrong side of a unit costs, measured in rings.
+ *
+ * Greg, 2026-10-02: *"the highest-ranking node in the dragged group should
+ * position itself closest to its parent… so the connection line flows freely
+ * from that node to the parent uninterrupted — like a leaf on a branch."*
+ *
+ * A leaf gets that for free because nothing of its own grows back down the
+ * stem. On the lattice the equivalent is: **a unit's children go on the far
+ * side of it from its own way home.** Applied at every rung it trees the whole
+ * branch outward, and the way home stays open ground all the way to the top —
+ * which is what lets the router draw the straight line Greg is asking for,
+ * without changing a single routing rule.
+ *
+ * Three rings is the price of a face pointing the wrong way. Enough that a
+ * child will take a cell two rings out on the right side rather than touch its
+ * parent on the wrong one; not enough to send it to the horizon when the right
+ * side is genuinely full.
+ */
+const RADIATE_BIAS = 3;
+
+/**
+ * The free cell a child should take next to `parent`, given where `parent`'s
+ * own chain comes in from. Without a `back`, this is just the nearest cell.
+ */
+export function radiatingCell(
+  occupancy: Occupancy,
+  parent: Cell,
+  back: Cell | null,
+  options: { ignore?: ReadonlySet<string>; maxRings?: number } = {},
+): Cell | null {
+  const { ignore, maxRings = 14 } = options;
+  if (!back) return nearestFreeCell(occupancy, parent, { ignore, maxRings });
+  const free = (cell: Cell) => {
+    const who = occupancy.get(cellKey(cell));
+    return !who || (ignore?.has(who) ?? false);
+  };
+  // Away from home is the direction the branch should grow. A cell is scored by
+  // how far out it sits plus how far round it leans back toward home, so the
+  // search is still a ring walk — just one that reads the compass.
+  const ax = back.q - parent.q;
+  const az = back.r - parent.r;
+  let best: Cell | null = null;
+  let bestCost = Infinity;
+  for (const cell of spiral(parent, maxRings)) {
+    if (cellKey(cell) === cellKey(parent) || !free(cell)) continue;
+    const out = hexDistance(cell, parent);
+    if (out - RADIATE_BIAS >= bestCost) break; // no further ring can win
+    // 0 when the cell is directly away from home, 1 when it is directly toward.
+    const leaning = (cosineBetween(cell.q - parent.q, cell.r - parent.r, ax, az) + 1) / 2;
+    const cost = out + RADIATE_BIAS * leaning;
+    if (cost < bestCost) { bestCost = cost; best = cell; }
+  }
+  return best;
+}
+
+/** Cosine of the angle between two axial vectors, in world space. Flat-top
+ *  axial is a sheared basis, so comparing q,r directly would make the three
+ *  axes unequal; this converts to world x,y first. */
+function cosineBetween(aq: number, ar: number, bq: number, br: number): number {
+  const ax = 1.5 * aq;
+  const ay = Math.sqrt(3) * (ar + aq / 2);
+  const bx = 1.5 * bq;
+  const by = Math.sqrt(3) * (br + bq / 2);
+  const na = Math.hypot(ax, ay);
+  const nb = Math.hypot(bx, by);
+  if (na === 0 || nb === 0) return 0;
+  return (ax * bx + ay * by) / (na * nb);
+}
+
+/**
  * Lay a branch out afresh around a seat, following the tree.
  *
  * The version before this placed each member on the nearest free cell touching
@@ -394,6 +495,8 @@ export function placeIsland(
  * against **its own parent** wherever it can. The result is families in blobs
  * and chains one step long, which is the shortest connection chain across the
  * branch — which is what Greg asked for in rule 7.
+ *
+ * With `homeward`, it radiates — see `RADIATE_BIAS`.
  */
 function reflow(
   occupancy: Occupancy,
@@ -402,6 +505,9 @@ function reflow(
   seat: Cell,
   moving: ReadonlySet<string>,
   childrenOf?: (unitId: string) => readonly string[],
+  /** Where the branch's own parent is, when it is outside the branch. Given it,
+   *  the layout grows away from it instead of in all directions. */
+  homeward?: Cell | null,
 ): Map<string, Cell> | null {
   const taken = new Map<string, string>();
   for (const [key, id] of occupancy) if (!moving.has(id)) taken.set(key, id);
@@ -422,16 +528,26 @@ function reflow(
     kidsOf.set(anchorId, [...members.keys()].filter((id) => id !== anchorId));
   }
 
+  // Where each unit's own way home points, so its children can be seated on
+  // the other side of it. The anchor's is the branch's parent; everyone else's
+  // is the unit they hang from.
+  const cameFrom = new Map<string, Cell>();
+  if (homeward) cameFrom.set(anchorId, homeward);
+
   const queue: string[] = [anchorId];
   while (queue.length) {
     const parentId = queue.shift()!;
     const parentCell = out.get(parentId);
     if (!parentCell) continue;
+    const back = cameFrom.get(parentId);
     for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
-      const cell = nearestFreeCell(taken, parentCell, { maxRings: 14 });
+      const cell = homeward
+        ? radiatingCell(taken, parentCell, back ?? null)
+        : nearestFreeCell(taken, parentCell, { maxRings: 14 });
       if (!cell) return null;
       out.set(childId, cell);
       taken.set(cellKey(cell), childId);
+      cameFrom.set(childId, parentCell);
       queue.push(childId);
     }
   }

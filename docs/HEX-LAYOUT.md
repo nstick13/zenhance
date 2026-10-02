@@ -184,6 +184,7 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | Permanent self-coloured chains back to the parent | **built** |
 | No borders on the tiles; an occupied cell only a shade darker than the page | **built** |
 | The outline wraps the whole branch, or the immediate family for a leaf | **built** — `hoverGroup` |
+| **Radiating** — a branch trees itself away from its parent on the second pick-up | **built** — see below |
 
 **Arrangements persist**, in `localStorage`, per browser and per company — a
 lab has no database by house rule, and an arrangement is worth more than the ten
@@ -435,6 +436,61 @@ streets the way a town does would give the router something to work with; it
 would also spread the company out, which is a look Greg has not seen yet and
 should decide on before anyone builds it.
 
+### Radiating, and the second pick-up (2026-10-02)
+
+Greg: *"Nodes should be automatically positioned to radiate from the parent…
+if I drag a family group away from a shared parent, the highest-ranking node in
+the dragged group should position itself closest to its parent, regardless of
+how far that is. This should mean the connection line flows freely from that
+node to the parent uninterrupted — like a leaf on a branch."*
+
+One rule, applied at every rung: **a unit's children go on the far side of it
+from its own way home.** The branch's governing node is then strictly the
+nearest member to the parent, nothing of its own family stands in front of it,
+and the way home is open ground the whole way — so the router draws the straight
+line without a single routing rule changing. That matters: the no-crossing and
+sibling-exemption rules are untouched, and this only stops handing them ground
+they cannot work with.
+
+It lives in `reflow`, as `RADIATE_BIAS` — three rings is the price of a face
+pointing the wrong way, so a child takes a cell two rings out on the right side
+rather than touching its parent on the wrong one.
+
+#### The gesture, which is the consent
+
+Greg: *"When a user first moves the group of nodes, the rearrange shouldn't
+happen — the block should move as-is, since this is predictable. If a user then
+picks up the governing node of that block within, say, 30s, and moves it within
+the nearest 4x4 grid of hexagons, then the rearrange function should kick in and
+tree the thing away from the grandparented origin."*
+
+So nothing is ever rearranged behind a hand that did not ask for it:
+
+1. **The first drop keeps the shape, always.** What you built is what lands.
+2. Put it down, and its governing node wears a **dashed teal ring** for 30
+   seconds — the offer. Without it nobody would ever find this.
+3. Pick *that* node back up and set it down **within two rings**, and the branch
+   trees itself. The landing preview turns teal rather than blue, so the
+   gesture is visibly a different thing from an ordinary move.
+4. Carry it further than two rings and it is a plain move again, rigid.
+
+A 4×4 block of squares has no exact hexagonal twin; two rings is 19 cells, the
+nearest honest equivalent, and it happens to match `NUDGE_RINGS`. The clock and
+the hop live in the lab (`RADIATE_WINDOW_MS`, `RADIATE_RINGS`) because
+`arrange.ts` has no clock and does not know where the hand has been; the engine
+is told only *whether* to tree and *where home is*.
+
+There is **no dialog**, because the gesture is the consent — unlike a reshape,
+which still asks, because that one loses a shape somebody built.
+
+**Verified in the browser** on Sparrow Jam, 2026-10-02. Starting from the bad
+case — Granite Division at `0,1` with its child Everest Team 2 at `1,1`, *tied*
+for closeness to their grandparent — the second pick-up moved Granite to `-1,2`
+at distance 2 with both children at 3, and the chain became one unbroken
+straight line. A subsequent far drag (`1,2` → `-2,5`) translated every member
+exactly, confirming the two-ring gate. Picking up a *child* rather than the
+governing node correctly does not arm the gesture.
+
 ### Lines that belong to the grid
 
 Greg: *"connection lines, where visible, should follow strict routing, meaning
@@ -645,7 +701,7 @@ renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 
 ## Verified, and not
 
-**Verified by tests** (32 new, 687 across the suite, all passing): ring and
+**Verified by tests** (37 new, 692 across the suite, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc

@@ -38,7 +38,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
+  cellKey, cellToWorld, corners, cornersAt, hexDistance, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -53,6 +53,27 @@ export type LabOrg = OrgInput;
  *  rather than reparent. The orbital map's own dwell, and for the same reason:
  *  a pass must not arm anything. */
 const HOLD_MS = 550;
+
+/**
+ * The second pick-up — Greg's "radiating" gesture, 2026-10-02.
+ *
+ * *"When a user first moves the group of nodes, the rearrange shouldn't happen
+ * — the block should move as-is, since this is predictable. If a user then
+ * picks up the governing node of that block within, say, 30s, and moves it
+ * within the nearest 4x4 grid of hexagons, then the rearrange function should
+ * kick in and tree the thing away from the grandparented origin."*
+ *
+ * So a first drop never rearranges anything: what you built is what lands. Put
+ * the branch down, pick its governing node straight back up, and set it down
+ * nearby, and *that* second gesture means "now tree yourself" — the branch
+ * lays itself out radiating away from its own parent, so the chain home runs
+ * clear. There is no dialog, because the gesture is the consent.
+ *
+ * A 4×4 block of squares has no exact hexagonal twin; two rings is 19 cells,
+ * which is the nearest honest equivalent and happens to match `NUDGE_RINGS`.
+ */
+const RADIATE_WINDOW_MS = 30_000;
+const RADIATE_RINGS = 2;
 
 /**
  * How far the hand may drift and still be holding, as a share of a cell.
@@ -296,10 +317,19 @@ export default function HexLab({
      *  under the cursor when that one was occupied. */
     anchor: Cell | null;
     reshaped: boolean;
+    /** The branch was treed by the second-pick-up gesture. */
+    radiated: boolean;
+    /** Where this branch was sitting when the gesture armed, so a drop can be
+     *  told from a move: near it trees the branch, far from it is a plain
+     *  move. Null when the gesture is not armed at all. */
+    armedAt: Cell | null;
     heldOver: string | null;
     holdSince: number;
   };
   const [drag, setDrag] = useState<Drag | null>(null);
+  /** The branch that landed last, and when — the only thing the gesture needs
+   *  to remember between two drags. */
+  const [justMoved, setJustMoved] = useState<{ unitId: string; at: Cell; when: number } | null>(null);
   const pan = useRef<{ x: number; y: number; cam: Camera } | null>(null);
 
   const worldAt = useCallback(
@@ -309,6 +339,16 @@ export default function HexLab({
     }),
     [camera],
   );
+
+  // The offer expires by itself, so the ring never promises something that has
+  // already lapsed.
+  useEffect(() => {
+    if (!justMoved) return;
+    const left = RADIATE_WINDOW_MS - (Date.now() - justMoved.when);
+    if (left <= 0) { setJustMoved(null); return; }
+    const t = setTimeout(() => setJustMoved(null), left);
+    return () => clearTimeout(t);
+  }, [justMoved]);
 
   const commit = useCallback((
     cells: Map<string, Cell>,
@@ -450,15 +490,34 @@ export default function HexLab({
     //    It stays lit while a dialog is open, because every one of those
     //    dialogs talks about "the highlighted cell" and a promise like that has
     //    to be visible when it is being made.
+    // 3a. The offer. A gesture nobody can see is a gesture nobody will find,
+    //     so while the window is open the branch that just landed wears a
+    //     dashed ring round its governing node: pick me up again.
+    if (hexScene && justMoved && !drag && !pending) {
+      hexPath(justMoved.at);
+      ctx.lineWidth = Math.max(0.8, 2 / scale);
+      ctx.strokeStyle = "rgba(13,148,136,0.55)";
+      ctx.setLineDash([6 / scale, 5 / scale]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     const proposed = drag?.landing ?? (pending && "cells" in pending ? pending.cells : null);
     const warn = drag ? drag.reshaped : pending?.kind !== "reparent";
+    // A tree the hand asked for gets its own colour, so the gesture is visibly
+    // a different thing from a landing that had to give up its shape.
+    const treeing = drag?.radiated ?? false;
     if (hexScene && proposed) {
       for (const cell of proposed.values()) {
         hexPath(cell);
-        ctx.fillStyle = warn ? "rgba(217,119,6,0.32)" : "rgba(37,99,235,0.28)";
+        ctx.fillStyle = treeing
+          ? "rgba(13,148,136,0.30)"
+          : warn ? "rgba(217,119,6,0.32)" : "rgba(37,99,235,0.28)";
         ctx.fill();
         ctx.lineWidth = Math.max(0.8, 2.6 / scale);
-        ctx.strokeStyle = warn ? "rgba(180,83,9,0.95)" : "rgba(29,78,216,0.95)";
+        ctx.strokeStyle = treeing
+          ? "rgba(15,118,110,0.95)"
+          : warn ? "rgba(180,83,9,0.95)" : "rgba(29,78,216,0.95)";
         ctx.stroke();
       }
     }
@@ -663,7 +722,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved]);
 
   // --- input ---------------------------------------------------------------
 
@@ -700,10 +759,19 @@ export default function HexLab({
         const c = hexScene.hex.cells.get(id);
         if (c) members.set(id, c);
       }
+      // Picking up the governing node of the branch that just landed, while
+      // the window is open, arms the tree-it gesture for this drag.
+      const armed =
+        justMoved &&
+        justMoved.unitId === hit &&
+        Date.now() - justMoved.when < RADIATE_WINDOW_MS
+          ? justMoved.at
+          : null;
       setDrag({
         unitId: hit, members, grabbed: hexScene.hex.cells.get(hit)!,
         from: world, world, target: hexScene.hex.cells.get(hit)!,
-        landing: null, anchor: null, reshaped: false,
+        landing: null, anchor: null, reshaped: false, radiated: false,
+        armedAt: armed,
         heldOver: null, holdAt: world, holdSince: performance.now(),
       });
       return;
@@ -735,9 +803,19 @@ export default function HexLab({
       }
       // One mechanism decides where the branch goes, and it is this one. What
       // is drawn now is exactly what commits on release.
+      //
+      // The gesture only counts while the branch is still near where it was —
+      // carry it across the map and it is a move again, not a request to tree.
+      const parentId = tree.units.get(drag.unitId)?.parentId ?? null;
+      const parentCell = parentId ? hexScene.hex.cells.get(parentId) ?? null : null;
+      const treeIt =
+        drag.armedAt && parentCell && hexDistance(target, drag.armedAt) <= RADIATE_RINGS
+          ? parentCell
+          : null;
       const landing = placeIsland(
         allocation.occupants, drag.members, drag.unitId, target,
         (id) => tree.units.get(id)?.childIds ?? [],
+        treeIt,
       );
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
@@ -746,7 +824,9 @@ export default function HexLab({
         landing: landing.kind === "no-room" ? null : landing.cells,
         anchor: landing.kind === "no-room" ? null : landing.anchor,
         // Only a shape somebody built and would now lose is worth a dialog.
+        // A tree the hand asked for is not one of those.
         reshaped: landing.kind === "reshaped",
+        radiated: landing.kind === "radiated",
         heldOver: over && !drag.members.has(over) ? over : null,
         holdAt: stillOver && stillHolding ? drag.holdAt : world,
         holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
@@ -789,6 +869,12 @@ export default function HexLab({
       });
     } else {
       commit(drag.landing, undefined, drag.unitId);
+    }
+    // This branch is now the one that just moved, so its governing node can be
+    // picked straight back up to tree it. Not after a merge — there is no node
+    // left to pick up.
+    if (outcome.kind !== "offer-merge") {
+      setJustMoved({ unitId: drag.unitId, at: drag.anchor, when: Date.now() });
     }
     setDrag(null);
   };
@@ -972,7 +1058,11 @@ export default function HexLab({
           </Small>
         )}
         <Small style={{ color: "#94a3b8" }}>
-          {mode === "hex" ? "drag a tile to move it and its branch · hold over another to merge" : "drag to pan"}
+          {mode === "hex"
+            ? justMoved
+              ? "pick that tile up again and set it down nearby to tree its branch away from its parent"
+              : "drag a tile to move it and its branch · hold over another to merge"
+            : "drag to pan"}
         </Small>
         {hovered && (
           <Small>
