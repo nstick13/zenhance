@@ -17,11 +17,20 @@ import HexLab, { type LabOrg } from "./HexLab";
 
 export const metadata = { title: "Hex grid study", robots: { index: false, follow: false } };
 
+/**
+ * `spotlight` forces the first and last team to a given size, so both ends of
+ * Greg's question are always on the map: *"a team with a few members, and a
+ * team with the maximum number of members you can realistically squeeze into a
+ * host cell — say 50."* Sparrow-ish is left alone; a fifty-person team inside a
+ * ten-person company is not a case anyone needs to look at.
+ */
+const SPOTLIGHT = { small: 3, large: 50 };
+
 const COMPANIES = {
-  small: { label: "Sparrow-ish · 10", people: 10, maxDepth: 2 },
-  medium: { label: "Digital Tailoring-ish · 45", people: 45, maxDepth: 4 },
-  large: { label: "1,000 · 8 rungs", people: 1000, maxDepth: 8 },
-  northwind: { label: "Northwind · 2,562 · 11 rungs", people: 2400, maxDepth: 11 },
+  small: { label: "Sparrow-ish · 10", people: 10, maxDepth: 2, spotlight: undefined },
+  medium: { label: "Digital Tailoring-ish · 45", people: 45, maxDepth: 4, spotlight: SPOTLIGHT },
+  large: { label: "1,000 · 8 rungs", people: 1000, maxDepth: 8, spotlight: SPOTLIGHT },
+  northwind: { label: "Northwind · 2,562 · 11 rungs", people: 2400, maxDepth: 11, spotlight: SPOTLIGHT },
 } as const;
 
 type Key = keyof typeof COMPANIES;
@@ -34,7 +43,9 @@ export default async function HexLabPage({
   const params = await searchParams;
   const key: Key = (params.company as Key) in COMPANIES ? (params.company as Key) : "medium";
   const spec = COMPANIES[key];
-  const org = buildDeepOrg("hexlab", { people: spec.people, maxDepth: spec.maxDepth, seed: 7 });
+  const org = buildDeepOrg("hexlab", {
+    people: spec.people, maxDepth: spec.maxDepth, seed: 7, spotlight: spec.spotlight,
+  });
 
   // Only the fields `buildOrbitalTree` reads — the rest of a seeded company is
   // weight this page would carry for nothing.

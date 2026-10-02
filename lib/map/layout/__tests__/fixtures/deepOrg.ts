@@ -77,6 +77,20 @@ export type DeepOrgOptions = {
   maxDepth?: number;
   /** Deterministic seed. */
   seed?: number;
+  /**
+   * Force two teams to specific sizes, so the extremes are always on the map.
+   *
+   * Greg, 2026-10-02: *"let's model a team with a few members, and a team with
+   * the maximum number of members you can realistically squeeze into a host
+   * cell — say 50."* Team sizes are otherwise 5–13, which never shows either
+   * end: not the team small enough that the ring round its node is nearly
+   * empty, and not the one big enough to test whether a cell can hold a crowd
+   * without spilling into its neighbour.
+   *
+   * The first team gets `small`, the last gets `large`, so both are reachable
+   * on any company. Off by default, so every existing fixture is unchanged.
+   */
+  spotlight?: { small: number; large: number };
   /** Name for the root unit. Defaults to the invented carrier's name. */
   rootName?: string;
   /**
@@ -245,8 +259,13 @@ export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): De
   };
 
   // Every team gets its own people, the first of whom leads it.
-  for (const { unit } of teams) {
-    const size = 5 + Math.floor(rng() * 9);
+  for (const [index, { unit }] of teams.entries()) {
+    const spotlight = opts.spotlight;
+    const size = spotlight && index === 0
+      ? spotlight.small
+      : spotlight && index === teams.length - 1
+        ? spotlight.large
+        : 5 + Math.floor(rng() * 9);
     const members: Person[] = [];
     for (let i = 0; i < size; i++) {
       const person = makePerson();

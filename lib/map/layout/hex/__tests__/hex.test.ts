@@ -214,17 +214,52 @@ describe("Law 4 — nothing sits on top of anything else", () => {
     }
   });
 
-  it.each(COMPANIES)("keeps every person inside their own unit's hexagon in %s", (_name, input) => {
+  /**
+   * Measured against the *hexagon*, not a circle inside it.
+   *
+   * Until 2026-10-02 this used the cell's inradius, which is the largest
+   * circle that fits — a safe bound while people sat on circular rings, and
+   * far too tight once they sit on hexagonal ones: a person near a corner of
+   * the cell is legitimately further from the centre than the inradius and
+   * still well inside their own tile. The honest test is the one the rule
+   * actually makes, so the containment is computed here from the six edge
+   * normals rather than borrowed from the layout.
+   */
+  it.each(COMPANIES)("keeps every person inside their own unit's cell in %s", (_name, input) => {
     for (const density of ["roomy", "tight"] as const) {
       const scene = layoutHex(treeOf(input), { density });
-      const room = inradius(hexSizeFor(density));
+      const edge = inradius(hexSizeFor(density));
       for (const seat of scene.seats) {
         const unit = scene.unitById.get(seat.unitId);
         if (!unit) continue;
-        // The seat's own body, not just its centre, has to be inside. The
-        // epsilon is float noise at the boundary: a seat on the outermost ring
-        // lands on the edge by construction, and lands there to within 1e-13.
-        expect(Math.hypot(seat.x - unit.x, seat.y - unit.y) + seat.r).toBeLessThanOrEqual(room + 1e-6);
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i + Math.PI / 6;
+          const reach =
+            (seat.x - unit.x) * Math.cos(a) + (seat.y - unit.y) * Math.sin(a) + seat.r;
+          expect(reach).toBeLessThanOrEqual(edge + 1e-6);
+        }
+      }
+    }
+  });
+
+  /** Greg, 2026-10-02: *"They do not sit 'inside' the team node."* */
+  it.each(COMPANIES)("keeps every person outside their own unit's node in %s", (_name, input) => {
+    for (const density of ["roomy", "tight"] as const) {
+      const tree = treeOf(input);
+      const scene = layoutHex(tree, { density });
+      const deepest = Math.max(...scene.units.map((u) => u.depth));
+      for (const seat of scene.seats) {
+        const unit = scene.unitById.get(seat.unitId);
+        if (!unit) continue;
+        const nodeEdge = inradius(hexSizeFor(density) * nodeScale(unit.depth, deepest));
+        let clear = false;
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i + Math.PI / 6;
+          const reach =
+            (seat.x - unit.x) * Math.cos(a) + (seat.y - unit.y) * Math.sin(a) - seat.r;
+          if (reach >= nodeEdge - 1e-6) clear = true;
+        }
+        expect(clear).toBe(true);
       }
     }
   });
@@ -347,15 +382,17 @@ describe("a company that branches wider than a hexagon has sides", () => {
 });
 
 describe("how much of its cell a node fills", () => {
-  it("gives the company all of its cell and the deepest rung a tenth, by area", () => {
-    expect(nodeAreaFraction(0, 12)).toBe(1);
+  /** Greg capped the top at 85% on 2026-10-02 so that even the company has a
+   *  ring of its own cell left to stand people on. The floor is unchanged. */
+  it("gives the company 85% of its cell and the deepest rung a tenth, by area", () => {
+    expect(nodeAreaFraction(0, 12)).toBe(0.85);
     expect(nodeAreaFraction(12, 12)).toBeCloseTo(0.1, 12);
   });
 
-  it("steps a three-rung company 100 / 55 / 10", () => {
+  it("steps a three-rung company 85 / 47.5 / 10", () => {
     const [a, b, c] = [0, 1, 2].map((d) => nodeAreaFraction(d, 2));
-    expect(a).toBe(1);
-    expect(b).toBeCloseTo(0.55, 12);
+    expect(a).toBe(0.85);
+    expect(b).toBeCloseTo(0.475, 12);
     expect(c).toBeCloseTo(0.1, 12);
   });
 
@@ -382,12 +419,12 @@ describe("how much of its cell a node fills", () => {
     // radius scale would draw a team at one percent of what was asked for,
     // which is the whole reason this is two functions rather than one.
     expect(nodeScale(12, 12)).toBeCloseTo(Math.sqrt(0.1), 12);
-    expect(nodeScale(0, 12)).toBe(1);
+    expect(nodeScale(0, 12)).toBeCloseTo(Math.sqrt(0.85), 12);
   });
 
   it("copes with a company of one rung", () => {
-    expect(nodeAreaFraction(0, 0)).toBe(1);
-    expect(nodeScale(0, 0)).toBe(1);
+    expect(nodeAreaFraction(0, 0)).toBe(0.85);
+    expect(nodeScale(0, 0)).toBeCloseTo(Math.sqrt(0.85), 12);
   });
 });
 

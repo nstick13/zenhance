@@ -134,6 +134,8 @@ that part held. These are the places it did not sit flush.
 | 7 | `layout/envelope.ts` | Not needed at all — territory is the cells. | None; it becomes dead code on this path. |
 | 8 | `orbital_nodes` (database) | Stores `angle` + `distance`. A cell is `(q, r)`. Old placements do not convert. | A migration, and a decision from Greg or Nate about discarding saved arrangements. Note `0009` is still unshipped ([TASKS.md](TASKS.md)). |
 | 9 | `lod.unitLabelVisible` | Tuned against orbital sizes; on the hex map a team stays unnamed until about 4×. | Not a hex problem, but the hex map makes it obvious. |
+| 10 | `lod.REVEAL_BANDS.people` | Reveals people by **world scale**, which only makes sense where a unit's size depends on what it carries. Every hex cell is the same size, so the honest trigger is cell pixels — and the band is three times too deep. The lab overrides it locally rather than retuning a band the orbital map shares. | A second ladder, or a reveal that takes a size rather than a scale. Must be settled before promotion. |
+| 11 | `layout.placeUnitSeats` | Sits the first six people *inside* the unit and the rest on circular rings. Both are wrong on a lattice, so the hex path no longer calls it (`hex/people.ts` instead). | None — but it is now the second engine function the lattice replaces rather than reuses, after (4). Worth noticing if that becomes a pattern. |
 
 ## Open risks
 
@@ -185,6 +187,8 @@ The study can now be rearranged by hand. Greg's rules and where each one lives:
 | No borders on the tiles; an occupied cell only a shade darker than the page | **built** |
 | The outline wraps the whole branch, or the immediate family for a leaf | **built** — `hoverGroup` |
 | **Radiating** — a branch trees itself away from its parent on the second pick-up | **built** — see below |
+| A node fills at most 85% of its cell, so there is always a ring to stand on | **built** |
+| People orbit the node on hexagonal rings, lead by the connection line | **built** — see below |
 
 **Arrangements persist**, in `localStorage`, per browser and per company — a
 lab has no database by house rule, and an arrangement is worth more than the ten
@@ -491,6 +495,153 @@ straight line. A subsequent far drag (`1,2` → `-2,5`) translated every member
 exactly, confirming the two-ring gate. Picking up a *child* rather than the
 governing node correctly does not arm the gesture.
 
+### Where the people stand (2026-10-02)
+
+Greg: *"People should orbit on 'rings' that are offsets of the node hexagon.
+They gather on the side opposite the connection line, with one exception — the
+team lead, who sits near the connection line. They do not sit 'inside' the team
+node — but they should sit inside the host tile."*
+
+Until now people were placed by `placeUnitSeats`, the orbital engine's own
+function, on the reasoning that a hexagon was a fence around the same idea. It
+is not. That function sits the first six people **inside** the unit and the rest
+on **circular** rings — two things this map cannot do. So people have their own
+module now, `hex/people.ts`, and it is a hex idea rather than a borrowed one.
+
+Rings are hexagons concentric with the node and the cell, all three in the same
+orientation, so the whole figure is one family of nested hexagons. A position on
+a ring is a **perimeter parameter** `t` in [0, 6) — one unit per side, so equal
+steps in `t` are equal *distances*. (Equal steps in **angle** would bunch people
+at the corners, which is the mistake this parameterisation exists to avoid.)
+
+Filling runs outward from the point opposite the way home, alternating sides, so
+a team of four is a small arc on the far side and a team of fifty wraps most of
+the way round — without anybody deciding which case they are in. The lead is the
+exception: innermost ring, home side, so the eye coming down the chain arrives
+at the lead first.
+
+#### The one line that makes it neat
+
+Greg, 2026-10-02: *"make the way the people arrange themselves on each rung nice
+and neat — please write a line of code that governs an evenly-spaced pattern
+along the rungs."*
+
+```ts
+const slotsOn = (r: number, step: number) => 6 * Math.max(1, Math.floor(r / step));
+```
+
+**A whole number of people per side.** Every ring then carries a dot exactly on
+each of its six corners with an even run between them, and consecutive rings
+differ by exactly six — which is the lattice's own arithmetic. A team cell comes
+out as 3, 4, 5 and 6 to a side, and because the slots are anchored to the
+hexagon rather than to wherever the crowd starts, every dot sits on a radial
+line out from the centre. Four rings read as one honeycomb instead of four
+unrelated arcs.
+
+`floor` rather than `round` because it doubles as the safety bound: it can only
+make the spacing wider than `step`, never narrower, so two dots cannot touch
+however the radii fall. Measured, the closest two dots anywhere are 38.5 apart
+against the 28.5 they need.
+
+The lead pays for this: it takes the *nearest slot* to the chain rather than
+sitting exactly on it, which on an eighteen-slot ring is at worst about ten
+degrees off. That is the price of the pattern lining up, and it is worth it.
+
+**Fitting inside the tile is one inequality.** Two concentric hexagons in the
+same orientation are related by a plain scale, so the narrowest gap between a
+ring of circumradius `r` and a hexagon of circumradius `R` is `(√3/2)(R − r)`,
+at the middle of a side. A dot of radius `p` clears when `R − r ≥ 2p/√3`. That
+gives both the innermost ring (clear of the node) and the outermost (inside the
+cell), with no special cases. People who do not fit are **left out** rather than
+drawn over the boundary — spilling into the neighbour's cell is the one thing a
+lattice must never do.
+
+People are **half again as big** as on the orbital map and the rings are spaced
+wider, both asked for on 2026-10-02 (*"let's make human nodes 50% bigger — scale
+1.5x"*, *"a bit more spacing"*), and a unit may use **four rings** (*"let's
+provide for four possible rungs"*).
+
+| team | rings used | people per ring | closest two dots |
+|---|---|---|---|
+| 3 | 1 | 3 | 39.0 |
+| 8 | 1 | 8 | 39.0 |
+| 50 | 3 | 18 + 24 + 8 | 38.5 |
+| 108 | 4 | 18 + 24 + 30 + 36 | 38.5 |
+| 130 | 4 | 18 + 24 + 30 + 36 — **22 left out** | 38.5 |
+
+Two dots need 28.5 units between centres, so none of these touch. A team cell
+holds **108** at `roomy` and **84** at `tight`, which makes Greg's fifty
+comfortable rather than a squeeze.
+
+#### What four rings costs, and where it shows
+
+Four rings of larger people is a real ceiling, and a **shallow** unit feels it
+first: its node is a large share of its cell, so the gap left for rings is thin.
+On the fixtures:
+
+| | roomy | tight |
+|---|---|---|
+| Digital Tailoring | 1 | 1 |
+| 1,000 people | 1 | 12 |
+| Northwind | 1 | 23 |
+
+The single person at `roomy` is on the **root**, whose 85% node leaves no room
+for even one ring. The `tight` figures are teams high up the tree — that fixture
+puts teams on every rung from CEO+2 down, and a fifty-person team at rung five
+has one ring of 24 to put them on.
+
+**The lab now says so on screen** rather than quietly dropping them, because the
+alternative — drawing over the boundary into somebody else's tile — is the one
+thing a lattice must never do.
+
+There is a cause worth naming: `contentRadius` still sizes a cell from the
+*orbital* seating model (two rings of the old, smaller seat). It is now sizing a
+cell for contents it no longer holds. Making the cell size follow from the
+people model instead is the honest fix, and it changes the density of the whole
+map, so it is Greg's call rather than a tidy-up.
+
+#### The node ceiling came down to 85%
+
+Greg: *"let's put maximum node sizes (even master/centre) as 85% of total cell
+area… the only change here is a maximum size. The minimum size stays the same."*
+A node that filled its cell had no ring left to stand anyone on. The grading is
+otherwise untouched: evenly spaced rungs from 85% down to 10% by area.
+
+The edge this creates: a node at 85% leaves no room for even one ring of the
+larger people, so the **root** cannot hold anyone directly — at either density,
+and at `tight` the first rung of a deep company cannot either. See *What four
+rings costs* above.
+
+#### People arrive much earlier, and by cell size rather than zoom
+
+Greg: *"it feels like we need to zoom too far before people become visible…
+Ideally, we want to be able to see two or three teams on a standard 13" display,
+and more on a larger screen."*
+
+The orbital map reveals people at 1.7–2.1× world scale. That is the right
+question asked of the wrong map: there, a unit's size depends on what it
+carries. Here **every cell is the same size**, so the honest question is how big
+a cell is *on the glass* — and that answer travels between a 13" laptop and a
+32" monitor without being retuned.
+
+People are now fully shown once a cell's circumradius reaches **230px**, so a
+cell is 460px across and a 1440px laptop shows about three teams. They begin
+arriving at 140px, around five cells across. In world scale that is 0.44–0.72×,
+against 1.7–2.1× before: **people appear roughly three times further out.**
+
+This is computed in the lab, not in `lib/map/camera/lod.ts`, so the orbital map's
+own ladder is untouched. If the hex layout is ever promoted, that decision needs
+making properly — see *Where the engines rub*.
+
+#### The fixture now carries both extremes
+
+`buildDeepOrg` takes a `spotlight` option that forces the first team to a given
+size and the last to another; the lab asks for **3 and 50**. Team sizes are
+otherwise 5–13, which never showed either end: not the team small enough that
+the ring round its node is nearly empty, nor the one big enough to ask whether a
+cell can hold a crowd without spilling. Off by default, so every existing
+fixture is unchanged.
+
 ### Lines that belong to the grid
 
 Greg: *"connection lines, where visible, should follow strict routing, meaning
@@ -701,7 +852,7 @@ renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 
 ## Verified, and not
 
-**Verified by tests** (37 new, 692 across the suite, all passing): ring and
+**Verified by tests** (53 new, 712 across the suite, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc
@@ -710,7 +861,12 @@ grows by its length rather than exponentially; that a parent never seats more
 than five children adjacent; and that the packing beats the orbital layout by
 more than three times on each axis; and, since 2026-10-02, that a cousin's
 branch does not eat the ground a parent's own children need, and that chain
-passages under a stranger stay under 45 on the 1,000-person company.
+passages under a stranger stay under 45 on the 1,000-person company; and, for
+the people, that nobody sits inside their own node, nobody crosses into the next
+cell, and no two dots overlap at 4, 12, 28, 50, 108 or 130 to a team — the cell
+containment computed in the test from the six edge normals rather than borrowed
+from the layout, because the old test used the inscribed *circle* and would have
+passed a rule that was wrong at the corners.
 
 **Verified in a browser** at `/lab/hex`, on all four companies, both densities,
 both layouts: whole-company view, the zoom ladder down to individual people,
@@ -721,6 +877,14 @@ The doorstep price was checked in the browser on 2026-10-02 on all four
 companies, with saved arrangements cleared first — an earlier look at the
 1,000-person company was reading 154 saved moves on top of the allocation and
 showed nothing about it.
+
+The people were checked the same day at 1440×900 — a 13" laptop — on Digital
+Tailoring and Northwind, both densities: the fifty-person team as three
+hexagonal rings with the lead on the chain, a small team as a single arc on the
+far side, about three teams across the screen when people are fully shown, the
+rings visibly lining up on the same spokes, and 62fps on Northwind. **That frame rate is an idle `requestAnimationFrame` count, not a
+figure under load**, and the browser pane throttles when hidden, so treat it as
+"nothing is obviously wrong" rather than as a measurement.
 
 **Not verified:** touch and pinch (the page handles pointer events, but no
 real device was used); `prefers-reduced-motion` (there is no motion in the

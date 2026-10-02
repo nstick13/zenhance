@@ -44,7 +44,7 @@ import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
 } from "@/lib/map/camera/viewport";
 import {
-  LOD_LADDER, drawnUnitRadius, isLandmark, revealAt, tierAt, unitLabelVisible,
+  LOD_LADDER, drawnUnitRadius, isLandmark, revealAt, smoothstep, tierAt, unitLabelVisible,
 } from "@/lib/map/camera/lod";
 
 export type LabOrg = OrgInput;
@@ -74,6 +74,26 @@ const HOLD_MS = 550;
  */
 const RADIATE_WINDOW_MS = 30_000;
 const RADIATE_RINGS = 2;
+
+/**
+ * When the people appear, measured in **cell pixels** rather than world scale
+ * (Greg, 2026-10-02).
+ *
+ * *"Right now it feels like we need to zoom too far before people become
+ * visible… Ideally, we want to be able to see two or three teams on a standard
+ * 13" display, and more on a larger screen."*
+ *
+ * The orbital map reveals people at 1.7–2.1× world scale, which is the right
+ * question asked of the wrong map: there, a unit's size depends on what it
+ * carries. Here every cell is the same size, so the honest question is how big
+ * a cell is **on the glass** — and that answer travels, because it is the same
+ * on a 13" laptop and a 32" monitor.
+ *
+ * Fully shown once a cell's circumradius reaches 230px: a cell is then 460px
+ * across, so a 1440px-wide laptop shows about three teams, and a larger screen
+ * proportionally more. They start arriving at 140px, around five cells across.
+ */
+const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
 /**
  * How far the hand may drift and still be holding, as a share of a cell.
@@ -382,9 +402,14 @@ export default function HexLab({
     canvas.style.height = `${size.height}px`;
 
     const { scale } = camera;
-    const reveal = revealAt(scale);
+    const base = revealAt(scale);
     const view = cullBox(camera, size);
     const hexSize = hexScene?.hex.size ?? 1;
+    // Every cell is the same size here, so people arrive by how big a cell is
+    // on screen rather than by world scale.
+    const reveal = hexScene
+      ? { ...base, people: smoothstep(PEOPLE_AT_CELL_PX[0], PEOPLE_AT_CELL_PX[1], hexSize * scale) }
+      : base;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -912,8 +937,37 @@ export default function HexLab({
    */
   const buried = allocation.cells.size - allocation.occupants.size;
 
+  /**
+   * People a cell could not hold.
+   *
+   * A unit's rings are the gap between its node and the edge of its tile, and
+   * since 2026-10-02 there are four of them, holding people half again as big
+   * as before. A shallow unit has a big node and a thin gap, so a large team
+   * high up the tree can ask for more room than its cell has. Spilling into the
+   * neighbour is the one thing a lattice must not do, so the layout leaves
+   * those people out — and a number on the screen is the difference between a
+   * known trade and a silent one.
+   */
+  const unseated = useMemo(() => {
+    let missing = 0;
+    for (const unit of scene.units) {
+      const got = scene.seatsByUnit.get(unit.id)?.length ?? 0;
+      missing += Math.max(0, unit.seatIds.length - got);
+    }
+    return missing;
+  }, [scene]);
+
   const hovered = hover ? scene.unitById.get(hover) : null;
-  const tier = tierAt(revealAt(camera.scale));
+  const tier = tierAt(
+    hexScene
+      ? {
+          ...revealAt(camera.scale),
+          people: smoothstep(
+            PEOPLE_AT_CELL_PX[0], PEOPLE_AT_CELL_PX[1], hexScene.hex.size * camera.scale,
+          ),
+        }
+      : revealAt(camera.scale),
+  );
   const stats = hexScene?.hex.stats ?? null;
   const b = scene.bounds ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   const nameOf = (id: string) => tree.units.get(id)?.name ?? id;
@@ -1055,6 +1109,13 @@ export default function HexLab({
           <Small style={{ color: "#b91c1c" }}>
             <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
             they cannot be pointed at. Please tell Claude what you just did.
+          </Small>
+        )}
+        {unseated > 0 && (
+          <Small style={{ color: "#b45309" }}>
+            <b>{unseated}</b> {unseated === 1 ? "person has" : "people have"}{" "}
+            no room in their cell — four rings is all a tile holds, and a shallow
+            unit&rsquo;s node leaves less of one.
           </Small>
         )}
         <Small style={{ color: "#94a3b8" }}>

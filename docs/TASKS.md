@@ -73,6 +73,34 @@ ALTER TABLE "orbital_nodes" ADD COLUMN "distance" numeric(12, 3);
 Agents should not settle these alone. Each changes how the product feels or
 what it costs, and that is not a refactor's call.
 
+### ☐ A view built around people, not the org chart — *raised by Greg, 2026-10-02*
+
+Everything the hex map draws is the **organisation**: cells are units, colour is
+territory, lines are reporting. People are the smallest thing on it — dots
+arranged around whichever box they report into. Greg, after seeing the first
+version of that: *"we might need a rethink on how we view humans rather than the
+org."*
+
+That is a hunch rather than a decision, and it is written down so it is not lost
+and so nobody mistakes the current arrangement for a settled answer. The
+observation behind it is real: a fifty-person team is fifty identical grey dots
+in a ring, which says how many people there are and nothing whatever about who
+they are, what they do, or who they work with. The org chart answers *where does
+this box sit*. It does not answer *who is this person*, and those may want
+different pictures rather than two zoom levels of one picture.
+
+**Nothing is being asked yet.** When Greg wants to take it further, the question
+to settle first is what a person-first view is *for* — finding someone, seeing
+who works with whom, seeing where effort is going — because each of those wants
+a different layout and only the first is served by the map we have.
+
+*For whoever picks it up:* people are placed by `lib/map/layout/hex/people.ts`
+(hexagonal rings round a node, lead by the chain) and drawn in
+`app/lab/hex/HexLab.tsx` §7. The constraint that shapes the current answer is
+that a person must stay inside their unit's own cell — which is exactly the
+constraint a person-first view would be questioning. See *Where the people
+stand* in [HEX-LAYOUT.md](HEX-LAYOUT.md).
+
 ### ⏸ Break orbits is a one-way door — *parked by Greg, 2026-09-25*
 
 "Break orbits" lets you move nodes freely, ignoring the rings. Turning it on
