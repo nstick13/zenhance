@@ -234,15 +234,35 @@ describe("the cells a company gets", () => {
   it("joins most children to their family, and says so when it cannot", () => {
     const a = allocate(treeOf(deep(2400, 11)));
     const children = a.stats.placed - 1;
-    // 88% measured on 2026-09-30. The rest are exclaves, which rule 8 treats as
-    // a legitimate arrangement rather than a failure.
-    expect(a.stats.connected / children).toBeGreaterThan(0.8);
+    // 88% on 2026-09-30; 94% since the doorstep price. The rest are exclaves,
+    // which rule 8 treats as a legitimate arrangement rather than a failure.
+    expect(a.stats.connected / children).toBeGreaterThan(0.9);
     expect(a.stats.connected + a.stats.exclaves).toBe(children);
+  });
+
+  /**
+   * The doorstep price. A unit's six neighbours are the only cells its own
+   * children can touch it from, and nothing used to stop a cousin's subtree —
+   * seated earlier, because the walk is depth-first — parking on all of them.
+   *
+   * These are both measured numbers with room under them, not targets. They
+   * are here because the thing they protect is invisible in a screenshot: a
+   * child that cannot touch its parent needs a chain that walks, and a chain
+   * that walks is what crosses somebody else's tile.
+   */
+  it("does not let a cousin's branch eat the ground a parent's children need", () => {
+    const a = allocate(treeOf(deep(2400, 11)));
+    const children = a.stats.placed - 1;
+    // 46% before the doorstep price, 49% after.
+    expect(a.stats.touchingParent / children).toBeGreaterThan(0.47);
+    // 48 before, 25 after.
+    expect(a.stats.exclaves).toBeLessThan(35);
   });
 
   it("keeps most families in one patch, which is all that says they are a family", () => {
     const a = allocate(treeOf(deep(2400, 11)));
-    expect(a.stats.wholeFamilies / a.stats.families).toBeGreaterThan(0.6);
+    // 86/131 before the doorstep price, 106/131 after.
+    expect(a.stats.wholeFamilies / a.stats.families).toBeGreaterThan(0.75);
   });
 
   it("gives a small company a perfect tessellation", () => {

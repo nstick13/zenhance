@@ -72,15 +72,25 @@ const SHARED_WITH_A_CHAIN = 30;
  * whatever origin side of its original hexagon it was originally. Perhaps
  * connection lines are too fixed to a given side of their host hexagon?"*
  *
- * They were. Nothing stopped six chains leaving a node through the same face
- * and then running alongside each other, each pushed one cell further out by
- * the shared-ground price — which is what drew those nested rounded
- * rectangles. A hexagon has six sides and a node should use them.
+ * The observation was right and this was the wrong place to fix it. **Off, and
+ * the measurements are why.** On the 1,000-person company, only 11 parents in
+ * 53 give every child its own face. Charging for a reused face does move that
+ * — to 28 in 53 at a price of 400 — but the router has exactly one way to
+ * reach a different side, which is to walk further round, so chains crossing
+ * somebody else's tile went 26 → 66 and the longest chain went 8 steps → 10.
+ * That is more tangle bought with less, not more.
  *
- * Priced at nine steps: enough to take another side whenever one is free, not
- * enough to send a chain on a trek to find one.
+ * Nor is any of it free. Priced at 1, 2, 3, 5 — small enough to break ties and
+ * nothing else — the fan does not move at all (54 → 53 one-face parents on
+ * Northwind). There are no ties: a different face always costs distance.
+ *
+ * So the fan has to come from where the children sit, not from how the chains
+ * run, and it did — see `DOORSTEP` in `allocate.ts`. Keeping a child next to
+ * its parent gives it a face of its own for nothing. This stays as one number
+ * because it is the only knob on the other half of the trade: set it to 400 to
+ * see the fan the router can buy, and what it costs.
  */
-const SIDE_ALREADY_USED = 90;
+const SIDE_ALREADY_USED = 0;
 
 /** How far past the direct distance a chain may wander looking for clear
  *  ground. A chain that has to trek is a chain that should have been a

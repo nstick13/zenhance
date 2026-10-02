@@ -166,6 +166,17 @@ describe("a whole company", () => {
     }
   });
 
+  /**
+   * The thing Greg is actually looking at. A chain that has to walk is a chain
+   * that walks under somebody, and a map full of those is the tangle he
+   * described on 2026-10-02. The number is governed from the allocator, not
+   * from here: 80 passages before the doorstep price, 26 after.
+   */
+  it("hardly ever walks under somebody who is not family", () => {
+    const strangers = routed.reduce((n, c) => n + c.through, 0);
+    expect(strangers).toBeLessThan(45);
+  });
+
   it("does not wander: most chains are still a single straight run", () => {
     const straight = routed.filter((c) => c.points.length === 2).length;
     expect(straight / routed.length).toBeGreaterThan(0.6);

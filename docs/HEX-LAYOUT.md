@@ -321,36 +321,99 @@ chains — 36 crossings. Priced below a two-cell detour and its two turns, a cha
 goes straight through its own family and the crossings fall to 21. Avoiding
 siblings was never the point.
 
-### Chains stuck to one side of a node — mechanism in, value undecided
+### The long straight lines, and what they turned out to be (2026-10-02)
 
 Greg, 2026-10-01: *"routing does not fan out, rather it can bullishly hold to
-whatever origin side of its original hexagon it was originally."*
+whatever origin side of its original hexagon it was originally. Perhaps
+connection lines are too fixed to a given side of their host hexagon?"*
 
-He is right: nothing stopped six chains leaving a node through the same face and
-then running alongside each other, each pushed one cell out by the shared-ground
-price, which is what drew those nested rounded rectangles. The `Router` now
-remembers which of a node's six sides already carry a chain, at both ends, and
-charges `SIDE_ALREADY_USED` to reuse one.
+The observation was right and it was two different things wearing one coat.
+Measured on the 1,000-person company:
 
-**The price is set to 90, which is close to a no-op, and that is deliberate
-until somebody looks at it.** The sweep, on the 2,562-person company:
+- **Only 11 parents in 53 give every child a face of its own.** Chains converge
+  and arrive together.
+- **31% of chains continue their parent's chain along the same axis**, in
+  unbroken runs of up to seven nodes. A line through seven nodes reads as one
+  bullish line; it is five separate chains that happen to be collinear.
 
-| price | sides carrying 2+ chains | worst on one side | tiles crossed | bends (median/worst) |
+Neither is a routing fault, and the router cannot fix either. **The fix was in
+the allocator** — see *the doorstep price* below.
+
+#### The router's fan is not free, at any price
+
+`SIDE_ALREADY_USED` in `route.ts` charges a chain for leaving or arriving on a
+face another chain already uses. It works, and it costs more than it buys. On
+the 1,000-person company, over the allocator as it now stands:
+
+| price | parents fully fanned | chains 3+ steps | longest chain | under a stranger |
 |---|---|---|---|---|
-| 0 (off) | 94 / 659 | 4 | 352 | 0 / 3 |
-| 90 | 90 / 666 | 4 | 374 | 0 / 3 |
-| 200 | 86 / 677 | 4 | 384 | 0 / 4 |
-| **400** | **18 / 769** | **3** | **475** | 1 / 6 |
+| **0 (shipped)** | 11 / 53 | 25 | 5 | **26** |
+| 200 | 13 / 53 | 30 | 5 | 28 |
+| 400 | 28 / 53 | 48 | 5 | 66 |
+| 800 | 29 / 53 | 48 | 5 | 68 |
 
-Only 400 actually fans, and it costs a third more chains running through tiles
-and puts a bend in the median chain. **That is a trade between two things Greg
-has asked for on different days, and it should be looked at rather than
-computed.** The lever is one constant in `route.ts`.
+The fan doubles and the tangle triples, because **the router has exactly one way
+to reach a different face, which is to walk further round.** Nor is any of it
+free at the margin: priced at 1, 2, 3 or 5 — small enough to break ties and
+nothing else — the fan does not move at all (54 → 53 one-face parents on
+Northwind). There are no ties to break.
+
+**So it is off, and left in as one constant.** Set it to 400 to see the fan the
+router can buy, and what it costs.
+
+#### Leaning the fan, which made everything worse
+
+If a lineage draws a straight line because `fanAngles` aims the heaviest child
+straight along `outward` at every rung, then leaning the fan a lattice step and
+alternating by depth should kink it. It does — longest run 7 → 4 — and it costs
+adjacency (54% → 49%), exclaves (9 → 10) and chains under strangers (26 → 47),
+and *raises* collinearity to 37%. Reverted. A lineage running straight is what
+rule 2 asks for; it is not worth a kink bought with a worse map.
+
+### The doorstep price — what did work (2026-10-02)
+
+A unit has six neighbours. One is the way home, so **five of its children can
+touch it**, and a child that touches its parent gets a one-step chain, on a face
+of its own, crossing nothing. Everything above is downstream of children not
+getting those cells.
+
+They were not getting them because nothing stopped **a cousin's subtree, seated
+earlier** — the walk is depth-first and heaviest-first — **parking on all five.**
+Measured before the change: at the end of allocation there was not one free cell
+going spare next to any parent. The ground was gone, taken by units with no claim
+on it.
+
+So `DOORSTEP` in `allocate.ts` charges for a cell next to a unit that still has
+children to seat, and the charge rises as that unit runs out of room. **It is a
+price, not a reservation** — a child with nowhere else to go still takes the
+cell. That distinction is the whole reason this is not the fourth of the three
+abandoned rewrites in the allocator's header: those partitioned the plane before
+anyone sat down, and starved.
+
+| | 1,000 people | | Northwind 2,562 | |
+|---|---|---|---|---|
+| | before | after | before | after |
+| children touching their parent | 44% | **54%** | 46% | **49%** |
+| exclaves | 19 | **9** | 48 | **25** |
+| families in one patch | 39/58 | **49/58** | 86/131 | **106/131** |
+| chains of 3+ steps | 38 | **25** | 90 | **88** |
+| **chain passages under a stranger** | 80 | **26** | 214 | **152** |
+| map radius (rings) | 13 | **10** | 19 | 19 |
+
+Sparrow Jam and Digital Tailoring were already perfect — 100% touching, zero
+exclaves, every chain one step — and are unchanged.
+
+The price was swept at 60, 100, 150, 200, 260 and 400 on both large companies.
+**150 wins on nearly every measure on both**, and the curve is not smooth: 200
+and above push Northwind's exclaves back up to 42 as families start refusing
+ground they should have taken. It is a greedy search, so the surface is bumpy;
+do not read the number as a tuned optimum, read it as the one that measured
+best.
 
 ### What routing cannot fix, and the next lever
 
 **Sweeping every cost — sibling, turn, stranger, detour allowance from 6 to 40 —
-changes the stranger figure not at all.** It sits at 34% however the search is
+changes the stranger figure not at all.** It sits flat however the search is
 priced, which means the router is already finding the only paths that exist. The
 rest is forced by density, not by choice.
 
@@ -362,14 +425,15 @@ Where it is forced, measured by how far a child sits from its parent:
 | 2 steps | 142 | 46% |
 | 3+ steps | 70 | ~100% |
 
-**18% of chains cause 69% of the crossings, and they are the long ones.** A
-chain of one step cannot cross anything; a chain of five has to walk through
-whatever is in the way. So the lever is not routing — it is **how far a child
-sits from its parent**, and after that, **leaving ground to route through**. The
-allocator packs families adjacently, so there are no corridors. A layout that
-reserved streets the way a town does would give the router something to work
-with; it would also spread the company out, which is a look Greg has not seen
-yet and should decide on before anyone builds it.
+**18% of chains caused 69% of the crossings, and they are the long ones.** That
+is what the doorstep price acts on, and why it moved the stranger figure by two
+thirds when no amount of routing could move it at all.
+
+The next lever after it is **leaving ground to route through**. The allocator
+packs families adjacently, so there are no corridors. A layout that reserved
+streets the way a town does would give the router something to work with; it
+would also spread the company out, which is a look Greg has not seen yet and
+should decide on before anyone builds it.
 
 ### Lines that belong to the grid
 
@@ -417,13 +481,22 @@ have `disciplineId`; units have nothing, so the region is standing in.
 
 ### What the allocator does now, measured
 
+Re-measured 2026-10-02, after the doorstep price. Northwind is
+`buildDeepOrg(people: 2400, maxDepth: 11, seed: 7)`; the wide column is the same
+seed at `maxDepth: 6, span: [2, 20]`.
+
 | | 2,562 people | wide spans (max 20 children) |
 |---|---|---|
-| children touching their family | **88%** | **93%** |
-| children touching the parent itself | 46% | 10% |
-| families that are one patch | 86/131 | 9/16 |
-| exclaves | 48 | 10 |
-| layout | 7ms | 4ms |
+| children touching their family | **94%** *(was 88%)* | **93%** |
+| children touching the parent itself | 49% *(was 46%)* | 8% |
+| families that are one patch | 106/131 *(was 86/131)* | 13/29 |
+| exclaves | 25 *(was 48)* | 21 |
+| layout | 9ms | 13ms |
+
+The wide column barely moves, and that is expected: with twenty children a
+parent has five seats to give and fifteen children who cannot have one, so the
+doorstep price has almost nothing to protect. Wide spans are carried by the
+sibling-edge rule, not by adjacency to the parent.
 
 The wide-span collapse is gone. Seating children against the parent alone held
 adjacency at **24%** on a company with realistic spans; letting them seat
@@ -439,7 +512,7 @@ and partitioning a parent's ground into angular wedges. The best of them placed
 handed one cell per unit has nothing left to subdivide, and every rung below it
 starves — the quota has to carry slack at *every* level, not only the top.
 
-The remaining 12% are exclaves, and that is not simply a failure: rule 8 makes
+The remaining 6% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
 
@@ -572,19 +645,26 @@ renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 
 ## Verified, and not
 
-**Verified by tests** (30 new, 610 across the suite, all passing): ring and
+**Verified by tests** (32 new, 687 across the suite, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc
 touching another, every person inside their own unit's hexagon; that a chain
 grows by its length rather than exponentially; that a parent never seats more
 than five children adjacent; and that the packing beats the orbital layout by
-more than three times on each axis.
+more than three times on each axis; and, since 2026-10-02, that a cousin's
+branch does not eat the ground a parent's own children need, and that chain
+passages under a stranger stay under 45 on the 1,000-person company.
 
 **Verified in a browser** at `/lab/hex`, on all four companies, both densities,
 both layouts: whole-company view, the zoom ladder down to individual people,
 pan, wheel zoom, fit, hover, and the region colouring. Console clean after the
 hydration warning was fixed.
+
+The doorstep price was checked in the browser on 2026-10-02 on all four
+companies, with saved arrangements cleared first — an earlier look at the
+1,000-person company was reading 154 saved moves on top of the allocation and
+showed nothing about it.
 
 **Not verified:** touch and pinch (the page handles pointer events, but no
 real device was used); `prefers-reduced-motion` (there is no motion in the

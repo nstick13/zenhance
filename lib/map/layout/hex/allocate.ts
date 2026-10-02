@@ -46,6 +46,27 @@
  * atlas draws Kaliningrad. About one unit in ten lands this way on the
  * 2,562-person company.
  *
+ * ## Two things that did not work, 2026-10-02
+ *
+ * Greg saw long straight lines running through the map and read them as the
+ * chains refusing to fan out. Measured, they were two different things, and
+ * only one of them had a fix here.
+ *
+ * - **A straight line is usually a lineage, not a chain.** 31% of chains
+ *   continued their parent's chain along the same axis, in unbroken runs of up
+ *   to seven nodes, because `fanAngles` aims the heaviest child straight along
+ *   `outward` at every rung. Leaning the fan a lattice step, alternating by
+ *   depth, broke runs to four — and cost adjacency (54% → 49%), exclaves
+ *   (9 → 10) and chains under strangers (26 → 47). A lineage running straight
+ *   is what rule 2 asks for; it is not worth buying a kink with a worse map.
+ * - **Fanning in the router is not free.** See `SIDE_ALREADY_USED` in
+ *   `route.ts`: every price that moves the fan also makes chains walk further
+ *   to find a face, and prices small enough not to move the chains do not move
+ *   the fan either.
+ *
+ * What did work was `DOORSTEP` below — giving a child a cell next to its own
+ * parent gets it a face of its own for nothing.
+ *
  * **Three rewrites were tried and abandoned before this one**, all aiming to
  * get exclaves to zero by reserving ground before placing anyone: growing
  * regions outward from each child at once, scoring cells by how much room a
@@ -126,6 +147,24 @@ const DEGREE_PENALTY = 1.2;
  *  rather than strung out, not enough to beat open ground. */
 const REACH_PENALTY = 200;
 
+/** What it costs to take a cell somebody else's unseated children were going
+ *  to need — their doorstep.
+ *
+ *  A unit has six neighbours and one of them is the way home, so five of its
+ *  children can touch it; beyond that they reach it through a sibling and the
+ *  chain home has to walk. Nothing used to stop a cousin's subtree, seated
+ *  first, parking on those five. Measured on the 1,000-person company, only
+ *  46% of children ended up next to their parent — and a chain that cannot go
+ *  straight home is the whole of what Greg saw on 2026-10-02: lines leaving by
+ *  whatever face was left, three and four cells long, crossing strangers.
+ *
+ *  So a cell next to a unit that still has children to seat is charged for,
+ *  and the charge rises as that unit runs out of room. It is a price, not a
+ *  reservation: a child with nowhere else to go still takes the cell. That
+ *  distinction is why this is not the fourth of the abandoned rewrites in the
+ *  header — those partitioned the plane before anyone sat down, and starved. */
+const DOORSTEP = 150;
+
 const TAU = Math.PI * 2;
 
 const angleGap = (a: number, b: number): number =>
@@ -198,6 +237,36 @@ export function allocate(tree: OrbitalTree): Allocation {
       .filter((u): u is UnitNode => !!u)
       .sort(byWeight);
 
+  /** How many cells next to it a unit still needs for its own children. Five
+   *  at most — the sixth neighbour is the way home — and zero once the unit
+   *  has been through `place`, because by then its children are seated. */
+  const needs = new Map<string, number>();
+  for (const unit of tree.units.values()) {
+    const kids = unit.childIds.length;
+    if (kids > 0) needs.set(unit.id, Math.min(kids, unit.parentId ? 5 : 6));
+  }
+
+  const freeNeighbours = (cell: Cell): number => {
+    let free = 0;
+    for (const n of neighbours(cell)) if (!occupants.has(cellKey(n))) free++;
+    return free;
+  };
+
+  /** What taking `candidate` would cost the units around it that have not
+   *  seated their children yet. Nothing at all while they have room to spare. */
+  const doorstepCost = (candidate: Cell): number => {
+    let cost = 0;
+    for (const n of neighbours(candidate)) {
+      const who = occupants.get(cellKey(n));
+      if (!who) continue;
+      const need = needs.get(who) ?? 0;
+      if (need <= 0) continue;
+      const free = freeNeighbours(n);
+      if (free <= need) cost += DOORSTEP * (need - free + 1);
+    }
+    return cost;
+  };
+
   /** How much open ground a cell opens onto: free cells within two rings.
    *  This is the lookahead that stops a branch walking into a pocket and
    *  stranding its own descendants. */
@@ -232,7 +301,8 @@ export function allocate(tree: OrbitalTree): Allocation {
         const score =
           elbowRoom(candidate) * SPACE_WEIGHT
           - deviation * DEGREE_PENALTY
-          - hexDistance(parentCell, candidate) * REACH_PENALTY;
+          - hexDistance(parentCell, candidate) * REACH_PENALTY
+          - doorstepCost(candidate);
         if (score > bestScore) { bestScore = score; best = candidate; }
       }
     }
@@ -248,7 +318,10 @@ export function allocate(tree: OrbitalTree): Allocation {
       for (const candidate of ring(from, k)) {
         if (occupants.has(cellKey(candidate))) continue;
         const deviation = (angleGap(worldAngle(from, candidate, SIZE), desired) * 180) / Math.PI;
-        const score = elbowRoom(candidate) * SPACE_WEIGHT - deviation * DEGREE_PENALTY;
+        const score =
+          elbowRoom(candidate) * SPACE_WEIGHT
+          - deviation * DEGREE_PENALTY
+          - doorstepCost(candidate);
         if (score > bestScore) {
           bestScore = score;
           best = candidate;
@@ -273,6 +346,7 @@ export function allocate(tree: OrbitalTree): Allocation {
     const parentCell = cells.get(parent.id);
     if (!parentCell) return;
     const kids = childrenOf(parent);
+    needs.set(parent.id, 0); // we are seating them now; no need to hold ground from ourselves
     if (kids.length === 0) return;
 
     // Which way is "onward"? Away from this unit's own parent, so a branch
