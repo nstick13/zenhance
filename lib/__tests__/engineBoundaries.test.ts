@@ -64,6 +64,7 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/map/layout/hex/allocate.ts": "layout",
   "lib/map/layout/hex/scene.ts": "layout",
   "lib/map/layout/hex/arrange.ts": "layout",
+  "lib/map/layout/hex/territory.ts": "layout",
   "lib/map/layout/hex/tidy.ts": "layout",
   "lib/map/layout/hex/route.ts": "layout",
   "lib/map/layout/hex/people.ts": "layout",

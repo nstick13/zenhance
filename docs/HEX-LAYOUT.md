@@ -723,6 +723,270 @@ The remaining 6% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
 
+### An atlas rather than an archipelago (2026-10-03)
+
+Greg: *"We need to gently push for the whole thing to render with more visual
+organisation."* Asked which lever first, he picked two: **a readable grammar**
+and **nested territories**. They are built as one piece, because a grammar
+written against the archipelago would have had to be written again once
+territories nested.
+
+Live at `/lab/hex` behind a **shape** toggle — `atlas` or `archipelago`, one
+keystroke apart. Both are kept because the only way to settle which reads better
+is to put them side by side. `territory.ts` is the new module; `allocate.ts` is
+untouched.
+
+#### What was wrong, as something measurable
+
+The hierarchy was a **place** at exactly one level. Every unit reserved ground
+sized to its own direct staff and its children were pushed *outside* it. So a
+division was not somewhere you could point at — it was a hue shared by teams
+scattered among its siblings' teams, and colour was doing all the work of saying
+"these belong together".
+
+#### Measure upward, place downward
+
+Two passes. Every unit works out how big its ground must be and where its
+children sit inside it, in a canonical frame facing one way; then the root lands
+at the origin and each territory is translated and **turned** into place. A
+spine is always one of the six lattice directions, so that turn is a multiple of
+60° and therefore *exact* — the arrangement survives it cell for cell.
+
+This is why it does not hit the wall the three abandoned rewrites hit. They all
+reserved ground **before** knowing what had to go in it. Measuring upward makes a
+parent's size a consequence of its children's rather than a guess at them.
+
+The grammar: the heaviest child continues its parent's street, the rest fan off
+alternately to either side, backwards only as a last resort. Sibling order is
+headcount descending, ties by name, behind one swappable function — stable and
+explainable, though not *meaningful* the way function or discipline would be.
+
+#### The dead end: territories as discs
+
+The first version made a territory a **disc** around its contents, and the
+measurement killed it outright. Packing k discs inside a disc wastes about two
+fifths of the ground, and nesting **multiplies** that waste at every rung. Over
+eleven rungs it compounded to a root territory of **39,331 cells holding 395
+units — 1% full**, and a map 5.7 times wider than the archipelago.
+
+No tuning reaches that. It is not slack, it is the geometry of putting round
+things inside round things. A territory has to be **the shape of its contents**,
+which cannot waste anything — and is what an atlas looks like anyway, since
+countries are not circles.
+
+#### A round number that was a bug
+
+The first cut of the spacing charged the clear tile between a parent and its own
+children as well as between siblings. Every leaf was pushed a tile off its own
+family and "children touching their family" came out at **exactly 0%**. A number
+that round is always a bug and never a trade-off. The gap now separates
+*territories* — a child that brings a subtree with it — and a lone node may sit
+against its kin.
+
+#### Two fixes that came out of Greg's question (2026-10-03, later)
+
+**The packer had no idea what a family was.** It scored a position by how much
+it grew the territory and how near the spine it sat, and had *nothing at all* to
+say about landing next to your own parent or a sibling — which is the oldest
+rule in this engine. An omission, not a decision. `FAMILY` is that missing term.
+
+**The clear tile was being charged to things nobody calls a place.** Greg's rule
+was *"sibling **teams** have one tile separating them"*, and it was being applied
+between every pair of sibling territories at every rung, two mid-level
+structural nodes included. `PLACE_SIZE` is where a thing becomes a place: a
+clear tile is a visual device, and two single cells with a gap between them read
+as two cells with a gap, not as two regions. Four cells, so that in the mode
+that matters — people promoted to units, where a team is its node plus its
+people — a **team** earns clear ground and an individual does not. Which is what
+Greg asked for in the first place.
+
+The sweep behind that number, on the 2,562-person company with people as units:
+
+| `PLACE_SIZE` | stranded | touching family | span | mean chain | cells with 2+ chains |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 1 (every node) | 853 | 71% | 204×215 | 3.3 | 2,651 |
+| 2 | 622 | 79% | 186×210 | 3.2 | 2,592 |
+| **4** | **490** | **83%** | 156×234 | 3.1 | 2,508 |
+| 9 | 431 | 85% | 153×214 | 3.0 | 2,506 |
+| no gap at all | 363 | 88% | 108×179 | 2.7 | 2,243 |
+
+It is a straight trade all the way down, with no sweet spot to discover: every
+clear tile costs a little cohesion, a little length and a little spread. Four is
+where the thing being separated is the thing Greg named.
+
+#### The search was scanning the horizon
+
+With people promoted to units the atlas took **ten seconds** on Northwind. The
+packer swept a disc that grew with the company, for every one of 2,957 children.
+
+A territory's cost is dominated by how much it grows its parent, which rises
+with distance — so the answer is nearly always in the first ring that has room.
+Searching outward and stopping a couple of rings after the first success is the
+same trick `findCell` uses in `allocate.ts`. **10,171ms → 216ms**, a 47-fold
+cut, with the layout essentially unchanged (853 stranded against 849, same
+spans).
+
+#### The trade, on the 2,562-person company
+
+| | archipelago | atlas |
+| --- | ---: | ---: |
+| span | **45×48** | 68×70 |
+| next to its parent | 61% | **67%** |
+| touching family at all | **96%** | 83% |
+| families as one patch | **115/131** | 79/131 |
+| chains walking under a stranger | 102 | **7** |
+| mean chain length | **2.8** | 3.6 |
+| cells carrying two or more chains | **229** | 311 |
+| time | **14ms** | 131ms |
+
+With people as the smallest unit: 2,957 units in **216ms**, 83% touching their
+family, 1,427 of 1,686 families reading as one patch.
+
+#### Where the exclaves come from — not from the data
+
+Greg asked the right question: *"does the data schema require exclaves for the
+sake of the demonstration?"* Measured, **no**.
+
+- **No unit in either company has more than five children.** The widest fan is
+  four on Northwind and three on Digital Tailoring, against six neighbours of
+  which one is the way home. The lattice never runs out of room next to a
+  parent, so the shape of the invented company never forces a unit away from its
+  family.
+- Turning our own spacing off is what moves the number. On Northwind the atlas
+  gave **59** units not touching their family with no gap and **110** with one.
+  Every one of the extra 51 was the clear tile we insist on.
+- The 59 that remained were the packer's doing, not the data's — the missing
+  family term above. Both are fixed, and Northwind now strands 74 rather than
+  110 with 81% touching their family rather than 72%.
+
+#### And the spaghetti is the same rule
+
+The crossing lines are not chains cutting through other people's tiles — by that
+measure the atlas is far *better* than the archipelago (14 passages under a
+stranger against 102). What the gap creates is **corridors**, and the router
+funnels many chains down the same ones: mean chain length 2.8 → 4.1, longest
+12 → 29, and cells carrying two or more chains 229 → 366.
+
+So both of Greg's complaints trace to one rule — a clear tile between sibling
+territories at **every** rung. Which leaves a decision rather than a fix: whether
+the clear tile belongs between every pair of sibling territories, or only
+between the places a reader thinks of as places.
+
+#### Room that grows with the level of abstraction (2026-10-03, later)
+
+Greg: *"At the highest level of abstraction, the greatest number of hexagon
+tiles are found between nodes. At the lowest level of abstraction, the team
+level, each team should by default group together, resist exclaving, and exist
+with a bubble of 1 tile around it… for every level of abstraction, add 1
+additional tile-spacing rule between nodes."*
+
+The gap is no longer one number. A unit's **tier** is how many rungs of *places*
+sit under it — nought for a team, whose children are people rather than regions;
+one for whatever holds teams; up from there. A unit leaves `tier` clear tiles
+between its children, and holds its own node `tier − 1` tiles off theirs.
+
+That offset is load-bearing. A team and whatever holds teams get **no** bubble,
+so people stay pressed round their team and teams round theirs — which is the
+same lesson as the 0% bug above, learnt twice.
+
+**Between *nodes*, not between ground.** The first version blocked the ground
+round a parent outright, so no cell of a child's whole territory could enter it.
+A territory surrounds its own node in every direction, so the master centre's
+only report was pushed **21 tiles** away and family cohesion fell ten points
+across the company. Holding the nodes apart and letting the ground come as close
+as it likes says what was actually asked for and costs nothing elsewhere.
+
+Northwind now: the master centre sits 4 tiles from its reports in teams view and
+6 with people promoted, against 1 and 2 before.
+
+#### A statistic that had started measuring the rule
+
+Adding the tier spacing sent "units not touching their family" from 74 to 121
+with nothing going wrong — a unit held off its parent *on purpose* was being
+counted as stranded. The question worth asking is whether a unit is **further
+out than it was told to be**, and `spacedBy` carries what it was told. On that
+measure Northwind strands 60 rather than 74, and 85% sit where the rule put them
+rather than 81%.
+
+Raw adjacency to a parent is *down*, 65% to 53%, and that is the feature. It is
+no longer asserted in the tests, because asserting it would be asserting against
+Greg's rule.
+
+#### The confetti: one flag in the wrong place
+
+Greg, 2026-10-03: *"when I move a team node, or a node that controls a small
+number of teams, the auto-arrange works basically perfectly… It's a different
+story if I try and move a whole family tree — the auto-rearrange struggles and
+then blasts teams into confetti."*
+
+`placeIsland` gated "move it as it is" on `isOnePatch` — is the branch one
+connected patch? Under nested territories **it never is**, because the clear
+ground inside a territory is the whole point. So every branch above about ten
+units skipped the translate-as-is path and the nudge after it, and fell through
+to a full re-layout.
+
+Measured on Northwind with people as units, dragging branches of each size:
+
+| branch | one patch? | landing | shape kept |
+| ---: | --- | --- | ---: |
+| 9 | yes | nudged | 100% |
+| 14 | **no** | gathered | **7%** |
+| 135 | **no** | parted | 44% |
+
+The same 14-unit branch on the archipelago *is* one patch, translates exactly,
+and looks perfect — which is why this read as a big-branch problem rather than
+as a gate in the wrong place. Trying the exact placement regardless takes both
+to **100%**.
+
+Whether a branch is one patch is a fact about what is worth *warning* about when
+a shape is lost. It was never a reason not to try. Two tests asserted the old
+behaviour — one of them that a scattered family is gathered on the way, which
+contradicted Greg's rule from 2026-10-02 outright and went unnoticed while every
+branch worth dragging happened to be one patch.
+
+#### Two faults found by one screenshot (2026-10-03, later still)
+
+Greg sent a panel reading *"72 units sharing a cell with another — they cannot
+be pointed at"* after a tidy up of 1,258 placements. It turned out to be two
+unrelated things, and the worse one was the one nobody had reported.
+
+**The atlas was silently dropping units.** 2,931 placed out of 2,957. The ring
+walk in `placeChild` skips everything inside the parent's bubble, and the reach
+that bounds that walk did not account for it — so a high-tier unit whose first
+child was small had *every* candidate skipped, came back with nothing, and the
+child was dropped from the map without a word. It only appears as a count that
+does not add up, which is why it survived a browser check, a full sweep and a
+test suite. There is now a `stats.unplaced`, a test built from the shape that
+starves (verified to fail on the old code), and a red line in the lab when a
+unit has no cell at all.
+
+**Hand placements were being replayed onto cells that had moved on.** An
+arrangement lives in one browser while the engine changes underneath it — a new
+rule, a different shape, a fix to the packer — so the cell somebody put a tile
+on last week now belongs to somebody else. Applying them blindly stacked units:
+measured, an arrangement of 1,479 placements saved under the archipelago and
+replayed on the atlas buried 66.
+
+The fix keeps the map **injective at every step**. The layout starts with one
+unit per cell; a placement is taken only when its target is free; taking it
+frees the cell that unit came from. The invariant cannot then be broken by any
+sequence of placements, however stale, and anything refused simply stays where
+the engine put it. Arrangements are also keyed per shape now, because an
+arrangement of the archipelago is not an arrangement of the atlas.
+
+Neither fault was the tidy up, which produces no collisions at all on a fresh
+map in either shape — it was the input it had been handed.
+
+#### Still open
+
+- **131ms against 14ms** in teams view, after the 47-fold cut. Closer to affordable, still an
+  order of magnitude off the archipelago, and the number that matters against
+  the ten-year-old-Lenovo bar.
+- The spine only breaks ties; growth decides. If the streets do not read, that
+  balance is the dial — `GROWTH`, `FAMILY` and `SPINE` in `territory.ts`.
+- Whether the atlas or the archipelago is the better map. Both are live behind
+  the **shape** toggle precisely so that nobody has to settle it in prose.
+
 ### What the outline wraps
 
 Greg, 2026-09-30: *"the black outline should run around a node and all its
@@ -852,7 +1116,7 @@ renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 
 ## Verified, and not
 
-**Verified by tests** (53 new, 712 across the suite, all passing): ring and
+**Verified by tests** (67 new, 733 across the suite, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc
@@ -885,6 +1149,13 @@ far side, about three teams across the screen when people are fully shown, the
 rings visibly lining up on the same spokes, and 62fps on Northwind. **That frame rate is an idle `requestAnimationFrame` count, not a
 figure under load**, and the browser pane throttles when hidden, so treat it as
 "nothing is obviously wrong" rather than as a measurement.
+
+The atlas was checked in the browser on 2026-10-03 on Digital Tailoring and
+Northwind, both shapes, at whole-company view: territories read as coherent
+coloured places with their divisions named, against the archipelago's scatter.
+**Not checked:** the atlas at close zoom, with people showing; dragging a branch
+under it; and the orbits mode beside it. The numbers in the table above are from
+the test suite, not from the browser.
 
 **Not verified:** touch and pinch (the page handles pointer events, but no
 real device was used); `prefers-reduced-motion` (there is no motion in the

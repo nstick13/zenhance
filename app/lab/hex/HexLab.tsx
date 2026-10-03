@@ -29,6 +29,7 @@ import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
 import { allocate, TEAM_GAP } from "@/lib/map/layout/hex/allocate";
+import { allocateByTerritory } from "@/lib/map/layout/hex/territory";
 import {
   branchOf,
   dropOutcome,
@@ -240,6 +241,17 @@ export default function HexLab({
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
   const [density, setDensity] = useState<HexDensity>(initialDensity);
   const [mode, setMode] = useState<"hex" | "orbits">("hex");
+  /**
+   * Which arrangement the lattice is given (Greg, 2026-10-03).
+   *
+   * *"We need to gently push for the whole thing to render with more visual
+   * organisation."* The atlas nests every unit's ground inside its parent's, so
+   * a division is somewhere you can point at rather than a hue shared by teams
+   * scattered among its siblings'. It sits beside the archipelago rather than
+   * replacing it, because the only way to settle which reads better is to put
+   * them one keystroke apart.
+   */
+  const [shape, setShape] = useState<"archipelago" | "atlas">("atlas");
   const [hover, setHover] = useState<string | null>(null);
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -269,7 +281,10 @@ export default function HexLab({
   // per-browser and per-company, and every read and write is wrapped: a private
   // window or blocked site data throws rather than returning nothing, and an
   // arrangement is not worth a blank page.
-  const storeKey = `zenhance.lab.hex.${companyKey}`;
+  /** Per company **and per shape**: an arrangement built on the archipelago is
+   *  not an arrangement of the atlas, and replaying one on the other puts two
+   *  units on a cell. */
+  const storeKey = `zenhance.lab.hex.${companyKey}.${shape}`;
 
   useEffect(() => {
     setLoaded(false);
@@ -360,8 +375,10 @@ export default function HexLab({
   }, [ancestry]);
 
   const baseAllocation = useMemo(
-    () => allocate(baseTree, { groupOf, gapBetween }),
-    [baseTree, groupOf, gapBetween],
+    () => (shape === "atlas"
+      ? allocateByTerritory(baseTree)
+      : allocate(baseTree, { groupOf, gapBetween })),
+    [baseTree, groupOf, gapBetween, shape],
   );
 
   /** The allocation with every hand placement applied on top. Reparenting does
@@ -369,10 +386,37 @@ export default function HexLab({
    *  where it was put and changes colour, so the cells are the person's. */
   const allocation = useMemo(() => {
     if (!moves.size) return baseAllocation;
+    /**
+     * **A hand placement only lands if its cell is still free.**
+     *
+     * Hand placements live in this browser and the engine changes underneath
+     * them — a new rule, a different shape, a fix to the packer — and the cell
+     * somebody put a tile on last week now belongs to somebody else. Applying
+     * them blindly put two units on one cell: Greg, 2026-10-03, replaying 1,258
+     * saved placements, *"72 units sharing a cell with another — they cannot be
+     * pointed at."* Measured on a saved arrangement from the other shape, 1,479
+     * placements produced 66 of them.
+     *
+     * Checking as we go keeps the map **injective at every step**, which is the
+     * property that matters: the layout starts with one unit per cell, a
+     * placement is only taken when its target is free, and taking it frees the
+     * cell that unit came from. So the invariant cannot be broken by any
+     * sequence of placements, however stale. Anything refused simply stays
+     * where the engine put it, which is the honest answer to "that cell is not
+     * yours any more".
+     */
     const cells = new Map(baseAllocation.cells);
-    for (const [id, cell] of moves) cells.set(id, cell);
     const occupants = new Map<string, string>();
     for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
+    for (const [id, cell] of moves) {
+      const key = cellKey(cell);
+      const holder = occupants.get(key);
+      if (holder !== undefined && holder !== id) continue;
+      const had = cells.get(id);
+      if (had) occupants.delete(cellKey(had));
+      cells.set(id, cell);
+      occupants.set(key, id);
+    }
     return { ...baseAllocation, cells, occupants };
   }, [baseAllocation, moves]);
 
@@ -1192,6 +1236,9 @@ export default function HexLab({
    * hover on 2026-10-01, and a number on the screen beats a mystery.
    */
   const buried = allocation.cells.size - allocation.occupants.size;
+  /** Units the layout never gave a cell to. A dropped unit is simply absent
+   *  from the map, which is the one fault nothing else here would show. */
+  const missing = tree.units.size - allocation.cells.size;
 
   /**
    * People a cell could not hold.
@@ -1313,6 +1360,11 @@ export default function HexLab({
           <Btn small onClick={() => setMode("orbits")} active={mode === "orbits"}>orbits (today)</Btn>
         </Row>
         <Row>
+          <span style={{ color: "#6b7280" }}>shape</span>
+          <Btn small onClick={() => setShape("atlas")} active={mode === "hex" && shape === "atlas"} disabled={mode !== "hex"}>atlas</Btn>
+          <Btn small onClick={() => setShape("archipelago")} active={mode === "hex" && shape === "archipelago"} disabled={mode !== "hex"}>archipelago</Btn>
+        </Row>
+        <Row>
           <span style={{ color: "#6b7280" }}>cell</span>
           {(["roomy", "tight"] as HexDensity[]).map((d) => (
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
@@ -1361,6 +1413,13 @@ export default function HexLab({
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
         <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {missing > 0 && (
+          <Small style={{ color: "#b91c1c" }}>
+            <b>{missing}</b> unit{missing === 1 ? " is" : "s are"} missing from the map
+            entirely — the layout gave {missing === 1 ? "it" : "them"} no cell. Please tell
+            Claude what you just did.
+          </Small>
+        )}
         {buried > 0 && (
           <Small style={{ color: "#b91c1c" }}>
             <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
