@@ -571,21 +571,39 @@ export function placeIsland(
     }
   }
 
-  if (wasWhole) {
-    const exact = shapeAt(target);
-    if (exact.fits) return { kind: "fits", cells: exact.cells, anchor: target };
+  /**
+   * **Always try to move it as it is, whatever shape it is in.**
+   *
+   * Greg, 2026-10-02: *"if a user picks up a family node and moves it, the
+   * thing should be moved as-is, including any archipelagos."*
+   *
+   * This used to be gated on `wasWhole`, and under the atlas that quietly
+   * turned the rule off for anything of any size. A nested territory has clear
+   * ground inside it **by design** — that is the spacing rule — so a branch of
+   * fourteen units is not one connected patch and never was going to be. It
+   * skipped straight past this to a full re-layout and came back with 7% of its
+   * shape: Greg, 2026-10-03, *"the auto-rearrange struggles and then blasts
+   * teams into confetti."* The same branch on the archipelago was one patch,
+   * translated exactly, and looked perfect — which is why it read as a
+   * big-branch problem rather than as a gate in the wrong place.
+   *
+   * Whether a branch is one patch is a fact about **what is worth warning
+   * about** if the shape is lost, and it is still used for that below. It was
+   * never a reason not to try.
+   *
+   * The nudge stays bounded for the reason it was written: a branch with
+   * outposts spans everything between its mainland and its furthest one, so
+   * almost anywhere it lands something in that span touches something. Two
+   * rings is eighteen tries, imperceptible where the hand let go, and cheap
+   * enough to attempt for any branch at all.
+   */
+  const exact = shapeAt(target);
+  if (exact.fits) return { kind: "fits", cells: exact.cells, anchor: target };
 
-    // **Nudge before reshaping.** A branch with exclaves is enormous — its
-    // silhouette spans everything between its mainland and its furthest
-    // outpost — so almost anywhere it lands, something in that span touches
-    // something, and one colliding cell out of a hundred and sixty was
-    // reshaping the whole branch. A cell or two is imperceptible where the hand
-    // let go; losing a shape somebody built is not.
-    for (const nearby of spiral(target, NUDGE_RINGS)) {
-      if (cellKey(nearby) === cellKey(target)) continue;
-      const nudged = shapeAt(nearby);
-      if (nudged.fits) return { kind: "nudged", cells: nudged.cells, anchor: nearby };
-    }
+  for (const nearby of spiral(target, NUDGE_RINGS)) {
+    if (cellKey(nearby) === cellKey(target)) continue;
+    const nudged = shapeAt(nearby);
+    if (nudged.fits) return { kind: "nudged", cells: nudged.cells, anchor: nearby };
   }
 
   // **Part, rather than reflow.** One cell catching something used to cost the

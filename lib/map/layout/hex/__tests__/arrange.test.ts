@@ -310,13 +310,48 @@ describe("moving a whole island", () => {
     expect(occupancy.has(cellKey(landing.anchor))).toBe(false);
   });
 
-  it("gathers a scattered family rather than carrying it", () => {
+  /**
+   * **Carried as it is, even scattered** (changed 2026-10-03).
+   *
+   * This used to assert the opposite — that a scattered family was gathered
+   * into one patch on the way. That contradicted Greg's rule from 2026-10-02:
+   * *"if a user picks up a family node and moves it, the thing should be moved
+   * as-is, including any archipelagos."* It went unnoticed while every branch
+   * worth dragging happened to be one patch; under nested territories, whose
+   * clear ground is the whole point, almost none are — and the rule was off for
+   * anything above about ten units.
+   *
+   * Gathering is what the **second pick-up** is for, and that still gathers.
+   */
+  it("carries a scattered family as it is, rather than gathering it", () => {
     const scattered = new Map([
       ["sales", at(30, 0)], ["north", at(38, -4)], ["south", at(30, 6)],
     ]);
     expect(isOnePatch(scattered.values())).toBe(false);
     const landing = placeIsland(new Map(), scattered, "sales", at(50, 0));
-    expect(landing.kind).toBe("gathered");
+    expect(landing.kind).toBe("fits");
+    if (landing.kind === "no-room") return;
+    // Every offset from the anchor preserved — the silhouette somebody built.
+    const anchor = landing.cells.get("sales")!;
+    expect(anchor).toEqual(at(50, 0));
+    for (const [id, was] of scattered) {
+      const now = landing.cells.get(id)!;
+      expect(now.q - anchor.q).toBe(was.q - 30);
+      expect(now.r - anchor.r).toBe(was.r - 0);
+    }
+  });
+
+  /** The gesture that *does* gather is the second pick-up, and it still does. */
+  it("gathers a scattered family when the tidy-up gesture asks", () => {
+    const scattered = new Map([
+      ["sales", at(30, 0)], ["north", at(38, -4)], ["south", at(30, 6)],
+    ]);
+    const landing = placeIsland(
+      new Map(), scattered, "sales", at(50, 0),
+      (id) => (id === "sales" ? ["north", "south"] : []),
+      at(45, 0),
+    );
+    expect(landing.kind).toBe("radiated");
     if (landing.kind === "no-room") return;
     expect(isOnePatch(landing.cells.values())).toBe(true);
   });
@@ -462,8 +497,19 @@ describe("moving a branch that is already an archipelago", () => {
     expect(partedLanding(occupied, island, "sales", at(10, 0), groupOf)).toBeNull();
   });
 
+  /**
+   * A clash parts the branch rather than reflowing it — but only once nudging
+   * has failed. A nudge of a cell or two keeps **every** group's shape and
+   * moves nobody else, so it is always the better answer when there is room
+   * for it; this blocks the whole neighbourhood so that there is not.
+   */
   it("is what a clash produces now, instead of reflowing the whole branch", () => {
-    const occupied = new Map([[cellKey(at(14, 0)), "stranger"]]);
+    const occupied = new Map<string, string>();
+    // Two rings is what `placeIsland` will nudge through, plus one so the
+    // nudged silhouette has nowhere clear either.
+    for (const cell of spiral(at(14, 0), 3)) occupied.set(cellKey(cell), "stranger");
+    occupied.delete(cellKey(at(10, 0)));
+    occupied.delete(cellKey(at(11, 0)));
     const landing = placeIsland(
       occupied, island, "sales", at(10, 0), () => [], null, groupOf,
     );
