@@ -99,9 +99,23 @@ import {
   worldAngle,
 } from "@/lib/map/layout/hex/coords";
 
+/**
+ * Ground reserved for a group, before anybody stands on it.
+ *
+ * Returned now rather than kept private, because it is the one thing a caller
+ * needs to lay a team's interior out on its own: a region depends on nothing
+ * outside itself, so whoever holds it can seat the team's people without the
+ * rest of the company being in the room. That is what makes the interior
+ * something you can compute when the camera arrives rather than on load.
+ */
+export type Region = { centre: Cell; radius: number };
+
 export type Allocation = {
   /** unit id → its cell. */
   cells: Map<string, Cell>;
+  /** group id → the ground it holds. Only groups of more than one unit take a
+   *  region; a lone node needs no territory. */
+  regions: Map<string, Region>;
   /** cell key → the unit sitting there. */
   occupants: Map<string, string>;
   /** unit id → how many steps from its parent. 1 means it touches the parent
@@ -292,9 +306,21 @@ export function allocate(
     /** Clear tiles wanted between two groups, by how closely related they are.
      *  Defaults to `TEAM_GAP` for every pair. */
     gapBetween?: (a: string, b: string) => number;
+    /**
+     * How many units each group will eventually hold, when the tree being
+     * allocated does not contain them.
+     *
+     * This is what lets the structural pass reserve a team's ground from a
+     * headcount alone — Greg, 2026-10-03: *"load and manage the team area for
+     * sure, but don't pull all the data about every human on load."* A number
+     * per team is the whole of what sizing a region needs; the people
+     * themselves are laid out later, inside it, by `interior.ts`.
+     */
+    groupSizes?: Map<string, number>;
   } = {},
 ): Allocation {
   const cells = new Map<string, Cell>();
+  const regions = new Map<string, Region>();
   const occupants = new Map<string, string>();
   const steps = new Map<string, number>();
   const branchOf = new Map<string, string>();
@@ -308,7 +334,7 @@ export function allocate(
   const root = tree.units.get(tree.rootId);
   if (!root) {
     return {
-      cells, occupants, steps, branchOf, exclaves, radius,
+      cells, regions, occupants, steps, branchOf, exclaves, radius,
       stats: {
         placed: 0, connected: 0, islands: 0, touchingParent: 0, exclaves: 0,
         wholeFamilies: 0, families: 0, worstReach: 0,
@@ -322,14 +348,60 @@ export function allocate(
    *  group reserves its region, which is what makes spacing hold. */
   const groupAt = new Map<string, string>();
 
+  /**
+   * Everything already claimed, as **discs rather than cells** (2026-10-03).
+   *
+   * Asking whether a region could stand somewhere used to sweep every cell of
+   * it and of its halo — `spiral(centre, radius + TEAM_GAP)`, around 120 cells,
+   * at every candidate centre of every ring. Measured on the 2,562-person
+   * company that was 242,574 sweeps and 592ms: **63% of the whole allocation**,
+   * and the reason people-as-units took a second to lay out.
+   *
+   * The sweep was asking a question about cells when every obstacle here is
+   * really a disc — a seated unit is a disc of radius nought, reserved ground
+   * is a disc of radius `r`. Two hex discs clear each other by one comparison,
+   * and it is *exact* on this lattice rather than a conservative bound: a disc
+   * of radius `r` about `c` always contains a cell exactly `hexDistance(C, c)
+   * − r` from an outside point `C`, so the nearest cell of an obstacle is
+   * arithmetic, not a search.
+   *
+   * `groupAt` stays, because `crowding` and `kinship` ask about single cells
+   * and want a cell-shaped answer. This index exists for the one question that
+   * is about areas.
+   */
+  type Obstacle = {
+    cell: Cell;
+    /** Nought for a unit standing on one cell; the radius of reserved ground. */
+    radius: number;
+    group: string | null;
+    /** Somebody is standing here, which blocks reserving the ground whoever
+     *  they belong to — including us. */
+    occupied: boolean;
+  };
+  /** Bucket width, in cells. Axial coordinates bound hex distance — both `|dq|`
+   *  and `|dr|` are at most the hex distance between two cells — so a square
+   *  box of buckets is a safe net to cast over a round reach. */
+  const BUCKET = 8;
+  const buckets = new Map<string, Obstacle[]>();
+  /** The widest region claimed so far, which is how far beyond its own radius a
+   *  candidate has to look to find one. */
+  let widestClaim = 0;
+  const addObstacle = (o: Obstacle) => {
+    const key = `${Math.floor(o.cell.q / BUCKET)},${Math.floor(o.cell.r / BUCKET)}`;
+    const list = buckets.get(key);
+    if (list) list.push(o);
+    else buckets.set(key, [o]);
+    if (o.radius > widestClaim) widestClaim = o.radius;
+  };
+
   /** origin+size → the ring a region of that size last fitted at, so the next
    *  one does not re-scan ground already known to be full. */
   const searchedTo = new Map<string, number>();
 
   /** How many units each group will need room for, known before any of them
    *  are placed — the whole point of reserving. */
-  const groupSize = new Map<string, number>();
-  if (options.groupOf) {
+  const groupSize = new Map<string, number>(options.groupSizes ?? []);
+  if (options.groupOf && !options.groupSizes) {
     for (const unit of tree.units.values()) {
       const g = options.groupOf(unit.id);
       if (g === null) continue;
@@ -346,6 +418,7 @@ export function allocate(
     occupants.set(cellKey(cell), unit.id);
     const group = options.groupOf?.(unit.id) ?? null;
     if (group !== null) groupAt.set(cellKey(cell), group);
+    addObstacle({ cell, radius: 0, group, occupied: true });
     steps.set(unit.id, fromParent);
     branchOf.set(unit.id, branch);
     const fromRoot = hexDistance(cell, { q: 0, r: 0 });
@@ -552,73 +625,166 @@ export function allocate(
   ): { seat: Cell; centre: Cell; radius: number } | null => {
     const size = groupSize.get(group) ?? 1;
     if (size <= 1) return null; // a lone node needs no territory
-    const radius = regionRadius(Math.ceil(size * REGION_SLACK));
+    /** How far anything has reached so far: past it, the plane is empty. */
+    const horizon = radius;
 
     /**
      * Could this whole hexagon be ours? Free ground, and clear of everybody we
      * are not related to.
      *
-     * **One pass, not a nested one.** Asking `crowding` about every cell of the
-     * region meant 61 cells × 37 neighbours at every candidate centre, and the
-     * allocation went from 50ms to three seconds. The same answer falls out of
-     * a single sweep: anything inside the region must be free and unowned, and
-     * anything outside is only a problem if it is closer to the region's edge
-     * than the gap that group is owed — which is `d − radius`, straight from
-     * the centre distance.
+     * **Inside cell by cell, outside disc by disc**, which is the hybrid that
+     * beats either on its own.
+     *
+     * This used to sweep every cell of the region *and* its halo —
+     * `spiral(centre, radius + TEAM_GAP)`, about 120 cells, at every candidate
+     * centre of every ring. On the 2,562-person company that was 242,574
+     * sweeps and 592ms: **63% of the whole allocation**, and the reason
+     * people-as-units took a second to lay out.
+     *
+     * The halo was the waste — four fifths of those cells, free ground in open
+     * country — and it was the wrong shape of question, because every obstacle
+     * out there is a *disc*: a seated unit is a disc of radius nought,
+     * reserved ground is a disc of radius `r`. Two hex discs clear each other
+     * by one comparison, and *exactly* rather than approximately: a disc of
+     * radius `r` about `c` always contains a cell precisely
+     * `hexDistance(C, c) − r` from an outside point `C`. So the halo is now a
+     * handful of comparisons against the obstacle index.
+     *
+     * The inside stayed a cell sweep, and has to. Crowded ground fails on its
+     * first or second cell, and that early exit is most of what the old sweep
+     * was good at — dropping it made the cheaper test *twice as slow* overall.
+     * It is bounded work: `radius` is a team's own footprint, nineteen cells
+     * for a team of seven, not the hundred-odd of the halo.
+     *
+     * Our own group is no obstacle to itself, which is how a team comes to fill
+     * the region it was given.
      */
-    const available = (centre: Cell): boolean => {
-      for (const cell of spiral(centre, radius + TEAM_GAP)) {
+    const available = (centre: Cell, footprint: number): boolean => {
+      for (const cell of spiral(centre, footprint)) {
         const key = cellKey(cell);
-        const owner = groupAt.get(key);
-        const d = hexDistance(cell, centre);
-        if (d <= radius) {
-          if (occupants.has(key)) return false;
-          if (owner !== undefined && owner !== group) return false;
-          continue;
+        if (occupants.has(key)) return false;
+        const own = groupAt.get(key);
+        if (own !== undefined && own !== group) return false;
+      }
+      const reach = footprint + widestClaim + TEAM_GAP;
+      const q0 = Math.floor((centre.q - reach) / BUCKET);
+      const q1 = Math.floor((centre.q + reach) / BUCKET);
+      const r0 = Math.floor((centre.r - reach) / BUCKET);
+      const r1 = Math.floor((centre.r + reach) / BUCKET);
+      for (let bq = q0; bq <= q1; bq++) {
+        for (let br = r0; br <= r1; br++) {
+          const here = buckets.get(`${bq},${br}`);
+          if (!here) continue;
+          for (const o of here) {
+            const d = hexDistance(centre, o.cell);
+            if (o.occupied && d <= footprint) return false;
+            if (o.group === null || o.group === group) continue;
+            if (d - o.radius - footprint <= wanted(group, o.group)) return false;
+          }
         }
-        if (owner === undefined || owner === group) continue;
-        if (d - radius <= wanted(group, owner)) return false;
       }
       return true;
     };
 
-    let best: { centre: Cell; score: number } | null = null;
-    let foundAt = Infinity;
-    /**
-     * Where to start looking. A division's teams are placed one after another
-     * from the same cell, and each was re-scanning the rings the one before had
-     * already found full — which is most of the 1.4s this used to cost.
-     *
-     * Ground is only ever taken during an allocation, never released, so a ring
-     * that had no room stays that way. Starting a few rings back from where the
-     * last one succeeded is therefore safe as well as much cheaper.
-     */
-    const memo = `${cellKey(from)}|${radius}`;
-    const from0 = Math.max(radius + 1, (searchedTo.get(memo) ?? 0) - 2);
-    // Centres sit at least a radius out, or the region would swallow the parent.
-    for (let k = from0; k <= MAX_SEARCH_RING; k++) {
-      if (best && k > foundAt + 1) break;
-      for (const centre of ring(from, k)) {
-        if (!available(centre)) continue;
-        const deviation = (angleGap(worldAngle(from, centre, SIZE), desired) * 180) / Math.PI;
-        if (deviation > WRONG_SIDE) continue;
-        const score = -deviation * DEGREE_PENALTY - k * REACH_PENALTY / 8;
-        if (!best || score > best.score) { best = { centre, score }; foundAt = Math.min(foundAt, k); }
+    /** The best centre for a region of this footprint, optionally insisting on
+     *  the hemisphere the parent pointed at. */
+    const look = (footprint: number, onSide: boolean, maxRing = MAX_SEARCH_RING): Cell | null => {
+      let best: { centre: Cell; score: number } | null = null;
+      let foundAt = Infinity;
+      /**
+       * Where to start looking. A division's teams are placed one after another
+       * from the same cell, and each was re-scanning the rings the one before
+       * had already found full — which was most of the 1.4s this used to cost.
+       *
+       * Ground is only ever taken during an allocation, never released, so a
+       * ring that had no room stays that way. Starting a few rings back from
+       * where the last one succeeded is therefore safe as well as much cheaper.
+       */
+      const memo = `${cellKey(from)}|${footprint}`;
+      const from0 = Math.max(footprint + 1, (searchedTo.get(memo) ?? 0) - 2);
+      // Centres sit a footprint out at least, or the region swallows the parent.
+      for (let k = from0; k <= maxRing; k++) {
+        if (best && k > foundAt + 1) break;
+        for (const centre of ring(from, k)) {
+          // **Angle first.** `WRONG_SIDE` throws away half of every ring, and
+          // it costs one subtraction to know it — whereas `available` is the
+          // most expensive question this file asks. Asking them the other way
+          // round paid for the whole far hemisphere on every ring of every
+          // search: 164ms rather than 569ms on the 2,562-person company.
+          const deviation = (angleGap(worldAngle(from, centre, SIZE), desired) * 180) / Math.PI;
+          if (onSide && deviation > WRONG_SIDE) continue;
+          if (!available(centre, footprint)) continue;
+          const score = -deviation * DEGREE_PENALTY - k * REACH_PENALTY / 8;
+          if (!best || score > best.score) {
+            best = { centre, score };
+            foundAt = Math.min(foundAt, k);
+          }
+        }
       }
-    }
-    if (!best) return null;
-    searchedTo.set(memo, foundAt);
+      if (best && onSide) searchedTo.set(memo, foundAt);
+      return best?.centre ?? null;
+    };
 
-    for (const cell of spiral(best.centre, radius)) groupAt.set(cellKey(cell), group);
+    /**
+     * What a team gives up when the ideal will not fit, in the order it gives
+     * it up (2026-10-03).
+     *
+     * `REGION_SLACK` is room for growth, so the first thing to yield is the
+     * growing room: a team that cannot have ground for ten takes ground for
+     * seven, and its people still fit. Only when even the tight footprint has
+     * nowhere to go does it accept standing on the wrong side of its parent.
+     * Spacing never yields at all — it is the thing the region exists to
+     * guarantee, and a team touching its neighbour is the fault Greg has had to
+     * report three times.
+     *
+     * Measured on the 2,562-person company: without this, two teams in 395 came
+     * away with no ground at all, which under lazy interiors means thirteen
+     * people with nowhere to be laid out — not a worse-looking map, an absent
+     * one. With it, every team has ground.
+     */
+    const ideal = regionRadius(Math.ceil(size * REGION_SLACK));
+    const tightest = regionRadius(size);
+    let centre: Cell | null = null;
+    let footprint = ideal;
+    for (const onSide of [true, false]) {
+      for (footprint = ideal; footprint >= tightest; footprint--) {
+        centre = look(footprint, onSide);
+        if (centre) break;
+      }
+      if (centre) break;
+    }
+    /**
+     * **Open country, which always exists.** `MAX_SEARCH_RING` is forty rings
+     * from the parent, and on the 2,562-person company one team at rung four
+     * sat deep enough inside taken ground that forty rings held nothing of any
+     * footprint — so it came away with none, and under lazy interiors a team
+     * with no ground is twelve people with nowhere to be drawn.
+     *
+     * Past the furthest ring anything has reached, the plane is empty by
+     * definition. Looking that far is the one search guaranteed to succeed, and
+     * it costs only the team it rescues: every other team has already found
+     * ground much nearer. The chain home will be long, which is the price Greg
+     * named — *"if a longer connection line is needed to give the team space,
+     * then use it."*
+     */
+    if (!centre) {
+      footprint = tightest;
+      centre = look(footprint, false, horizon + ideal + TEAM_GAP + 2);
+    }
+    if (!centre) return null;
+
+    for (const cell of spiral(centre, footprint)) groupAt.set(cellKey(cell), group);
+    regions.set(group, { centre, radius: footprint });
+    addObstacle({ cell: centre, radius: footprint, group, occupied: false });
 
     // The near edge: whichever cell of the region the chain home reaches first.
-    let seat = best.centre;
+    let seat = centre;
     let nearest = Infinity;
-    for (const cell of spiral(best.centre, radius)) {
+    for (const cell of spiral(centre, footprint)) {
       const d = hexDistance(cell, from);
       if (d < nearest) { nearest = d; seat = cell; }
     }
-    return { seat, centre: best.centre, radius };
+    return { seat, centre, radius: footprint };
   };
 
   /**
@@ -687,6 +853,30 @@ export function allocate(
   };
 
   take(root, { q: 0, r: 0 }, 0, root.id, true);
+  /**
+   * **The root's own ground, centred on the root.**
+   *
+   * Every other unit gets a region because its parent asks for one on its
+   * behalf. The root has no parent, so nobody ever asked — and with the
+   * interior laid out separately from the structure, that left the company's
+   * own top team as the one group on the map with nowhere for its people to
+   * stand. It showed up in every company, not just the big one.
+   *
+   * It is also the one region whose centre is not up for discussion: the root
+   * sits at the origin and its people belong around it, so this reserves
+   * rather than searches. Its children are pushed out past it, which is right
+   * — the people who work to the top of the company sit nearer to it than the
+   * divisions do.
+   */
+  const rootGroup = options.groupOf?.(root.id) ?? null;
+  const rootSize = rootGroup !== null ? groupSize.get(rootGroup) ?? 1 : 1;
+  if (rootGroup !== null && rootSize > 1) {
+    const footprint = regionRadius(Math.ceil(rootSize * REGION_SLACK));
+    const centre = { q: 0, r: 0 };
+    for (const cell of spiral(centre, footprint)) groupAt.set(cellKey(cell), rootGroup);
+    regions.set(rootGroup, { centre, radius: footprint });
+    addObstacle({ cell: centre, radius: footprint, group: rootGroup, occupied: false });
+  }
   place(root);
 
   // How many families ended up as one patch — the property the design rests
@@ -717,6 +907,7 @@ export function allocate(
 
   return {
     cells,
+    regions,
     occupants,
     steps,
     branchOf,

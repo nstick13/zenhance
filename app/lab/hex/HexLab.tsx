@@ -28,7 +28,8 @@ import { neaten } from "@/lib/map/layout/hex/tidy";
 import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
-import { allocate, TEAM_GAP } from "@/lib/map/layout/hex/allocate";
+import { allocate, TEAM_GAP, type Region } from "@/lib/map/layout/hex/allocate";
+import { layoutInterior, type InteriorMember } from "@/lib/map/layout/hex/interior";
 import {
   branchOf,
   dropOutcome,
@@ -38,7 +39,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
+  cellKey, cellToWorld, corners, cornersAt, worldAngle, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -359,22 +360,114 @@ export default function HexLab({
     };
   }, [ancestry]);
 
+  /**
+   * **How big each team is, and who is in it** (Greg, 2026-10-03).
+   *
+   * *"Yes, let's only load team contents when the zoom level approaches them.
+   * Load and manage the team area for sure, but don't pull all the data about
+   * every human on load. Furthermore, load locally — so only what a screen can
+   * see, let the rest lazy-load."*
+   *
+   * These two are deliberately separate, because they are consumed at different
+   * moments and that is the whole architecture. `teamSizes` is a number per
+   * team and it is all the **load-time** pass needs: `claimRegion` sizes a
+   * team's ground from a headcount, so the map's whole shape — where every
+   * division and team sits, how far apart, which way each one faces — settles
+   * without a single person being placed. `membersOf` is the roster, and
+   * nothing reads it until the camera is close enough to show a face.
+   *
+   * In the lab both arrive in one payload, because a fixture is generated on
+   * the server and handed across as props. The seam is real even so: the only
+   * thing standing between this and a roster fetched per team when you zoom in
+   * is where `membersOf` is read from, and it is read in exactly one place.
+   */
+  const teamSizes = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const [, teamId] of groups ?? []) out.set(teamId, (out.get(teamId) ?? 0) + 1);
+    // The team's own cell belongs to its group, so its ground must hold it too.
+    for (const teamId of [...out.keys()]) out.set(teamId, out.get(teamId)! + 1);
+    return out;
+  }, [groups]);
+
+  const membersOf = useMemo(() => {
+    const out = new Map<string, InteriorMember[]>();
+    if (!groups?.length) return out;
+    const parentOf = new Map(org.units.map((u) => [u.id, u.parentId ?? null]));
+    for (const [personId, teamId] of groups) {
+      const list = out.get(teamId) ?? [];
+      list.push({ id: personId, parentId: parentOf.get(personId) ?? teamId });
+      out.set(teamId, list);
+    }
+    return out;
+  }, [groups, org]);
+
+  /**
+   * The company without its people — what the load-time pass is given.
+   *
+   * On the 2,562-person company this is 395 units rather than 2,957, and that
+   * is the whole of the saving: allocation drops from 940ms to 164ms, the scene
+   * from 57ms to 1ms, and routing from 136ms to 69ms. The people are not
+   * *deferred* out of it so much as **absent from the question** — a team's
+   * region depends on its headcount, not on who fills it.
+   */
+  const structuralTree = useMemo(() => {
+    if (!peopleIds.size) return baseTree;
+    const units = org.units.filter((u) => !peopleIds.has(u.id));
+    const kept = new Set(units.map((u) => u.id));
+    return buildOrbitalTree(
+      { ...org, units: units.map((u) => ({ ...u, parentId: u.parentId && kept.has(u.parentId) ? u.parentId : null })) },
+      { mergePassThroughRoot: false, workCountFor: () => 6 },
+    );
+  }, [org, baseTree, peopleIds]);
+
   const baseAllocation = useMemo(
-    () => allocate(baseTree, { groupOf, gapBetween }),
-    [baseTree, groupOf, gapBetween],
+    () => (peopleIds.size
+      ? allocate(structuralTree, { groupOf, gapBetween, groupSizes: teamSizes })
+      : allocate(baseTree, { groupOf, gapBetween })),
+    [baseTree, structuralTree, peopleIds, groupOf, gapBetween, teamSizes],
   );
 
-  /** The allocation with every hand placement applied on top. Reparenting does
-   *  **not** re-allocate: Greg's rule is that a reparented tile stays exactly
-   *  where it was put and changes colour, so the cells are the person's. */
+  /**
+   * Which teams have had their insides worked out, and where they were when it
+   * happened.
+   *
+   * Keyed by team **and by where its ground currently sits**, so a team dragged
+   * across the map takes its people with it rather than leaving them behind in
+   * the cache: the interior is computed relative to the region, and the region
+   * moves with the seat. An unmoved team's entry stays valid for ever, which is
+   * what makes panning back over ground you have already seen free.
+   */
+  const [interiors, setInteriors] = useState<Map<string, Map<string, Cell>>>(() => new Map());
+  useEffect(() => { setInteriors(new Map()); }, [baseAllocation]);
+
+  /** Where a team's ground is *now* — its reserved region, shifted by however
+   *  far a hand has moved the team since. */
+  const regionNow = useCallback((teamId: string): { region: Region; seat: Cell } | null => {
+    const base = baseAllocation.regions.get(teamId);
+    const baseSeat = baseAllocation.cells.get(teamId);
+    if (!base || !baseSeat) return null;
+    const seat = moves.get(teamId) ?? baseSeat;
+    const dq = seat.q - baseSeat.q;
+    const dr = seat.r - baseSeat.r;
+    return {
+      region: { centre: { q: base.centre.q + dq, r: base.centre.r + dr }, radius: base.radius },
+      seat,
+    };
+  }, [baseAllocation, moves]);
+
+  /** The allocation with every resolved interior and every hand placement on
+   *  top. Reparenting does **not** re-allocate: Greg's rule is that a
+   *  reparented tile stays exactly where it was put and changes colour, so the
+   *  cells are the person's. */
   const allocation = useMemo(() => {
-    if (!moves.size) return baseAllocation;
+    if (!moves.size && !interiors.size) return baseAllocation;
     const cells = new Map(baseAllocation.cells);
+    for (const inner of interiors.values()) for (const [id, cell] of inner) cells.set(id, cell);
     for (const [id, cell] of moves) cells.set(id, cell);
     const occupants = new Map<string, string>();
     for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
     return { ...baseAllocation, cells, occupants };
-  }, [baseAllocation, moves]);
+  }, [baseAllocation, moves, interiors]);
 
   const { scene, hexScene, ms } = useMemo(() => {
     const t0 = performance.now();
@@ -523,6 +616,73 @@ export default function HexLab({
     fittedFor.current = signature;
     setCamera(fitCamera(scene.bounds, size, { min: floor }));
   }, [companyKey, density, mode, size, scene, floor]);
+
+  /**
+   * **Lay out the insides of the teams on screen, and only those** (Greg,
+   * 2026-10-03): *"load locally — so only what a screen can see, let the rest
+   * lazy-load."*
+   *
+   * Two gates, and they are different questions. **Near enough** is the same
+   * measure that decides whether a person is drawn at all — how many pixels
+   * across a cell is — read at the bottom of the fade, so people arrive already
+   * laid out rather than appearing and then arranging themselves. **On screen**
+   * is the team's reserved ground against the cull box, with a screen's worth
+   * of margin either side, so panning finds its teams already done.
+   *
+   * It is safe to do this at all only because `claimRegion` reserved the
+   * ground: a team's interior is a pure function of its own region and its own
+   * roster — see `interior.ts` — so the answer does not depend on which teams
+   * happen to have been visited, nor in what order. Pan away and back and the
+   * cells are identical. That is Law 1 holding at team scale, and without it
+   * this would be a map that rearranged itself as you looked at it.
+   *
+   * Measured on the 2,562-person company: every team at once is 31ms, so this
+   * is not really a performance trick any more — it is 0.08ms a team. What it
+   * buys is the shape of the thing. Nothing reads a roster until a roster is
+   * worth reading, which is where a fetch per team goes when this leaves the
+   * lab.
+   */
+  const hexCellSize = hexScene?.hex.size ?? 0;
+  useEffect(() => {
+    if (!peopleIds.size || !hexCellSize) return;
+    if (hexCellSize * camera.scale < PEOPLE_AT_CELL_PX[0]) return;
+    const view = cullBox(camera, size);
+    // A screen's worth of margin: the next pan is already paid for.
+    const margin = Math.max(size.width, size.height) / camera.scale;
+    const wanted = new Map<string, Map<string, Cell>>();
+    for (const teamId of baseAllocation.regions.keys()) {
+      const members = membersOf.get(teamId);
+      if (!members?.length) continue;
+      const now = regionNow(teamId);
+      if (!now) continue;
+      const centre = cellToWorld(now.region.centre, hexCellSize);
+      // A region of `r` rings reaches `r` cell-widths out, plus its own cell.
+      const reach = (now.region.radius + 1) * hexCellSize * 1.5 + margin;
+      if (centre.x + reach < view.minX || centre.x - reach > view.maxX) continue;
+      if (centre.y + reach < view.minY || centre.y - reach > view.maxY) continue;
+      const key = `${teamId}|${cellKey(now.seat)}`;
+      if (interiors.has(key)) continue;
+      const unit = structuralTree.units.get(teamId);
+      const parentCell = unit?.parentId
+        ? moves.get(unit.parentId) ?? baseAllocation.cells.get(unit.parentId)
+        : null;
+      const homeAngle = parentCell
+        ? worldAngle(now.seat, parentCell, hexCellSize)
+        : Math.PI;
+      wanted.set(key, layoutInterior({
+        teamId, seat: now.seat, region: now.region, homeAngle, members,
+      }).cells);
+    }
+    if (wanted.size === 0) return;
+    setInteriors((prev) => {
+      const next = new Map(prev);
+      for (const [key, cells] of wanted) next.set(key, cells);
+      return next;
+    });
+  }, [
+    camera, size, hexCellSize, peopleIds, baseAllocation, membersOf, regionNow,
+    interiors, structuralTree, moves,
+  ]);
 
   useEffect(() => {
     const onResize = () => setSize({ width: window.innerWidth, height: window.innerHeight });
@@ -1341,7 +1501,28 @@ export default function HexLab({
         <Small suppressHydrationWarning>
           {scene.units.length} units · {scene.seats.length} people · laid out in {ms.toFixed(0)}ms
         </Small>
-        {stats ? (
+        {stats && peopleIds.size > 0 ? (
+          /**
+           * **Different numbers mean different things here.**
+           *
+           * With people as the smallest unit, every team is placed as an island
+           * on purpose — the archipelago rule — so "touches its parent" is 0%
+           * by design rather than by failure, and reporting it as a percentage
+           * invites reading a working map as a broken one. What is worth
+           * watching instead is how many teams got the ground they asked for,
+           * because a team without ground has nowhere to lay its people out.
+           */
+          <>
+            <Small>
+              <b style={{ color: "#166534" }}>{stats.islands}</b> teams placed as islands ·{" "}
+              {stats.exclaves} could not reach their family
+            </Small>
+            <Small>
+              spacing by kinship: sibling {GAP_BY_RUNGS[1]} tile, cousin {GAP_BY_RUNGS[2]},
+              further {GAP_BY_RUNGS[3]}
+            </Small>
+          </>
+        ) : stats ? (
           <>
             <Small>
               <b style={{ color: "#166534" }}>
@@ -1361,6 +1542,14 @@ export default function HexLab({
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
         <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {peopleIds.size > 0 && (
+          <Small suppressHydrationWarning>
+            <b style={{ color: interiors.size > 0 ? "#166534" : "#6b7280" }}>
+              {interiors.size}/{membersOf.size}
+            </b>{" "}
+            teams laid out inside · the rest is ground reserved and nothing more
+          </Small>
+        )}
         {buried > 0 && (
           <Small style={{ color: "#b91c1c" }}>
             <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —

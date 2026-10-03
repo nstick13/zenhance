@@ -47,6 +47,7 @@ import {
   type SeatRequest,
 } from "@/lib/map/layout/hex/people";
 import {
+  DIRECTIONS,
   type Cell,
   cellKey,
   cellToWorld,
@@ -335,6 +336,33 @@ export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): He
     maxY = Math.max(maxY, u.y + reach);
     extent = Math.max(extent, Math.hypot(u.x, u.y) + reach);
   }
+  /**
+   * **Reserved ground counts, even before anybody stands on it** (2026-10-03).
+   *
+   * A team's region is held for it from the moment the layout runs, but its
+   * people are only laid out inside when the camera comes near — so measuring
+   * the company by the units currently placed made it *grow as you zoomed into
+   * it*. On the 2,562-person company that was 73,583 × 74,960 at arrival and
+   * 76,338 tall a moment later, which moves the camera's idea of "the whole
+   * thing" under somebody who is in the middle of reading it.
+   *
+   * The six corner cells of a region's hexagon are its extremes, so this is six
+   * lookups a team rather than a sweep, and the answer is exact.
+   */
+  for (const region of allocation.regions.values()) {
+    for (const d of DIRECTIONS) {
+      const corner = cellToWorld(
+        { q: region.centre.q + d.q * region.radius, r: region.centre.r + d.r * region.radius },
+        size,
+      );
+      minX = Math.min(minX, corner.x - reach);
+      minY = Math.min(minY, corner.y - reach);
+      maxX = Math.max(maxX, corner.x + reach);
+      maxY = Math.max(maxY, corner.y + reach);
+      extent = Math.max(extent, Math.hypot(corner.x, corner.y) + reach);
+    }
+  }
+
   if (units.length === 0) {
     minX = minY = maxX = maxY = 0;
   }

@@ -723,6 +723,91 @@ The remaining 6% are exclaves, and that is not simply a failure: rule 8 makes
 a tile sitting apart from its family a legitimate arrangement, shown by the
 outline rather than a tether. **Gather**, when it is built, is the remedy.
 
+### Teams load their insides when you come near (2026-10-03)
+
+Greg: *"Yes, let's only load team contents when the zoom level approaches them.
+Load and manage the team area for sure, but don't pull all the data about every
+human on load. Furthermore, load locally — so only what a screen can see, let
+the rest lazy-load."*
+
+**The company is now laid out twice, at two different moments.** A structural
+pass on load places every division and team and reserves each team's ground from
+a **headcount alone**; nothing about any individual person is read. A team's
+inside is laid out separately, by `interior.ts`, when the camera comes near
+enough to show a face.
+
+That split is only possible because of `claimRegion`. A team's region is
+exclusive to it, so seating its people stopped being a question about the
+company and became a question about one disc. `layoutInterior` reads the region,
+the roster and the direction home, and nothing else — so the answer cannot
+depend on which teams you have visited or in what order. Pan away and back and
+the cells are identical.
+
+#### Measured, on the 2,562-person company
+
+| | before | after |
+| --- | ---: | ---: |
+| allocation | 940ms | **164ms** |
+| scene | 57ms | 1ms |
+| routing | 136ms | 69ms |
+| **total, on load** | **1,133ms** | **234ms** |
+
+Laying out *every* team's inside, all at once, is a further 31ms — 0.08ms a
+team. So this is no longer really a performance trick; the performance came from
+the people being **absent from the question** rather than deferred within it.
+What laziness buys is the shape: nothing reads a roster until a roster is worth
+reading, which is where a fetch per team goes when this leaves the lab.
+
+Quality is unchanged. In-team adjacency — a person next to the manager they
+report to — is 96% laid out globally and 95% laid out team by team, across 2,562
+reporting lines. Nobody spills out of their region on any of the four companies.
+
+#### Three things had to be fixed before it worked
+
+- **The region search was 63% of the allocation.** It swept every cell of a
+  candidate region *and its halo* — about 120 cells, at every candidate centre
+  of every ring, 242,574 times. Four fifths of that was halo: free ground in
+  open country. Every obstacle out there is really a **disc**, and two hex discs
+  clear each other by one exact comparison, so the halo became a handful of
+  lookups against a bucket index. The inside stayed a cell sweep and has to:
+  crowded ground fails on its first cell, and losing that early exit made the
+  cheaper test *twice as slow* overall. Hybrid: 569ms → 164ms.
+- **The angle gate was being asked second.** `WRONG_SIDE` throws away half of
+  every ring for one subtraction, and it was running *after* the most expensive
+  question in the file. Reordering was worth more than the index.
+- **Two teams in 395 came away with no ground at all**, and under lazy interiors
+  a team with no ground is people with nowhere to be drawn. A team now yields
+  its growing room first (`REGION_SLACK` down to a tight footprint), then its
+  side of the parent, and finally looks past the furthest ring anything has
+  reached — where the plane is empty by definition, so that search cannot fail.
+  Spacing never yields; it is the thing the region exists to guarantee.
+  **The root was the other one**, in every company: every unit gets a region
+  because its parent asks for one, and the root has no parent. It now reserves
+  ground centred on itself, so the people who work to the top of the company sit
+  nearer to it than the divisions do.
+
+#### Reserved ground counts toward the map's size
+
+Measuring the company by the units currently placed made it **grow as you zoomed
+into it** — 73,583 × 74,960 on arrival and 76,338 tall a moment later, which
+moves the camera's idea of "the whole thing" under somebody mid-read. The six
+corner cells of a region are its extremes, so the extent now includes ground
+nobody is standing on yet. Six lookups a team, and exact.
+
+#### What this does not do
+
+It does not make the map **stable under edit** — see *Open risks*. Adding a
+person now re-runs only their team's interior, which is a real improvement, but
+adding a *team* still re-runs the structural pass.
+
+It also leaves a knob nobody has turned: a team's region carries 35% slack, and
+on a perfectly uniform wide span that is not quite enough — see the balanced-tree
+case in `interior.test.ts`, where adjacency falls to 36%. The lattice is most of
+that (the global allocator manages only 48% on the same shape, with the whole
+plane to use), but confinement costs about twelve points on top. If real
+companies turn out to be that uniform, `REGION_SLACK` is the answer, and it is a
+decision about how much ground the whole map spends rather than a tuning job.
+
 ### What the outline wraps
 
 Greg, 2026-09-30: *"the black outline should run around a node and all its
@@ -852,7 +937,7 @@ renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 
 ## Verified, and not
 
-**Verified by tests** (53 new, 712 across the suite, all passing): ring and
+**Verified by tests** (71 new, 736 across the suite, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc
@@ -872,6 +957,15 @@ passed a rule that was wrong at the corners.
 both layouts: whole-company view, the zoom ladder down to individual people,
 pan, wheel zoom, fit, hover, and the region colouring. Console clean after the
 hydration warning was fixed.
+
+The lazy interiors were checked on 2026-10-03 on Sparrow-ish, Digital Tailoring
+and Northwind: the counter going 0/395 → 4/13 → 5/5 as the camera came in,
+Northwind's structural pass at 2–3ms against the 1,133ms it used to cost, the
+extent no longer growing as teams resolve, and the console clean on a fresh tab.
+**Not checked by hand: dragging a team whose inside has not been laid out yet.**
+The region is keyed to the team's seat so the ground travels with it, and the
+unit tests cover the geometry — but the gesture itself is reasoned about rather
+than performed.
 
 The doorstep price was checked in the browser on 2026-10-02 on all four
 companies, with saved arrangements cleared first — an earlier look at the

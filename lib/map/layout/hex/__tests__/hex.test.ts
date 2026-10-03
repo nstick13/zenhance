@@ -325,6 +325,100 @@ describe("the cells a company gets", () => {
   });
 });
 
+/**
+ * Ground reserved for a group, and sized from a headcount rather than from the
+ * members themselves (Greg, 2026-10-03).
+ *
+ * *"Load and manage the team area for sure, but don't pull all the data about
+ * every human on load."* These are the two halves of being able to do that: a
+ * region every group can count on, and a size that does not need the people.
+ */
+describe("the ground a group is given", () => {
+  /** A company of teams, each team a group of its own with `n` people in it,
+   *  expressed only as a headcount. */
+  const teams = (count: number, each: number) => {
+    const units: { id: string; name: string; parentId: string | null; leadPersonId: string | null }[] =
+      [{ id: "root", name: "Root", parentId: null, leadPersonId: null }];
+    for (let i = 0; i < count; i++) {
+      units.push({ id: `t${i}`, name: `Team ${i}`, parentId: "root", leadPersonId: null });
+    }
+    const tree = buildOrbitalTree({ units, people: [], assignments: [] }, {
+      mergePassThroughRoot: false, workCountFor: () => 6,
+    });
+    const groupSizes = new Map(units.slice(1).map((u) => [u.id, each + 1]));
+    return { tree, groupSizes, ids: units.slice(1).map((u) => u.id) };
+  };
+
+  it("gives every group ground, which its people have nowhere to stand without", () => {
+    for (const [count, each] of [[6, 7], [30, 12], [60, 50]] as const) {
+      const { tree, groupSizes, ids } = teams(count, each);
+      const a = allocate(tree, { groupOf: (id) => id, groupSizes });
+      for (const id of ids) expect(a.regions.has(id)).toBe(true);
+    }
+  });
+
+  it("sizes the ground to the headcount it was told, not to the tree it was given", () => {
+    const { tree, groupSizes } = teams(12, 50);
+    const a = allocate(tree, { groupOf: (id) => id, groupSizes });
+    // The tree holds one unit per team; the region holds fifty-one.
+    for (const region of a.regions.values()) {
+      const cells = 3 * region.radius * region.radius + 3 * region.radius + 1;
+      expect(cells).toBeGreaterThanOrEqual(51);
+    }
+  });
+
+  it("seats a group on the near edge of its ground, where the chain arrives", () => {
+    const { tree, groupSizes, ids } = teams(10, 9);
+    const a = allocate(tree, { groupOf: (id) => id, groupSizes });
+    const root = a.cells.get(tree.rootId)!;
+    for (const id of ids) {
+      const region = a.regions.get(id)!;
+      const seat = a.cells.get(id)!;
+      expect(hexDistance(seat, region.centre)).toBeLessThanOrEqual(region.radius);
+      // No cell of the region is nearer the parent than the seat is.
+      for (let dq = -region.radius; dq <= region.radius; dq++) {
+        for (let dr = -region.radius; dr <= region.radius; dr++) {
+          const cell = { q: region.centre.q + dq, r: region.centre.r + dr };
+          if (hexDistance(cell, region.centre) > region.radius) continue;
+          expect(hexDistance(cell, root)).toBeGreaterThanOrEqual(hexDistance(seat, root));
+        }
+      }
+    }
+  });
+
+  /** The spacing rule, now stated about whole regions rather than about the
+   *  cells that happened to exist when somebody was placed. */
+  it("keeps every group's ground clear of every other group's", () => {
+    const { tree, groupSizes, ids } = teams(40, 12);
+    const a = allocate(tree, { groupOf: (id) => id, groupSizes, gapBetween: () => 1 });
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const one = a.regions.get(ids[i])!;
+        const two = a.regions.get(ids[j])!;
+        const between = hexDistance(one.centre, two.centre) - one.radius - two.radius;
+        expect(between).toBeGreaterThan(1);
+      }
+    }
+  });
+
+  /** The root is the one unit nobody asks on behalf of, and it was the one
+   *  group on the map left with no ground at all. */
+  it("gives the root its own ground, centred on the root", () => {
+    const { tree, groupSizes } = teams(5, 7);
+    groupSizes.set(tree.rootId, 14);
+    const a = allocate(tree, { groupOf: (id) => id, groupSizes });
+    const region = a.regions.get(tree.rootId);
+    expect(region).toBeDefined();
+    expect(region!.centre).toEqual({ q: 0, r: 0 });
+  });
+
+  it("gives a lone node no ground, because it needs none", () => {
+    const { tree, ids } = teams(4, 0);
+    const a = allocate(tree, { groupOf: (id) => id, groupSizes: new Map(ids.map((id) => [id, 1])) });
+    expect(a.regions.size).toBe(0);
+  });
+});
+
 describe("a company that branches wider than a hexagon has sides", () => {
   /**
    * The case Greg's model is actually about: *"If a node has six child nodes,
