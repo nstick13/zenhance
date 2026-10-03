@@ -28,7 +28,7 @@ import { neaten } from "@/lib/map/layout/hex/tidy";
 import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
-import { allocate } from "@/lib/map/layout/hex/allocate";
+import { allocate, TEAM_GAP } from "@/lib/map/layout/hex/allocate";
 import {
   branchOf,
   dropOutcome,
@@ -38,7 +38,7 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, corners, cornersAt, hexDistance, worldToCell, type Cell,
+  cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -69,11 +69,15 @@ const HOLD_MS = 550;
  * lays itself out radiating away from its own parent, so the chain home runs
  * clear. There is no dialog, because the gesture is the consent.
  *
- * A 4×4 block of squares has no exact hexagonal twin; two rings is 19 cells,
- * which is the nearest honest equivalent and happens to match `NUDGE_RINGS`.
+ * **Shortened to five seconds on 2026-10-03** — *"where a user moves the same
+ * parental node again within a short period (5 seconds, I think)"* — and the
+ * distance gate removed with it. The gesture is now purely "pick it straight
+ * back up", wherever you then put it down, which is simpler to explain and
+ * simpler to perform. What it does on release also changed: it is now a tidy
+ * up, laying the branch out by the same rules the company uses on load, rather
+ * than only treeing it away from its parent.
  */
-const RADIATE_WINDOW_MS = 30_000;
-const RADIATE_RINGS = 2;
+const RADIATE_WINDOW_MS = 5_000;
 
 /**
  * When the people appear, measured in **cell pixels** rather than world scale
@@ -119,10 +123,29 @@ const HOLD_SLACK = 0.25;
  * Hue comes from the region today. It should come from function or discipline
  * once a unit carries one; `people.disciplineId` exists, units have nothing.
  */
-const REGION_HUES = [354, 28, 45, 96, 150, 186, 210, 240, 265, 300, 330, 12];
+/**
+ * Hues, generated rather than listed (Greg, 2026-10-03).
+ *
+ * *"There shouldn't be a limit on number of base colours to be using — we can
+ * push this up to say 100."* Twelve hand-picked hues was a ceiling, and on a
+ * company of 2,957 cells it showed.
+ *
+ * Stepping by the golden angle walks the whole rainbow and never puts two
+ * consecutive entries near each other, at any count — so a hundred regions are
+ * as distinguishable as a dozen, without a table to maintain.
+ */
+const GOLDEN_ANGLE = 137.508;
+const hueAt = (index: number): number => (index * GOLDEN_ANGLE) % 360;
 
-const hueOf = (regionId: string, order: string[]): number =>
-  REGION_HUES[Math.max(0, order.indexOf(regionId)) % REGION_HUES.length];
+/**
+ * How far a team's hue may drift from its division's.
+ *
+ * Territory, not confetti: a division owns a *family* of hues, and its teams
+ * are shades within it. So an archipelago reads as one place from far away and
+ * still resolves into separate islands close up — which is the whole point of
+ * separating them in the first place.
+ */
+const TEAM_HUE_SPREAD = 26;
 
 /** Darkest at the top of the company, lightening with depth. The span is the
  *  part that scales: two rungs get two adjacent shades, twelve get the lot. */
@@ -184,8 +207,20 @@ type Pending =
   | { kind: "reshape"; unitId: string; cells: Map<string, Cell> };
 
 export default function HexLab({
-  org, companyKey, initialDensity,
-}: { org: LabOrg; companyKey: string; initialDensity: HexDensity }) {
+  org, companyKey, initialDensity, groups, leads, ancestry,
+}: {
+  org: LabOrg;
+  companyKey: string;
+  initialDensity: HexDensity;
+  /** unit id → the group it should be kept together with, when people have
+   *  been promoted to units and a team is a crowd rather than a cell. */
+  groups?: readonly (readonly [string, string])[];
+  /** The people who lead the unit they hang from. */
+  leads?: readonly string[];
+  /** Each group's line of ancestors, nearest first — how the layout tells a
+   *  sibling from a cousin when deciding how far apart to put them. */
+  ancestry?: readonly (readonly [string, readonly string[]])[];
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
   const [density, setDensity] = useState<HexDensity>(initialDensity);
@@ -260,7 +295,59 @@ export default function HexLab({
     }
   }, [storeKey, loaded, moves, reparents, pinned]);
 
-  const baseAllocation = useMemo(() => allocate(baseTree), [baseTree]);
+  /**
+   * Who is a person rather than a structural node. Greg, 2026-10-03: *"at the
+   * moment I can't tell what's a person and what's not."*
+   *
+   * Two rules follow from it. A person is drawn at the **base size**, the same
+   * everywhere, whatever rung their reporting line happens to put them on —
+   * depth grades a structure, and a person is not a structure. And a
+   * structural node wears a darker border, so the thing that is a *place* is
+   * visibly not the thing that is a *human*.
+   */
+  const peopleIds = useMemo(() => new Set((groups ?? []).map(([id]) => id)), [groups]);
+  const leadIds = useMemo(() => new Set(leads ?? []), [leads]);
+
+  const groupOf = useMemo(() => {
+    if (!groups?.length) return undefined;
+    const map = new Map(groups);
+    // A person belongs to their team; a team belongs to itself, so the team's
+    // own cell counts as part of the crowd it is trying to stay next to.
+    return (unitId: string) => map.get(unitId) ?? unitId;
+  }, [groups]);
+
+  /**
+   * How many clear tiles two groups want between them: one rung up to their
+   * common ancestor is a sibling and wants one tile, two rungs is a cousin and
+   * wants two, anything further wants the full gap.
+   */
+  const gapBetween = useMemo(() => {
+    if (!ancestry?.length) return undefined;
+    const line = new Map(ancestry.map(([id, up]) => [id, up]));
+    const cache = new Map<string, number>();
+    return (a: string, b: string) => {
+      if (a === b) return 0;
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      const had = cache.get(key);
+      if (had !== undefined) return had;
+      const up = line.get(a) ?? [];
+      const theirs = new Set([b, ...(line.get(b) ?? [])]);
+      // Rungs from `a` to the first ancestor it shares with `b`. The unit
+      // itself counts as rung 0, so a shared parent gives 1 — a sibling.
+      let rungs = TEAM_GAP;
+      for (let i = 0; i < up.length; i++) {
+        if (theirs.has(up[i])) { rungs = i + 1; break; }
+      }
+      const gap = Math.min(TEAM_GAP, rungs);
+      cache.set(key, gap);
+      return gap;
+    };
+  }, [ancestry]);
+
+  const baseAllocation = useMemo(
+    () => allocate(baseTree, { groupOf, gapBetween }),
+    [baseTree, groupOf, gapBetween],
+  );
 
   /** The allocation with every hand placement applied on top. Reparenting does
    *  **not** re-allocate: Greg's rule is that a reparented tile stays exactly
@@ -292,7 +379,100 @@ export default function HexLab({
     [hexScene, tree],
   );
 
-  const regions = useMemo(() => regionOf(scene.units), [scene]);
+  /**
+   * Which region each unit's colour comes from.
+   *
+   * With people promoted to units, `regionOf` was choosing its rung by unit
+   * count across the *whole* tree — on Northwind that landed on rung 17, deeper
+   * than any team, so almost every unit became its own region and the map was
+   * 2,900 colours cycling through twelve hues. That is the confetti.
+   *
+   * The structure is what has territory, so the rung is chosen over the
+   * structural units alone, and a person simply takes their team's region.
+   */
+  const regions = useMemo(() => {
+    if (peopleIds.size === 0) return regionOf(scene.units);
+    const structural = scene.units.filter((u) => !peopleIds.has(u.id));
+    const byStructure = regionOf(structural);
+    const out = new Map(byStructure);
+    const teamOfPerson = new Map(groups ?? []);
+    for (const u of scene.units) {
+      if (!peopleIds.has(u.id)) continue;
+      const team = teamOfPerson.get(u.id);
+      const region = team ? byStructure.get(team) : undefined;
+      if (region) out.set(u.id, region);
+    }
+    return out;
+  }, [scene, peopleIds, groups]);
+
+  /**
+   * The hue each unit is drawn in: its division's, shaded by which team inside
+   * that division it belongs to. People take their team's shade exactly, so a
+   * team is one colour and a division is one family of colours.
+   */
+  const hueById = useMemo(() => {
+    const teamOfPerson = new Map(groups ?? []);
+    const teamOf = (id: string) => teamOfPerson.get(id) ?? id;
+    const order: string[] = [];
+    const seen = new Set<string>();
+    for (const u of scene.units) {
+      const r = regions.get(u.id) ?? u.id;
+      if (!seen.has(r)) { seen.add(r); order.push(r); }
+    }
+    // Teams are numbered within their own region, so the shades of one
+    // division are spread across its band rather than drawn at random.
+    const teamIndex = new Map<string, number>();
+    const perRegion = new Map<string, number>();
+    for (const u of scene.units) {
+      const team = teamOf(u.id);
+      if (teamIndex.has(team)) continue;
+      const r = regions.get(team) ?? regions.get(u.id) ?? team;
+      const n = perRegion.get(r) ?? 0;
+      perRegion.set(r, n + 1);
+      teamIndex.set(team, n);
+    }
+    const out = new Map<string, number>();
+    for (const u of scene.units) {
+      const r = regions.get(u.id) ?? u.id;
+      const base = hueAt(Math.max(0, order.indexOf(r)));
+      const team = teamOf(u.id);
+      const k = teamIndex.get(team) ?? 0;
+      const spread = perRegion.get(r) ?? 1;
+      const drift = spread <= 1 ? 0 : ((k / (spread - 1)) - 0.5) * 2 * TEAM_HUE_SPREAD;
+      out.set(u.id, (base + drift + 360) % 360);
+    }
+    return out;
+  }, [scene, regions, groups]);
+
+  /**
+   * One outline per team, drawn at rest rather than only on hover.
+   *
+   * With people promoted to units, colour can no longer say "these belong
+   * together": the palette has twelve hues and a company has hundreds of
+   * teams, so colouring by team just cycles. Greg's rule 8 machinery already
+   * draws an exact boundary round a set of cells, so a team gets one — the
+   * division keeps the colour, the team gets the line.
+   */
+  const teamOutlines = useMemo(() => {
+    if (!groups?.length || !hexScene) return [];
+    const byTeam = new Map<string, Cell[]>();
+    for (const [unitId, teamId] of groups) {
+      const cell = hexScene.hex.cells.get(unitId);
+      if (!cell) continue;
+      const list = byTeam.get(teamId) ?? [];
+      list.push(cell);
+      byTeam.set(teamId, list);
+    }
+    // The team's own cell belongs inside its outline too.
+    for (const teamId of byTeam.keys()) {
+      const own = hexScene.hex.cells.get(teamId);
+      if (own) byTeam.get(teamId)!.push(own);
+    }
+    return [...byTeam].map(([teamId, cells]) => ({
+      teamId,
+      segments: outline(cells, hexScene.hex.size),
+    }));
+  }, [groups, hexScene]);
   const regionOrder = useMemo(() => {
     const weight = new Map<string, number>();
     for (const u of scene.units) {
@@ -312,7 +492,22 @@ export default function HexLab({
   const fit = useCallback(() => {
     if (scene.bounds) setCamera(fitCamera(scene.bounds, size, { min: floor }));
   }, [scene, size, floor]);
-  useEffect(() => { fit(); }, [companyKey, density, mode, fit]);
+  /**
+   * Fit when the *picture* changes, never when the arrangement does.
+   *
+   * `fit` depends on `scene`, and the scene changes on every move — so the
+   * camera was snapping back to the whole company each time a tile was
+   * repositioned, throwing away the zoom somebody was working at. Greg,
+   * 2026-10-03: *"zoom should persist."* The signature is what the camera
+   * actually responds to; a move is not part of it.
+   */
+  const fittedFor = useRef("");
+  useEffect(() => {
+    const signature = `${companyKey}|${density}|${mode}|${size.width}x${size.height}`;
+    if (fittedFor.current === signature || !scene.bounds) return;
+    fittedFor.current = signature;
+    setCamera(fitCamera(scene.bounds, size, { min: floor }));
+  }, [companyKey, density, mode, size, scene, floor]);
 
   useEffect(() => {
     const onResize = () => setSize({ width: window.innerWidth, height: window.innerHeight });
@@ -339,9 +534,8 @@ export default function HexLab({
     reshaped: boolean;
     /** The branch was treed by the second-pick-up gesture. */
     radiated: boolean;
-    /** Where this branch was sitting when the gesture armed, so a drop can be
-     *  told from a move: near it trees the branch, far from it is a plain
-     *  move. Null when the gesture is not armed at all. */
+    /** The tidy-up gesture is live for this drag: the same node was picked
+     *  straight back up inside the window. */
     armedAt: Cell | null;
     heldOver: string | null;
     holdSince: number;
@@ -420,7 +614,7 @@ export default function HexLab({
       (u) => u.x >= view.minX && u.x <= view.maxX && u.y >= view.minY && u.y <= view.maxY,
     );
     const visibleIds = new Set(visible.map((u) => u.id));
-    const hueFor = (id: string) => hueOf(regions.get(id) ?? id, regionOrder);
+    const hueFor = (id: string) => hueById.get(id) ?? 0;
     /** The cell's own hexagon, full size — the container. */
     const hexPath = (cell: Cell) => {
       const pts = corners(cell, hexSize);
@@ -430,11 +624,15 @@ export default function HexLab({
       ctx.closePath();
     };
 
-    /** The node inside it, concentric, sized by how deep the unit sits. */
-    const nodePath = (cell: Cell, depth: number, shrink = 1) => {
+    /**
+     * The node inside the cell, concentric. Sized by how deep the unit sits —
+     * except for a person, who is always the base size, because depth grades a
+     * structure and a person is not one.
+     */
+    const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
       const pts = cornersAt(
         cellToWorld(cell, hexSize),
-        hexSize * nodeScale(depth, maxDepth) * shrink,
+        hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink,
       );
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -502,10 +700,53 @@ export default function HexLab({
         const cell = hexScene.hex.cells.get(unit.id);
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
-        nodePath(cell, unit.depth);
+        const person = peopleIds.has(unit.id);
+        nodePath(cell, unit.depth, 1, person);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
+        // A structural node is a *place*; a person is a human. The border is
+        // what says which, before you have read a single label.
+        if (!person && peopleIds.size > 0) {
+          ctx.lineWidth = Math.max(0.8, hexSize * 0.035);
+          ctx.strokeStyle = "rgba(15,23,42,0.75)";
+          ctx.stroke();
+        }
       }
+    }
+
+    // 2c-ii. The leadership chain. Greg, 2026-10-03: *"let's put a
+    //     stronger-coloured connection line between team leads and their
+    //     parent nodes to indicate team leadership roles."* A lead is a person
+    //     whose chain goes to a structural node, so the chain itself is the
+    //     statement — this one line says "she runs this".
+    if (hexScene && leadIds.size > 0) {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const chain of chains) {
+        if (!leadIds.has(chain.unitId)) continue;
+        ctx.beginPath();
+        ctx.moveTo(chain.points[0].x, chain.points[0].y);
+        for (let i = 1; i < chain.points.length; i++) ctx.lineTo(chain.points[i].x, chain.points[i].y);
+        ctx.lineWidth = Math.max(1.2, hexSize * 0.1);
+        ctx.strokeStyle = "rgba(15,23,42,0.85)";
+        ctx.stroke();
+      }
+    }
+
+    // 2d. A line round each team, so a crowd of people reads as a team even
+    //     though the colour is the division's. Under the nodes, like every
+    //     other boundary.
+    if (teamOutlines.length > 0) {
+      ctx.lineWidth = Math.max(0.7, 2.2 / scale);
+      ctx.strokeStyle = "rgba(15,23,42,0.30)";
+      ctx.beginPath();
+      for (const team of teamOutlines) {
+        for (const seg of team.segments) {
+          ctx.moveTo(seg.from.x, seg.from.y);
+          ctx.lineTo(seg.to.x, seg.to.y);
+        }
+      }
+      ctx.stroke();
     }
 
     // 3. Where a dragged branch would land. Greg: *"make the nearest hexagon
@@ -747,7 +988,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, peopleIds, leadIds, hueById]);
 
   // --- input ---------------------------------------------------------------
 
@@ -833,14 +1074,13 @@ export default function HexLab({
       // carry it across the map and it is a move again, not a request to tree.
       const parentId = tree.units.get(drag.unitId)?.parentId ?? null;
       const parentCell = parentId ? hexScene.hex.cells.get(parentId) ?? null : null;
-      const treeIt =
-        drag.armedAt && parentCell && hexDistance(target, drag.armedAt) <= RADIATE_RINGS
-          ? parentCell
-          : null;
+      const treeIt = drag.armedAt && parentCell ? parentCell : null;
       const landing = placeIsland(
         allocation.occupants, drag.members, drag.unitId, target,
         (id) => tree.units.get(id)?.childIds ?? [],
         treeIt,
+        groupOf,
+        gapBetween,
       );
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
@@ -849,9 +1089,10 @@ export default function HexLab({
         landing: landing.kind === "no-room" ? null : landing.cells,
         anchor: landing.kind === "no-room" ? null : landing.anchor,
         // Only a shape somebody built and would now lose is worth a dialog.
-        // A tree the hand asked for is not one of those.
+        // A tree the hand asked for is not one of those, and nor is a landing
+        // that kept every group's shape and only stepped the clashes aside.
         reshaped: landing.kind === "reshaped",
-        radiated: landing.kind === "radiated",
+        radiated: landing.kind === "radiated" || landing.kind === "parted",
         heldOver: over && !drag.members.has(over) ? over : null,
         holdAt: stillOver && stillHolding ? drag.holdAt : world,
         holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
@@ -1121,7 +1362,7 @@ export default function HexLab({
         <Small style={{ color: "#94a3b8" }}>
           {mode === "hex"
             ? justMoved
-              ? "pick that tile up again and set it down nearby to tree its branch away from its parent"
+              ? "pick that tile up again within 5s to tidy its branch — islands spaced by how closely related they are"
               : "drag a tile to move it and its branch · hold over another to merge"
             : "drag to pan"}
         </Small>

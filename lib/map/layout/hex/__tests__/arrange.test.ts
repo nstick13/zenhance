@@ -14,6 +14,7 @@ import {
   metaConnected,
   nearestFreeCell,
   outline,
+  partedLanding,
   placeIsland,
   wouldCycle,
 } from "@/lib/map/layout/hex/arrange";
@@ -409,5 +410,67 @@ describe("treeing a branch away from its parent", () => {
   it("does nothing of the sort unless asked — a plain drop keeps its shape", () => {
     const plain = placeIsland(new Map(), island, "sales", at(9, 0), kids);
     expect(plain.kind).toBe("fits");
+  });
+});
+
+/**
+ * Greg's rearrange rules, 2026-10-03.
+ *
+ * *"If a user picks up a family node and moves it, the thing should be moved
+ * as-is, including any archipelagos… if the user drops the family and there is
+ * a clash, then only the groups that clash (even by one cell) should be
+ * repositioned — they should reposition to the nearest-to-proposed space that
+ * can host that group without a clash."*
+ */
+describe("moving a branch that is already an archipelago", () => {
+  /** Two islands: sales sits with north, south is a separate group two cells on. */
+  const island = new Map([
+    ["sales", at(0, 0)],
+    ["north", at(1, 0)],
+    ["south", at(4, 0)],
+  ]);
+  const groupOf = (id: string) => (id === "south" ? "b" : "a");
+  const shape = (cells: Map<string, Cell>) => ({
+    withinA: hexDistance(cells.get("sales")!, cells.get("north")!),
+    aToB: hexDistance(cells.get("sales")!, cells.get("south")!),
+  });
+
+  it("translates everything cell for cell when nothing is in the way", () => {
+    const landed = partedLanding(new Map(), island, "sales", at(10, 0), groupOf);
+    expect(landed).not.toBeNull();
+    expect(landed!.moved).toBe(0);
+    expect(landed!.cells.get("sales")).toEqual(at(10, 0));
+    expect(shape(landed!.cells)).toEqual({ withinA: 1, aToB: 4 });
+  });
+
+  it("moves aside only the group that clashes, and keeps its shape", () => {
+    // Somebody is standing exactly where `south` would land.
+    const occupied = new Map([[cellKey(at(14, 0)), "stranger"]]);
+    const landed = partedLanding(occupied, island, "sales", at(10, 0), groupOf);
+    expect(landed).not.toBeNull();
+    expect(landed!.moved).toBe(1);
+    // The group that did not clash is untouched, exactly where it was sent.
+    expect(landed!.cells.get("sales")).toEqual(at(10, 0));
+    expect(landed!.cells.get("north")).toEqual(at(11, 0));
+    // The one that did moved, and only as far as it had to.
+    expect(landed!.cells.get("south")).not.toEqual(at(14, 0));
+    expect(hexDistance(landed!.cells.get("south")!, at(14, 0))).toBeLessThanOrEqual(2);
+  });
+
+  it("refuses rather than displacing the cell the hand let go of", () => {
+    const occupied = new Map([[cellKey(at(10, 0)), "stranger"]]);
+    expect(partedLanding(occupied, island, "sales", at(10, 0), groupOf)).toBeNull();
+  });
+
+  it("is what a clash produces now, instead of reflowing the whole branch", () => {
+    const occupied = new Map([[cellKey(at(14, 0)), "stranger"]]);
+    const landing = placeIsland(
+      occupied, island, "sales", at(10, 0), () => [], null, groupOf,
+    );
+    expect(landing.kind).toBe("parted");
+    if (landing.kind !== "parted") return;
+    expect(landing.moved).toBe(1);
+    // The shape within the untouched group survives, which is the whole point.
+    expect(hexDistance(landing.cells.get("sales")!, landing.cells.get("north")!)).toBe(1);
   });
 });

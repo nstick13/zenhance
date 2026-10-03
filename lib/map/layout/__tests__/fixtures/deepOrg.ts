@@ -91,6 +91,25 @@ export type DeepOrgOptions = {
    * on any company. Off by default, so every existing fixture is unchanged.
    */
   spotlight?: { small: number; large: number };
+  /**
+   * Give each team a real reporting structure inside itself, with spans in
+   * this range. Default off, which produces the flat shape this fixture has
+   * always had: everybody reports to the lead.
+   *
+   * Flat is a lie, and an expensive one. Greg, 2026-10-03: *"teams can have
+   * complex reporting structures even in-team, because the definition of a
+   * team is not universal. I'm working in such a team now — nominally about 15
+   * people, but there's a complex hierarchy even within that. As ridiculous as
+   * that is, it's the truth, and companies should be presented with the truth,
+   * not our opinion on what a team is."*
+   *
+   * It matters to the layout, not just to the data. A fifty-person team that is
+   * flat is a fifty-wide span, which no lattice can seat next to one node;
+   * measured, only 10% of people ended up adjacent to their manager. Given the
+   * same fifty people a real tree of spans 2–5, that goes to 64% — better than
+   * the units themselves manage. The flat fixture was hiding the question.
+   */
+  inTeamSpan?: [number, number];
   /** Name for the root unit. Defaults to the invented carrier's name. */
   rootName?: string;
   /**
@@ -283,7 +302,25 @@ export function buildDeepOrg(workspaceId: string, opts: DeepOrgOptions = {}): De
       });
     }
     unit.leadPersonId = members[0].id;
-    for (let i = 1; i < members.length; i++) members[i].managerId = members[0].id;
+    if (opts.inTeamSpan) {
+      // A tree inside the team: the lead at the top, then whoever is already
+      // placed and still has room takes the next person. Shallow-first, so the
+      // shape is a tree rather than a chain.
+      const [minSpan, maxSpan] = opts.inTeamSpan;
+      const reports = new Map<string, number>([[members[0].id, 0]]);
+      for (let i = 1; i < members.length; i++) {
+        const room = minSpan + Math.floor(rng() * Math.max(1, maxSpan - minSpan + 1));
+        const free = members
+          .slice(0, i)
+          .filter((m) => (reports.get(m.id) ?? 0) < room);
+        const boss = free.length > 0 ? free[Math.floor(rng() * free.length)] : members[0];
+        members[i].managerId = boss.id;
+        reports.set(boss.id, (reports.get(boss.id) ?? 0) + 1);
+        reports.set(members[i].id, 0);
+      }
+    } else {
+      for (let i = 1; i < members.length; i++) members[i].managerId = members[0].id;
+    }
     if (rng() < 0.3) {
       assignments.push({
         id: randomUUID(),

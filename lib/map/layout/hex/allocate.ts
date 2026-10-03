@@ -121,6 +121,8 @@ export type Allocation = {
      *  2026-09-30 does not need to. */
     touchingParent: number;
     exclaves: number;
+    /** Placed apart on purpose, under the archipelago rule. Not a failure. */
+    islands: number;
     /** Families that are a single connected patch, out of all families. */
     wholeFamilies: number;
     families: number;
@@ -144,8 +146,103 @@ const SPACE_WEIGHT = 9;
 const DEGREE_PENALTY = 1.2;
 
 /** What a step away from the parent costs. Enough to keep a family bunched
- *  rather than strung out, not enough to beat open ground. */
+ *  rather than strung out, not enough to beat open ground.
+ *
+ *  Unchanged at 200. Greg's priority inversion on 2026-10-03 — *"prioritise
+ *  keeping teams as contiguous, rather than reduction in parent-node
+ *  connection back to master"* — is carried entirely by `KEEP_TOGETHER`, which
+ *  outranks this when it applies. Lowering this instead was tried and made the
+ *  unit-only layout worse at everything (adjacency 49% → 37%, whole families
+ *  81% → 73%, chains under a stranger 26 → 73), because without a group the
+ *  cohesion term is zero and all that is left is a weaker rule. */
 const REACH_PENALTY = 200;
+
+/**
+ * What it is worth to sit next to your own group — a team, usually.
+ *
+ * Six neighbours, so a cell wholly surrounded by its own group is worth
+ * `6 * KEEP_TOGETHER` — four and a half steps of `REACH_PENALTY`, which is
+ * what lets a team take ground further from its parent to stay in one piece. This is the whole of Greg's
+ * priority inversion: a team that has to sit three cells further out to stay
+ * in one piece should do so, and pay for it with a longer chain.
+ *
+ * Without a `groupOf`, every unit is its own group and this term is zero — so
+ * the allocator behaves exactly as it did before.
+ */
+const KEEP_TOGETHER = 150;
+
+/**
+ * How much clear ground to leave between one group and the next — an
+ * archipelago rather than a continent.
+ *
+ * Greg, 2026-10-03: *"the default should be that nodes and teams are spaced
+ * apart. Think archipelago rather than continent. The connection lines do the
+ * work to indicate the relationships… So let's set a rule of requiring a
+ * spacing of at least three tiles between teams. Parental nodes can sit on the
+ * path that connects the team with master. This three-tile rule is not binding
+ * — a user can override it. It just governs the default view."*
+ *
+ * Measured in **empty cells**, so a candidate must be at least `gap + 1` away
+ * from anything belonging to another group. Only the default placement obeys
+ * it; a hand can put a tile wherever it likes, which is why this lives in the
+ * allocator and not in the drop rules.
+ *
+ * **How far apart depends on how closely related** (Greg, 2026-10-03):
+ * *"sibling teams by default have one tile separating them… Cousin teams have
+ * two. Anything above a cousin has three. The idea here is to use separation
+ * metrics as a way to naturally sort archipelagos into territorial regions."*
+ *
+ * So the gap is read off the tree, through `gapBetween`: one rung up to the
+ * common ancestor is a sibling and gets one tile, two rungs is a cousin and
+ * gets two, and anything further gets `TEAM_GAP`. The effect is that distance
+ * on the map *means* distance in the company — you can read how related two
+ * islands are without following a single line.
+ *
+ * It is a price rather than a wall. A company dense enough that nowhere clears
+ * the gap still gets placed — it just pays, and the cheapest crowded cell wins.
+ */
+export const TEAM_GAP = 3;
+const TOO_CLOSE = 4000;
+
+/** How far off the outward direction a new island may still sit. Ninety
+ *  degrees is "the correct side of the parent" and nothing more — Greg's first
+ *  rule of precedence, which is a gate rather than a preference. */
+const WRONG_SIDE = 90;
+
+/** How many rings past the first qualifying cell to keep looking, so direction
+ *  can outrank distance without the search becoming a flood fill. */
+const DIRECTION_SLACK = 3;
+
+/**
+ * A group takes its ground **before** anybody stands on it.
+ *
+ * Greg, 2026-10-03: *"I think your fix — that human nodes occupy calculated
+ * space — is the fix, so we need to give precedence to contiguous teams."*
+ *
+ * Spacing used to be checked against the cells that happened to exist at the
+ * moment of placing. A team's node was seated with its clearance, and then its
+ * people were added one at a time on the family edge — by which point the
+ * neighbouring team was already there, so the team grew straight into the gap
+ * it had been given. Eighty per cent compliance was the ceiling, and no amount
+ * of tuning reached past it, because the footprint was not known at placement.
+ *
+ * So a team now reserves a hexagonal region big enough for everybody in it, at
+ * the moment its node lands. Other groups keep clear of the whole **region**,
+ * not of the cells drawn so far, and the team's own people fill it from inside.
+ * Reserved ground is marked but not occupied: it belongs to the group, and
+ * stays available to that group alone.
+ *
+ * `REGION_SLACK` is the room left for growth — a team of seven gets a region
+ * that would hold ten, so adding somebody does not force a re-plan.
+ */
+const REGION_SLACK = 1.35;
+
+/** The ring radius whose hexagon holds at least `n` cells: 3r² + 3r + 1 ≥ n. */
+export function regionRadius(n: number): number {
+  let r = 0;
+  while (3 * r * r + 3 * r + 1 < n) r++;
+  return r;
+}
 
 /** What it costs to take a cell somebody else's unseated children were going
  *  to need — their doorstep.
@@ -186,7 +283,17 @@ export function fanAngles(outward: number, n: number): number[] {
   return out;
 }
 
-export function allocate(tree: OrbitalTree): Allocation {
+export function allocate(
+  tree: OrbitalTree,
+  options: {
+    /** Which group a unit belongs to — a team id, typically. Units in the same
+     *  group are pulled together, ahead of staying near their parent. */
+    groupOf?: (unitId: string) => string | null;
+    /** Clear tiles wanted between two groups, by how closely related they are.
+     *  Defaults to `TEAM_GAP` for every pair. */
+    gapBetween?: (a: string, b: string) => number;
+  } = {},
+): Allocation {
   const cells = new Map<string, Cell>();
   const occupants = new Map<string, string>();
   const steps = new Map<string, number>();
@@ -194,6 +301,7 @@ export function allocate(tree: OrbitalTree): Allocation {
   let radius = 0;
   const exclaves = new Set<string>();
   let connected = 0;
+  let islands = 0;
   let touchingParent = 0;
   let worstReach = 0;
 
@@ -202,7 +310,7 @@ export function allocate(tree: OrbitalTree): Allocation {
     return {
       cells, occupants, steps, branchOf, exclaves, radius,
       stats: {
-        placed: 0, connected: 0, touchingParent: 0, exclaves: 0,
+        placed: 0, connected: 0, islands: 0, touchingParent: 0, exclaves: 0,
         wholeFamilies: 0, families: 0, worstReach: 0,
       },
     };
@@ -210,16 +318,40 @@ export function allocate(tree: OrbitalTree): Allocation {
 
   const SIZE = 1; // only angles are compared, and those are scale-free
 
+  /** cell key → the group that owns it. Set when a unit lands *and* when a
+   *  group reserves its region, which is what makes spacing hold. */
+  const groupAt = new Map<string, string>();
+
+  /** origin+size → the ring a region of that size last fitted at, so the next
+   *  one does not re-scan ground already known to be full. */
+  const searchedTo = new Map<string, number>();
+
+  /** How many units each group will need room for, known before any of them
+   *  are placed — the whole point of reserving. */
+  const groupSize = new Map<string, number>();
+  if (options.groupOf) {
+    for (const unit of tree.units.values()) {
+      const g = options.groupOf(unit.id);
+      if (g === null) continue;
+      groupSize.set(g, (groupSize.get(g) ?? 0) + 1);
+    }
+  }
+
   const take = (
     unit: UnitNode, cell: Cell, fromParent: number, branch: string, touches: boolean,
+    /** Placed apart on purpose — the archipelago rule, not a failure to fit. */
+    island = false,
   ) => {
     cells.set(unit.id, cell);
     occupants.set(cellKey(cell), unit.id);
+    const group = options.groupOf?.(unit.id) ?? null;
+    if (group !== null) groupAt.set(cellKey(cell), group);
     steps.set(unit.id, fromParent);
     branchOf.set(unit.id, branch);
     const fromRoot = hexDistance(cell, { q: 0, r: 0 });
     if (fromRoot > radius) radius = fromRoot;
     if (fromParent === 0) return; // the root belongs to no family
+    if (island) islands++;
     if (touches) connected++;
     else exclaves.add(unit.id);
     if (fromParent === 1) touchingParent++;
@@ -270,6 +402,36 @@ export function allocate(tree: OrbitalTree): Allocation {
   /** How much open ground a cell opens onto: free cells within two rings.
    *  This is the lookahead that stops a branch walking into a pocket and
    *  stranding its own descendants. */
+  /**
+   * What it costs to sit this close to somebody else's group. Zero once the
+   * clear ground Greg asked for is there; it rises steeply as the gap closes,
+   * so a unit will travel a long way rather than crowd its neighbour.
+   */
+  const wanted = options.gapBetween
+    ? (a: string, b: string) => Math.max(0, Math.min(TEAM_GAP, options.gapBetween!(a, b)))
+    : () => TEAM_GAP;
+
+  const crowding = (cell: Cell, group: string | null): number => {
+    if (group === null) return 0;
+    let worst = 0;
+    for (const near of spiral(cell, TEAM_GAP)) {
+      const other = groupAt.get(cellKey(near));
+      if (other === undefined || other === group) continue;
+      const need = wanted(group, other);
+      const slack = hexDistance(cell, near);
+      worst = Math.max(worst, need + 1 - slack);
+    }
+    return worst * TOO_CLOSE;
+  };
+
+  /** How many of a cell's six neighbours already hold this unit's own group. */
+  const kinship = (cell: Cell, group: string | null): number => {
+    if (group === null) return 0;
+    let n = 0;
+    for (const side of neighbours(cell)) if (groupAt.get(cellKey(side)) === group) n++;
+    return n;
+  };
+
   const elbowRoom = (cell: Cell): number => {
     let free = 0;
     for (const c of spiral(cell, LOOKAHEAD_RING)) {
@@ -286,7 +448,9 @@ export function allocate(tree: OrbitalTree): Allocation {
    * search consider a sibling's edge as well as the parent's is the whole
    * change, and it is what makes a span of twenty cost nothing.
    */
-  const findFamilyCell = (family: readonly Cell[], parentCell: Cell, desired: number): Cell | null => {
+  const findFamilyCell = (
+    family: readonly Cell[], parentCell: Cell, desired: number, group: string | null,
+  ): Cell | null => {
     const seen = new Set<string>();
     let best: Cell | null = null;
     let bestScore = -Infinity;
@@ -300,6 +464,8 @@ export function allocate(tree: OrbitalTree): Allocation {
         // compactness is now the only thing saying "these belong together".
         const score =
           elbowRoom(candidate) * SPACE_WEIGHT
+          + kinship(candidate, group) * KEEP_TOGETHER
+          - crowding(candidate, group)
           - deviation * DEGREE_PENALTY
           - hexDistance(parentCell, candidate) * REACH_PENALTY
           - doorstepCost(candidate);
@@ -311,25 +477,148 @@ export function allocate(tree: OrbitalTree): Allocation {
 
   /** Last resort, when a family is so boxed in that not one of its members has
    *  a free neighbour: the nearest free cell anywhere. Produces an exclave. */
-  const findCell = (from: Cell, desired: number): { cell: Cell; steps: number } | null => {
+  const findCell = (
+    from: Cell, desired: number, group: string | null = null,
+  ): { cell: Cell; steps: number } | null => {
+    /**
+     * **Distance comes last.** Greg, 2026-10-03: *"there is no limit on
+     * connection line length — it should take the shortest path BUT it should
+     * defer to spacing… the order of precedence for layout-on-move is: exist on
+     * the other side of parent to grandparent — spacing — tree away from
+     * parent."*
+     *
+     * So the two hard things are checked first and the search is not allowed to
+     * stop at the nearest ring that happens to have a free cell — which is what
+     * it used to do, and why siblings ended up touching and a branch's own
+     * parent ended up buried inside it:
+     *
+     *   1. **The right side of the parent.** A child belongs in the hemisphere
+     *      pointing away from its grandparent, so the way home is the near edge
+     *      of the island rather than somewhere in its middle.
+     *   2. **The spacing.** One clear tile from a sibling, two from a cousin,
+     *      three from anyone further off.
+     *   3. **Treeing away**, which is what the remaining score ranks.
+     *
+     * Only then does distance break the tie. The search keeps looking for a few
+     * rings past the first qualifying cell (`DIRECTION_SLACK`) so a slightly
+     * further cell in a much better direction can win — a bounded stand-in for
+     * "no limit", because scanning forty rings per unit is not affordable.
+     */
+    let fallback: { cell: Cell; steps: number; score: number } | null = null;
+    let best: { cell: Cell; steps: number; score: number } | null = null;
+    let foundAt = Infinity;
     for (let k = 1; k <= MAX_SEARCH_RING; k++) {
-      let best: Cell | null = null;
-      let bestScore = -Infinity;
+      if (k > foundAt + DIRECTION_SLACK) break;
       for (const candidate of ring(from, k)) {
         if (occupants.has(cellKey(candidate))) continue;
         const deviation = (angleGap(worldAngle(from, candidate, SIZE), desired) * 180) / Math.PI;
+        const crowded = crowding(candidate, group);
         const score =
           elbowRoom(candidate) * SPACE_WEIGHT
+          - crowded
           - deviation * DEGREE_PENALTY
-          - doorstepCost(candidate);
-        if (score > bestScore) {
-          bestScore = score;
-          best = candidate;
+          - doorstepCost(candidate)
+          - k * REACH_PENALTY / 8;
+        // Rule 1 and rule 2 are gates, not scores. A cell that fails either is
+        // only ever a fallback, however close it is.
+        if (crowded > 0 || deviation > WRONG_SIDE) {
+          if (!fallback || score > fallback.score) fallback = { cell: candidate, steps: k, score };
+          continue;
+        }
+        if (!best || score > best.score) {
+          best = { cell: candidate, steps: k, score };
+          foundAt = Math.min(foundAt, k);
         }
       }
-      if (best) return { cell: best, steps: k };
     }
-    return null;
+    if (best) return { cell: best.cell, steps: best.steps };
+    return fallback ? { cell: fallback.cell, steps: fallback.steps } : null;
+  };
+
+  /**
+   * Take a whole region for a group, and seat its first unit on the near edge.
+   *
+   * The region is a hexagon big enough for everybody in the group plus a little
+   * slack, placed so that every cell of it clears the spacing every *other*
+   * group is owed. Reserving it is what makes the gap survive the group filling
+   * up — see `REGION_SLACK`.
+   *
+   * The seat is the cell of the region **closest to the parent**, which is
+   * Greg's rotation rule: the way home lands on the near edge of the island
+   * rather than somewhere in its middle.
+   */
+  const claimRegion = (
+    from: Cell, desired: number, group: string,
+  ): { seat: Cell; centre: Cell; radius: number } | null => {
+    const size = groupSize.get(group) ?? 1;
+    if (size <= 1) return null; // a lone node needs no territory
+    const radius = regionRadius(Math.ceil(size * REGION_SLACK));
+
+    /**
+     * Could this whole hexagon be ours? Free ground, and clear of everybody we
+     * are not related to.
+     *
+     * **One pass, not a nested one.** Asking `crowding` about every cell of the
+     * region meant 61 cells × 37 neighbours at every candidate centre, and the
+     * allocation went from 50ms to three seconds. The same answer falls out of
+     * a single sweep: anything inside the region must be free and unowned, and
+     * anything outside is only a problem if it is closer to the region's edge
+     * than the gap that group is owed — which is `d − radius`, straight from
+     * the centre distance.
+     */
+    const available = (centre: Cell): boolean => {
+      for (const cell of spiral(centre, radius + TEAM_GAP)) {
+        const key = cellKey(cell);
+        const owner = groupAt.get(key);
+        const d = hexDistance(cell, centre);
+        if (d <= radius) {
+          if (occupants.has(key)) return false;
+          if (owner !== undefined && owner !== group) return false;
+          continue;
+        }
+        if (owner === undefined || owner === group) continue;
+        if (d - radius <= wanted(group, owner)) return false;
+      }
+      return true;
+    };
+
+    let best: { centre: Cell; score: number } | null = null;
+    let foundAt = Infinity;
+    /**
+     * Where to start looking. A division's teams are placed one after another
+     * from the same cell, and each was re-scanning the rings the one before had
+     * already found full — which is most of the 1.4s this used to cost.
+     *
+     * Ground is only ever taken during an allocation, never released, so a ring
+     * that had no room stays that way. Starting a few rings back from where the
+     * last one succeeded is therefore safe as well as much cheaper.
+     */
+    const memo = `${cellKey(from)}|${radius}`;
+    const from0 = Math.max(radius + 1, (searchedTo.get(memo) ?? 0) - 2);
+    // Centres sit at least a radius out, or the region would swallow the parent.
+    for (let k = from0; k <= MAX_SEARCH_RING; k++) {
+      if (best && k > foundAt + 1) break;
+      for (const centre of ring(from, k)) {
+        if (!available(centre)) continue;
+        const deviation = (angleGap(worldAngle(from, centre, SIZE), desired) * 180) / Math.PI;
+        if (deviation > WRONG_SIDE) continue;
+        const score = -deviation * DEGREE_PENALTY - k * REACH_PENALTY / 8;
+        if (!best || score > best.score) { best = { centre, score }; foundAt = Math.min(foundAt, k); }
+      }
+    }
+    if (!best) return null;
+    searchedTo.set(memo, foundAt);
+
+    for (const cell of spiral(best.centre, radius)) groupAt.set(cellKey(cell), group);
+
+    // The near edge: whichever cell of the region the chain home reaches first.
+    let seat = best.centre;
+    let nearest = Infinity;
+    for (const cell of spiral(best.centre, radius)) {
+      const d = hexDistance(cell, from);
+      if (d < nearest) { nearest = d; seat = cell; }
+    }
+    return { seat, centre: best.centre, radius };
   };
 
   /**
@@ -358,11 +647,37 @@ export function allocate(tree: OrbitalTree): Allocation {
     // **Seat the whole family, then descend.** Placing a child and immediately
     // recursing into it lets that child's own descendants wall in the ground
     // its later siblings needed.
+    const parentGroup = options.groupOf?.(parent.id) ?? null;
     const family: Cell[] = [parentCell];
     kids.forEach((kid, i) => {
       const branch = parent.id === root.id ? kid.id : branchOf.get(parent.id) ?? kid.id;
-      const onEdge = findFamilyCell(family, parentCell, wanted[i]);
-      const cell = onEdge ?? findCell(parentCell, wanted[i])?.cell ?? null;
+      const group = options.groupOf?.(kid.id) ?? null;
+
+      // **A new island starts offshore.** When a child belongs to a different
+      // group from its parent it is the first cell of a new team, and the
+      // archipelago rule says it wants clear water round it. The family edge
+      // is the one place that water cannot be — the edge is, by definition,
+      // against somebody. So the search space changes: ring outward from the
+      // parent for the nearest cell with the full gap, and let the chain do
+      // the work of saying who it belongs to.
+      const newIsland = group !== null && group !== parentGroup;
+      if (newIsland) {
+        const claimed = claimRegion(parentCell, wanted[i], group!);
+        if (claimed) {
+          take(kid, claimed.seat, hexDistance(claimed.seat, parentCell), branch, true, true);
+          family.push(claimed.seat);
+          return;
+        }
+        const offshore = findCell(parentCell, wanted[i], group);
+        if (offshore) {
+          take(kid, offshore.cell, offshore.steps, branch, true, true);
+          family.push(offshore.cell);
+          return;
+        }
+      }
+
+      const onEdge = findFamilyCell(family, parentCell, wanted[i], group);
+      const cell = onEdge ?? findCell(parentCell, wanted[i], group)?.cell ?? null;
       if (!cell) return; // pathological only; MAX_SEARCH_RING is generous
       take(kid, cell, hexDistance(cell, parentCell), branch, onEdge !== null);
       family.push(cell);
@@ -410,6 +725,7 @@ export function allocate(tree: OrbitalTree): Allocation {
     stats: {
       placed: cells.size,
       connected,
+      islands,
       touchingParent,
       exclaves: exclaves.size,
       wholeFamilies,

@@ -51,7 +51,25 @@ const STEP = 10;
 
 /** Bending. Small — a bend is worth taking to avoid a tile, not worth taking
  *  to save a step. */
-const TURN = 4;
+const TURN = 12;
+
+/**
+ * Extra bend cost per cell of the chain's span — straighter the further it has
+ * to go.
+ *
+ * Greg, 2026-10-03: *"let's also put a stronger opinion on connection lines
+ * being straighter the longer they need to be — so the closer a connection
+ * line chain is to a parental node, the higher the ability for it to curl; the
+ * longer the connection line the straighter it is — this is intended to create
+ * straight branches rather than switchbacks that spider all over the place."*
+ *
+ * A one-step hop can bend for nothing. A chain crossing twenty cells pays
+ * `TURN + 20 * this` for every corner, which buys a long detour round an
+ * obstacle rather than a staircase through the middle of one. The cost is set
+ * from the chain's **span**, not from how far it has already travelled, so it
+ * is the same at both ends and the search stays admissible.
+ */
+const TURN_PER_SPAN = 6;
 
 /** Running under somebody who is not family. The thing being avoided. */
 const THROUGH_A_STRANGER = 260;
@@ -95,6 +113,25 @@ const SIDE_ALREADY_USED = 0;
 /** How far past the direct distance a chain may wander looking for clear
  *  ground. A chain that has to trek is a chain that should have been a
  *  straight unattractive line instead. */
+/**
+ * Joining a route that is already going your way — a **trunk**.
+ *
+ * Greg, 2026-10-03: *"in-team connection lines should preferentially chain via
+ * established routes, preferencing as few corners as possible, rather than
+ * attempt shortest-route. Think tree and branches rather than mesh."*
+ *
+ * The condition is precise: a chain may join a route whose destination is its
+ * own destination, or any ancestor of it. Going to the same place, or further
+ * up the same line, is the same journey — so share the ground. Going somewhere
+ * else is a different journey, and the ordinary `SHARED_WITH_A_CHAIN` charge
+ * still applies, which is what keeps unrelated chains off each other.
+ *
+ * Priced below a step, so a chain will go a little out of its way to find a
+ * trunk. It is a per-step cost rather than a discount, because A* cannot have
+ * a negative edge and still be trusted.
+ */
+const JOIN_A_TRUNK = 5;
+
 const DETOUR_ALLOWANCE = 10;
 
 export type RoutedChain = {
@@ -141,6 +178,9 @@ export class Router {
   private readonly size: number;
   /** cell key → how many routed chains already run through it. */
   private readonly used = new Map<string, number>();
+  /** cell key → the destinations the chains over it are heading for, so a
+   *  later chain can tell whether this ground is going its way. */
+  private readonly toward = new Map<string, Set<string>>();
   /** cell key → which of the six sides already carry a chain in or out. */
   private readonly sides = new Map<string, Set<number>>();
 
@@ -150,11 +190,25 @@ export class Router {
   }
 
   /** What one cell costs to walk through, for a chain that may pass siblings. */
-  private cellCost(key: string, siblings: ReadonlySet<string>): number {
+  private cellCost(
+    key: string,
+    siblings: ReadonlySet<string>,
+    joinable?: (destinationId: string) => boolean,
+  ): number {
     const who = this.occupied.get(key);
-    let cost = STEP;
+    // Ground already carrying a chain that is going where this one is going.
+    // The trunk is cheaper than open ground, so branches gather onto it — but
+    // it is only the *ground* that is discounted. Walking under a stranger
+    // costs the same whether or not somebody else did it first; a trunk is not
+    // a licence to trespass.
+    let onMyTrunk = false;
+    if (joinable) {
+      const heading = this.toward.get(key);
+      if (heading) for (const dest of heading) if (joinable(dest)) { onMyTrunk = true; break; }
+    }
+    let cost = onMyTrunk ? JOIN_A_TRUNK : STEP;
     if (who) cost += siblings.has(who) ? THROUGH_A_SIBLING : THROUGH_A_STRANGER;
-    cost += (this.used.get(key) ?? 0) * SHARED_WITH_A_CHAIN;
+    if (!onMyTrunk) cost += (this.used.get(key) ?? 0) * SHARED_WITH_A_CHAIN;
     return cost;
   }
 
@@ -163,13 +217,23 @@ export class Router {
    * what it can. Falls back to the straight walk if nothing better is reachable
    * inside the detour allowance — a chain always arrives.
    */
-  route(from: Cell, to: Cell, siblings: ReadonlySet<string>): Cell[] {
+  route(
+    from: Cell,
+    to: Cell,
+    siblings: ReadonlySet<string>,
+    /** Whether a route already heading for `destinationId` is going this
+     *  chain's way, and so may be joined. See `JOIN_A_TRUNK`. */
+    joinable?: (destinationId: string) => boolean,
+  ): Cell[] {
     const goal = cellKey(to);
     // Two neighbours always get the straight hop between them. Charging for a
     // busy side there would send a child that is *touching* its parent on a
     // detour, which is absurd whatever the fan is worth.
-    const adjacent = hexDistance(from, to) <= 1;
-    const limit = hexDistance(from, to) + DETOUR_ALLOWANCE;
+    const span = hexDistance(from, to);
+    const adjacent = span <= 1;
+    const limit = span + DETOUR_ALLOWANCE;
+    // Long chains run straight; short ones may curl. See `TURN_PER_SPAN`.
+    const turnCost = TURN + TURN_PER_SPAN * span;
     const open: Node[] = [{ key: cellKey(from), cell: from, from: 0, cost: 0, prev: null }];
     const best = new Map<string, number>([[cellKey(from), 0]]);
     let found: Node | null = null;
@@ -207,8 +271,8 @@ export class Router {
           if (side >= 0 && this.sides.get(goal)?.has(side)) sideCost += SIDE_ALREADY_USED;
         }
         const cost = node.cost
-          + (key === goal ? STEP : this.cellCost(key, siblings))
-          + (turns(node, next) ? TURN : 0)
+          + (key === goal ? STEP : this.cellCost(key, siblings, joinable))
+          + (turns(node, next) ? turnCost : 0)
           + sideCost;
         if (cost >= (best.get(key) ?? Infinity)) continue;
         best.set(key, cost);
@@ -224,10 +288,15 @@ export class Router {
 
   /** Record a routed chain so later ones keep off it. The two ends do not
    *  count — every chain starts and finishes on a tile. */
-  claim(cells: readonly Cell[]): void {
+  claim(cells: readonly Cell[], destinationId?: string): void {
     for (let i = 1; i < cells.length - 1; i++) {
       const key = cellKey(cells[i]);
       this.used.set(key, (this.used.get(key) ?? 0) + 1);
+      if (destinationId !== undefined) {
+        const heading = this.toward.get(key) ?? new Set<string>();
+        heading.add(destinationId);
+        this.toward.set(key, heading);
+      }
     }
     if (cells.length < 2) return;
     // Both ends: the side this chain leaves by, and the side it arrives by.
@@ -285,8 +354,14 @@ export function routeAll(
     const siblings = new Set<string>([unit.id, parentId]);
     for (const id of tree.units.get(parentId)?.childIds ?? []) siblings.add(id);
 
-    const walk = router.route(cells.get(unit.id)!, cells.get(parentId)!, siblings);
-    router.claim(walk);
+    // Tree and branches: a chain may join a route heading for its own
+    // destination, or anywhere further up its own line home.
+    const line = new Set<string>();
+    for (let up: string | null = parentId; up; up = tree.units.get(up)?.parentId ?? null) line.add(up);
+    const walk = router.route(
+      cells.get(unit.id)!, cells.get(parentId)!, siblings, (dest) => line.has(dest),
+    );
+    router.claim(walk, parentId);
     out.push({
       unitId: unit.id,
       parentId,

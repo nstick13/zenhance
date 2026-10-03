@@ -275,7 +275,100 @@ export type IslandLanding =
   /** The second pick-up: the branch has been treed outward from its way home.
    *  Asked for by the gesture, so no dialog. */
   | { kind: "radiated"; cells: Map<string, Cell>; anchor: Cell }
+  /** Translated as-is, except for the groups that would have landed on
+   *  somebody; those moved aside, each to the nearest space that fits it
+   *  whole. No dialog — nothing anyone built was lost. */
+  | { kind: "parted"; cells: Map<string, Cell>; anchor: Cell; moved: number }
   | { kind: "no-room" };
+
+/**
+ * Translate a branch as-is, and move aside only what actually clashes.
+ *
+ * Greg, 2026-10-03: *"if a user picks up a family node and moves it, the thing
+ * should be moved as-is, including any archipelagos… if the user drops the
+ * family and there is a clash, then only the groups that clash (even by one
+ * cell) should be repositioned — they should reposition to the nearest-to-
+ * proposed space that can host that group without a clash."*
+ *
+ * The old behaviour reflowed the **whole** branch the moment one cell of it
+ * caught something, which gathered a spread-out archipelago into a single
+ * continent and destroyed the arrangement somebody had built. This keeps the
+ * translation, keeps every group's own shape, and relocates nothing that was
+ * not actually in the way.
+ *
+ * `groupOf` decides what "a group" is — a team, normally. Without it the whole
+ * branch is one group, and this degrades to all-or-nothing.
+ */
+export function partedLanding(
+  occupancy: Occupancy,
+  members: ReadonlyMap<string, Cell>,
+  anchorId: string,
+  target: Cell,
+  groupOf: (unitId: string) => string,
+): { cells: Map<string, Cell>; moved: number } | null {
+  const anchor = members.get(anchorId);
+  if (!anchor) return null;
+  const moving = new Set(members.keys());
+  const taken = new Map<string, string>();
+  for (const [key, id] of occupancy) if (!moving.has(id)) taken.set(key, id);
+
+  const dq = target.q - anchor.q;
+  const dr = target.r - anchor.r;
+  const shifted = new Map<string, Cell>();
+  for (const [id, cell] of members) shifted.set(id, { q: cell.q + dq, r: cell.r + dr });
+
+  // Who travels with whom. A group moves as one body or not at all.
+  const byGroup = new Map<string, string[]>();
+  for (const id of members.keys()) {
+    const g = groupOf(id);
+    const list = byGroup.get(g) ?? [];
+    list.push(id);
+    byGroup.set(g, list);
+  }
+
+  // The anchor's own group is settled first and never moves: it is where the
+  // hand let go, and Greg's first law is that a branch lands there.
+  const anchorGroup = groupOf(anchorId);
+  const order = [anchorGroup, ...[...byGroup.keys()].filter((g) => g !== anchorGroup)];
+
+  const out = new Map<string, Cell>();
+  const claim = (ids: readonly string[], offset: { q: number; r: number }) => {
+    for (const id of ids) {
+      const at = shifted.get(id)!;
+      const cell = { q: at.q + offset.q, r: at.r + offset.r };
+      out.set(id, cell);
+      taken.set(cellKey(cell), id);
+    }
+  };
+  const clear = (ids: readonly string[], offset: { q: number; r: number }) =>
+    ids.every((id) => {
+      const at = shifted.get(id)!;
+      return !taken.has(cellKey({ q: at.q + offset.q, r: at.r + offset.r }));
+    });
+
+  let moved = 0;
+  for (const group of order) {
+    const ids = byGroup.get(group)!;
+    if (clear(ids, { q: 0, r: 0 })) { claim(ids, { q: 0, r: 0 }); continue; }
+    if (group === anchorGroup) return null; // the hand's own landing is taken
+    // Nearest offset, from where it would have gone, that takes the whole group.
+    let placed = false;
+    for (const near of spiral({ q: 0, r: 0 }, PART_SEARCH_RINGS)) {
+      if (near.q === 0 && near.r === 0) continue;
+      if (!clear(ids, near)) continue;
+      claim(ids, near);
+      moved++;
+      placed = true;
+      break;
+    }
+    if (!placed) return null;
+  }
+  return { cells: out, moved };
+}
+
+/** How far a clashing group may be shifted to find room of its own. Generous:
+ *  the alternative is reflowing the branch, which costs its shape. */
+const PART_SEARCH_RINGS = 14;
 
 /** Is this set of cells one connected patch? */
 export function isOnePatch(cells: Iterable<Cell>): boolean {
@@ -302,6 +395,54 @@ export function isOnePatch(cells: Iterable<Cell>): boolean {
  *  eighteen cells — enough to slip past a stray neighbour, small enough that
  *  the branch still lands where the hand meant. */
 const NUDGE_RINGS = 2;
+
+/** The widest channel the spacing rules ever ask for, so a clearance check
+ *  knows how far to look. */
+const MAX_CHANNEL = 3;
+
+/**
+ * Clear water for a new island in a tidy up — on the right side of its parent.
+ *
+ * Greg, 2026-10-03: *"I want the tree orientation to rotate so that it's always
+ * away from the parent… the highest-ranked parent in this group [should not be]
+ * buried deep on the other side of the newly-created archipelago. It should be
+ * on the side of the inbound principal connection line back to whatever its
+ * parent is."*
+ *
+ * So this takes the nearest *qualifying* ring and then picks the cell on it
+ * pointing furthest from `home` — rather than simply the first clear cell the
+ * spiral happens to reach, which is what buried the parent.
+ */
+function firstClearCell(
+  occupancy: ReadonlyMap<string, string>,
+  from: Cell,
+  ok: (cell: Cell) => boolean,
+  home: Cell | null,
+  maxRings = 16,
+): Cell | null {
+  const awayness = (cell: Cell): number => {
+    if (!home) return 0;
+    // 1 when the cell is directly away from home, −1 when straight toward it.
+    const ax = cell.q - from.q, az = cell.r - from.r;
+    const bx = from.q - home.q, bz = from.r - home.r;
+    const ux = 1.5 * ax, uy = Math.sqrt(3) * (az + ax / 2);
+    const vx = 1.5 * bx, vy = Math.sqrt(3) * (bz + bx / 2);
+    const na = Math.hypot(ux, uy), nb = Math.hypot(vx, vy);
+    return na === 0 || nb === 0 ? 0 : (ux * vx + uy * vy) / (na * nb);
+  };
+  let fallback: Cell | null = null;
+  let best: { cell: Cell; score: number } | null = null;
+  let foundAt = Infinity;
+  for (const cell of spiral(from, maxRings)) {
+    if (cellKey(cell) === cellKey(from) || occupancy.has(cellKey(cell))) continue;
+    const ring = hexDistance(cell, from);
+    if (best && ring > foundAt) break; // the nearest qualifying ring wins
+    if (!ok(cell)) { fallback ??= cell; continue; }
+    const score = awayness(cell);
+    if (!best || score > best.score) { best = { cell, score }; foundAt = ring; }
+  }
+  return best?.cell ?? fallback;
+}
 
 /**
  * Where a whole island lands when it is dragged.
@@ -347,6 +488,11 @@ export function placeIsland(
    * clock and does not know where the hand has been.
    */
   radiateFrom?: Cell | null,
+  /** What travels as one body when something has to move aside. A team,
+   *  normally. Without it a clash is all-or-nothing, as it used to be. */
+  groupOf?: (unitId: string) => string,
+  /** The archipelago spacing, used when the gesture asks for a tidy up. */
+  gapBetween?: (a: string, b: string) => number,
 ): IslandLanding {
   const anchor = members.get(anchorId);
   if (!anchor) return { kind: "no-room" };
@@ -376,7 +522,10 @@ export function placeIsland(
       ? target
       : nearestFreeCell(occupancy, target, { ignore: moving });
     if (seat) {
-      const treed = reflow(occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom);
+      const treed = reflow(
+        occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom,
+        groupOf && gapBetween ? { groupOf, gapBetween } : undefined,
+      );
       if (treed) return { kind: "radiated", cells: treed, anchor: seat };
     }
   }
@@ -395,6 +544,15 @@ export function placeIsland(
       if (cellKey(nearby) === cellKey(target)) continue;
       const nudged = shapeAt(nearby);
       if (nudged.fits) return { kind: "nudged", cells: nudged.cells, anchor: nearby };
+    }
+  }
+
+  // **Part, rather than reflow.** One cell catching something used to cost the
+  // whole branch its shape. Move aside only what is actually in the way.
+  if (groupOf) {
+    const parted = partedLanding(occupancy, members, anchorId, target, groupOf);
+    if (parted) {
+      return { kind: "parted", cells: parted.cells, anchor: target, moved: parted.moved };
     }
   }
 
@@ -508,6 +666,17 @@ function reflow(
   /** Where the branch's own parent is, when it is outside the branch. Given it,
    *  the layout grows away from it instead of in all directions. */
   homeward?: Cell | null,
+  /**
+   * The archipelago rules, so a tidy up lays a branch out the way the company
+   * was laid out on load. Greg, 2026-10-03: *"this tidy up function should
+   * follow the same rules as the on-load: siblings should land with a channel
+   * between them of one hexagon tile; cousins two, and anything less related
+   * three."*
+   */
+  spacing?: {
+    groupOf: (unitId: string) => string;
+    gapBetween: (a: string, b: string) => number;
+  },
 ): Map<string, Cell> | null {
   const taken = new Map<string, string>();
   for (const [key, id] of occupancy) if (!moving.has(id)) taken.set(key, id);
@@ -534,6 +703,21 @@ function reflow(
   const cameFrom = new Map<string, Cell>();
   if (homeward) cameFrom.set(anchorId, homeward);
 
+  // Which group sits where, so the spacing rules can be applied as we go.
+  const groupAt = new Map<string, string>();
+  if (spacing) for (const [id, cell] of out) groupAt.set(cellKey(cell), spacing.groupOf(id));
+
+  /** Is this cell far enough from everybody this unit is not related to? */
+  const clearEnough = (cell: Cell, group: string): boolean => {
+    if (!spacing) return true;
+    for (const near of spiral(cell, MAX_CHANNEL)) {
+      const other = groupAt.get(cellKey(near));
+      if (other === undefined || other === group) continue;
+      if (hexDistance(cell, near) <= spacing.gapBetween(group, other)) return false;
+    }
+    return true;
+  };
+
   const queue: string[] = [anchorId];
   while (queue.length) {
     const parentId = queue.shift()!;
@@ -541,10 +725,15 @@ function reflow(
     if (!parentCell) continue;
     const back = cameFrom.get(parentId);
     for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
-      const cell = homeward
-        ? radiatingCell(taken, parentCell, back ?? null)
-        : nearestFreeCell(taken, parentCell, { maxRings: 14 });
+      const group = spacing?.groupOf(childId);
+      const cell = group !== undefined && group !== spacing!.groupOf(parentId)
+        // A new island: find clear water, the same rule the allocator uses.
+        ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
+        : homeward
+          ? radiatingCell(taken, parentCell, back ?? null)
+          : nearestFreeCell(taken, parentCell, { maxRings: 14 });
       if (!cell) return null;
+      if (group !== undefined) groupAt.set(cellKey(cell), group);
       out.set(childId, cell);
       taken.set(cellKey(cell), childId);
       cameFrom.set(childId, parentCell);
