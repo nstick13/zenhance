@@ -305,6 +305,17 @@ export function partedLanding(
   anchorId: string,
   target: Cell,
   groupOf: (unitId: string) => string,
+  /**
+   * Clear tiles wanted between two groups. Without it this checks only whether
+   * a cell is *occupied*, which is how a drop could leave two teams touching
+   * however carefully the allocator had spaced them — the rearrange path
+   * predates the spacing rules and never learned them.
+   *
+   * The anchor's own group is exempt: that is where the hand let go, and Greg's
+   * first law is that a branch lands there. Everything the layout moves *for*
+   * you obeys the gap.
+   */
+  gapBetween?: (a: string, b: string) => number,
 ): { cells: Map<string, Cell>; moved: number } | null {
   const anchor = members.get(anchorId);
   if (!anchor) return null;
@@ -340,26 +351,56 @@ export function partedLanding(
       taken.set(cellKey(cell), id);
     }
   };
-  const clear = (ids: readonly string[], offset: { q: number; r: number }) =>
+  /** Far enough from everybody this group is not related to. */
+  const spaced = (cell: Cell, group: string): boolean => {
+    if (!gapBetween) return true;
+    for (const near of spiral(cell, MAX_CHANNEL)) {
+      const who = taken.get(cellKey(near));
+      if (!who) continue;
+      const other = groupOf(who);
+      if (other === group) continue;
+      if (hexDistance(cell, near) <= gapBetween(group, other)) return false;
+    }
+    return true;
+  };
+
+  const clear = (
+    ids: readonly string[], offset: { q: number; r: number }, obeySpacing: boolean,
+  ) =>
     ids.every((id) => {
       const at = shifted.get(id)!;
-      return !taken.has(cellKey({ q: at.q + offset.q, r: at.r + offset.r }));
+      const cell = { q: at.q + offset.q, r: at.r + offset.r };
+      if (taken.has(cellKey(cell))) return false;
+      return !obeySpacing || spaced(cell, groupOf(id));
     });
 
   let moved = 0;
   for (const group of order) {
     const ids = byGroup.get(group)!;
-    if (clear(ids, { q: 0, r: 0 })) { claim(ids, { q: 0, r: 0 }); continue; }
+    const obey = group !== anchorGroup;
+    if (clear(ids, { q: 0, r: 0 }, obey)) { claim(ids, { q: 0, r: 0 }); continue; }
     if (group === anchorGroup) return null; // the hand's own landing is taken
-    // Nearest offset, from where it would have gone, that takes the whole group.
+    // Nearest offset, from where it would have gone, that takes the whole group
+    // *and* leaves it the air it is owed.
     let placed = false;
     for (const near of spiral({ q: 0, r: 0 }, PART_SEARCH_RINGS)) {
       if (near.q === 0 && near.r === 0) continue;
-      if (!clear(ids, near)) continue;
+      if (!clear(ids, near, true)) continue;
       claim(ids, near);
       moved++;
       placed = true;
       break;
+    }
+    // Rather than refuse the drop, fall back to merely not overlapping. A
+    // branch that cannot be spaced still has to go somewhere.
+    if (!placed) {
+      for (const near of spiral({ q: 0, r: 0 }, PART_SEARCH_RINGS)) {
+        if (!clear(ids, near, false)) continue;
+        claim(ids, near);
+        moved++;
+        placed = true;
+        break;
+      }
     }
     if (!placed) return null;
   }
@@ -550,7 +591,7 @@ export function placeIsland(
   // **Part, rather than reflow.** One cell catching something used to cost the
   // whole branch its shape. Move aside only what is actually in the way.
   if (groupOf) {
-    const parted = partedLanding(occupancy, members, anchorId, target, groupOf);
+    const parted = partedLanding(occupancy, members, anchorId, target, groupOf, gapBetween);
     if (parted) {
       return { kind: "parted", cells: parted.cells, anchor: target, moved: parted.moved };
     }
@@ -704,8 +745,16 @@ function reflow(
   if (homeward) cameFrom.set(anchorId, homeward);
 
   // Which group sits where, so the spacing rules can be applied as we go.
+  //
+  // Seeded from the **whole map**, not just this branch. Seeding it only from
+  // the branch is a mistake that reads as working: every cell inside the branch
+  // is spaced correctly, and the branch still lands on top of the neighbours it
+  // cannot see.
   const groupAt = new Map<string, string>();
-  if (spacing) for (const [id, cell] of out) groupAt.set(cellKey(cell), spacing.groupOf(id));
+  if (spacing) {
+    for (const [key, id] of taken) groupAt.set(key, spacing.groupOf(id));
+    for (const [id, cell] of out) groupAt.set(cellKey(cell), spacing.groupOf(id));
+  }
 
   /** Is this cell far enough from everybody this unit is not related to? */
   const clearEnough = (cell: Cell, group: string): boolean => {
@@ -726,12 +775,18 @@ function reflow(
     const back = cameFrom.get(parentId);
     for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
       const group = spacing?.groupOf(childId);
-      const cell = group !== undefined && group !== spacing!.groupOf(parentId)
+      const sameIsland = group !== undefined && group === spacing!.groupOf(parentId);
+      const cell = group !== undefined && !sameIsland
         // A new island: find clear water, the same rule the allocator uses.
         ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
-        : homeward
-          ? radiatingCell(taken, parentCell, back ?? null)
-          : nearestFreeCell(taken, parentCell, { maxRings: 14 });
+        : group !== undefined
+          // Same island, but still not allowed to grow into the one next door.
+          // This is where a tidy used to magnetise a branch onto whatever was
+          // nearest, family or not: `nearestFreeCell` knows nothing of groups.
+          ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
+          : homeward
+            ? radiatingCell(taken, parentCell, back ?? null)
+            : nearestFreeCell(taken, parentCell, { maxRings: 14 });
       if (!cell) return null;
       if (group !== undefined) groupAt.set(cellKey(cell), group);
       out.set(childId, cell);

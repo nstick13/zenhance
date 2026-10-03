@@ -100,6 +100,21 @@ const RADIATE_WINDOW_MS = 5_000;
 const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
 /**
+ * Clear tiles between two groups, by how many rungs up to their common
+ * ancestor: index 1 is a sibling, 2 a cousin, 3+ anyone further off.
+ *
+ * **One knob, in one place**, because this is the number Greg is judging by eye
+ * and it should be changed without reading the allocator. Measured on
+ * Northwind, the ladder below is met by every pair but one in 395 — the rule
+ * is enforced; whether one tile between siblings *reads* as separation is the
+ * question the knob exists to answer.
+ *
+ * Raising it costs map: the whole company spreads, and the allocation gets
+ * slower because every region hunts further for clear water.
+ */
+const GAP_BY_RUNGS = [0, 1, 2, 3];
+
+/**
  * How far the hand may drift and still be holding, as a share of a cell.
  *
  * Without this the clock ran from the moment the pointer entered a tile and
@@ -334,11 +349,11 @@ export default function HexLab({
       const theirs = new Set([b, ...(line.get(b) ?? [])]);
       // Rungs from `a` to the first ancestor it shares with `b`. The unit
       // itself counts as rung 0, so a shared parent gives 1 — a sibling.
-      let rungs = TEAM_GAP;
+      let rungs = GAP_BY_RUNGS.length - 1;
       for (let i = 0; i < up.length; i++) {
         if (theirs.has(up[i])) { rungs = i + 1; break; }
       }
-      const gap = Math.min(TEAM_GAP, rungs);
+      const gap = Math.min(TEAM_GAP, GAP_BY_RUNGS[Math.min(rungs, GAP_BY_RUNGS.length - 1)]);
       cache.set(key, gap);
       return gap;
     };

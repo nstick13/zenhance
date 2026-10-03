@@ -474,3 +474,49 @@ describe("moving a branch that is already an archipelago", () => {
     expect(hexDistance(landing.cells.get("sales")!, landing.cells.get("north")!)).toBe(1);
   });
 });
+
+/**
+ * The rule the rearrange path never learned (Greg, 2026-10-03).
+ *
+ * *"I'm still seeing touching people who are of differing teams
+ * post-auto-rearrange… my hunch is we have a clash from some deeper legacy
+ * behaviour in the layout engine."*
+ *
+ * He was right, and it was two places: `partedLanding` asked only whether a
+ * cell was **occupied**, and `reflow` seated against the nearest free cell with
+ * no idea whose island it was next to. Both predate the archipelago spacing, so
+ * a carefully spaced company came apart the first time anybody moved anything.
+ */
+describe("a drop obeys the spacing, not only the occupancy", () => {
+  /** Two groups travelling together: the anchor's team, and a second team. */
+  const island = new Map([
+    ["sales", at(0, 0)],
+    ["north", at(1, 0)],
+    ["south", at(4, 0)],
+  ]);
+  const groups = (id: string) =>
+    id === "south" ? "b" : id === "them" ? "c" : "a";
+  const oneClearTile = () => 1;
+
+  /** A stranger parked exactly where `south` would otherwise come to rest. */
+  const stranger = new Map([[cellKey(at(15, 0)), "them"]]);
+
+  it("will not land a travelling group tight against another group", () => {
+    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups, oneClearTile);
+    expect(landed).not.toBeNull();
+    // `south` would have translated to 14,0 — one cell from the stranger.
+    expect(hexDistance(landed!.cells.get("south")!, at(15, 0))).toBeGreaterThan(1);
+  });
+
+  it("still lands the anchor exactly where the hand let go", () => {
+    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups, oneClearTile);
+    expect(landed!.cells.get("sales")).toEqual(at(10, 0));
+    // And the anchor's own team keeps its shape beside it.
+    expect(landed!.cells.get("north")).toEqual(at(11, 0));
+  });
+
+  it("without a gap rule it only avoids overlapping, as it always did", () => {
+    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups);
+    expect(landed!.cells.get("south")).toEqual(at(14, 0));
+  });
+});
