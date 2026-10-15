@@ -977,6 +977,335 @@ arrangement of the archipelago is not an arrangement of the atlas.
 Neither fault was the tidy up, which produces no collisions at all on a fresh
 map in either shape — it was the input it had been handed.
 
+#### In extremis: the halo uncapped, and what it costs (2026-10-03, later still)
+
+Greg: *"remove the cap on how much spacing can exist at the top levels — we can
+reinstate it later… yes, I said nodes, but I also mean people/teams too, with
+the exception of team leads. So the space around master-centre in the next
+iteration should be HUUUGE. I want to see it in extremis before moving to the
+next stage."*
+
+Three changes, and the reasoning behind them is worth keeping, because the
+spectacle is not the point. He is *"slowly trying to fix the radiate/fan out
+problem without forcing the thing into a fan — I want it to arrive there
+naturally by merit of the structure and rules about how the structure is
+displayed and made legible."* A centre too big to sit beside leaves its children
+nowhere to go but **around** it, so the radial reading falls out of the spacing
+rule rather than being imposed by one.
+
+- **`MAX_TIER_GAP` is `Infinity`.** Set it to a number to put the lid back on;
+  that is the whole of reinstating it.
+- **The halo turns away a child's whole territory**, people and teams included,
+  rather than merely holding its node at a distance. This is the thing that was
+  tried and backed away from a few hours earlier, when it pushed a report 21
+  tiles out — which is now the intended behaviour rather than an accident.
+- **A unit's own lead walks through the halo**, and is seated first so it has
+  the pick of the ground inside it. The person who runs a place belongs at its
+  door.
+
+On the 2,562-person company, with people as the smallest unit:
+
+| cap | master centre → its reports | span | time |
+| --- | --- | --- | ---: |
+| 1 | 1, 3 | 246×199 | 219ms |
+| 3 | 1, 6 | 282×359 | 371ms |
+| 6 | 1, 7 | 480×368 | 808ms |
+| **none** | **1, 35** | **531×437** | **2,885ms** |
+
+The leading `1` in every row is the lead, through the halo. Everybody is still
+seated at every setting — 2,957 of 2,957, nothing unplaced — and family cohesion
+does not move at all (88% throughout), because the halo pushes a whole territory
+out as one piece rather than tearing it apart. 361 of 395 leads sit directly
+against the unit they lead.
+
+**2.9 seconds is the price of looking at it**, and it is a real cost rather than
+waste: starting the ring search outside the halo instead of walking it saved
+almost nothing, so it is the search at that radius, not the skipping. A cap of 3
+costs 371ms for most of the effect. The tests pin their behaviour to an explicit
+cap rather than to the default, because the default is now a dial being turned.
+
+#### A curved gap, bunched humans, and a lever that was already spent (2026-10-04)
+
+Greg asked for three things. Two went in; the third turned out to be done
+already, by something else.
+
+**The spacing follows Fibonacci rather than climbing.** *"That should visually
+cluster teams and their parents and push ever more space between the more
+distant relatives."* 0, 1, 1, 2, 3, 5, 8, 13 — the first terms barely separate
+at all, so a team and the thing that holds it stay as tight as they were, and
+then it runs away. Relatedness stops being something the eye counts rungs to
+recover and becomes something it reads off the width of a gap.
+
+**It needed a fix before it could work at all.** The engine had only a cell
+count to judge by, so a manager with three reports looked exactly like a small
+department — four cells. Tiers accumulated *inside* teams: eleven of them on the
+45-person company, where the structure has four. Under a linear rule that merely
+looked odd; under Fibonacci it put **57 tiles** between the master centre and
+its own report on a 45-person company. The engine is now told which units are
+people, and a person is never a place however many report to them. Same company,
+same curve: 8 tiles.
+
+**People are bunched by a gate, not a preference.** *"Teams of humans should be
+forced together until a user separates them. So the point is we allow exclaves,
+but only when they are manually created."* `FAMILY` against `GROWTH` was a
+preference and the wrong way round for an individual — a ring of territory cost
+100 while standing apart from your own manager cost 45, so the packer would
+strand somebody to save a ring. Somebody who must land against their family can
+only be on one of the six cells round a family member, so those are enumerated
+directly rather than searched for. **People adrift from their own family:
+19.6% → 1.7%**, and the remainder means the ground genuinely ran out.
+
+**The routing was left alone, and this is the evidence why.** Sweeping the turn
+cost from 12 to 500 on the 2,562-person company:
+
+| `TURN` / `TURN_PER_SPAN` | dead straight | corners per chain | under a stranger |
+| --- | ---: | ---: | ---: |
+| 12 / 6 (today) | 73% | 0.37 | 0 |
+| 60 / 30 | 74% | 0.29 | 22 |
+| 120 / 60 | 75% | 0.25 | 34 |
+| 500 / 250 | 75% | 0.25 | 36 |
+
+Two points of straightness for 36 chains driven under somebody else's tile, and
+flat past 120. **The lever is spent** — which is the fourth time this study has
+reached for the router and found the answer was placement. And placement has
+already delivered it: under the atlas chains run **88% dead straight at 0.24
+corners each**, against 73% on the arrangement the sweep was measured on. What
+Greg asked for is in, it just did not come from `route.ts`.
+
+#### The cap came back, and performance is now the blocker
+
+**Uncapped Fibonacci is 233 seconds** on the 2,562-person company with people as
+units. The root earns a halo tens of tiles wide and the search at that radius
+stops being affordable by any margin — the test suite times out against it. So a
+number came back.
+
+> **Corrected 2026-10-14.** This paragraph said *"the cap is back at 5"* for a
+> week while the code said `3`, and then `48`. A rule set drafted from this file
+> on 2026-10-07 duly proposed *"keep the current size-proportional gap and its
+> cap of 5"* — a large tightening, described as keeping things as they are, from
+> a number that was never in the code. Greg: *"the spacing gap cap at 5 is
+> invented. We can revoke it."*
+>
+> There is no cap as a design choice. `GAP_SHARE = 1/3` is the only spacing
+> number with a reason behind it. What remains is a **guard against a
+> pathological company**, set wide enough never to bind on a real one, and the
+> 233 seconds above is the whole of why it exists. See `docs/MAP-LAWS.md`,
+> Law 4.
+
+Even capped, the 2,562-person company takes about **four seconds** in people
+mode. Two attempts at the packer made no difference: starting the ring search
+outside the halo rather than walking it saved nothing, and enumerating an
+individual's family-adjacent cells improved the layout without moving the clock.
+It is the search itself at this scale, and it wants real work rather than a
+tweak. Until then this arrangement is comfortable on the 45- and 1,000-person
+companies and slow on the largest.
+
+#### Tidy stopped spacing anything, and the ranking is what fixed it (2026-10-14)
+
+Greg, on the first build with the drop path's own spacing removed: *"the
+auto-tidy works amazingly, but it doesn't provide any space between peer
+groups… mostly like-teams/branches stay together, but they do tend to split in
+some cases. Further, they bunch together with no space between them. I think the
+fix is reinstating the spacing function — it feels like it's not there anymore
+at all."*
+
+It was not there at all, and that was this engine's fault. Removing `gapBetween`
+from the drop path was right — it was a second, tighter rule — but **nothing was
+put in its place**, and `neaten` never had a spacing rule of its own. Its gather
+phase seats a drifted branch on the *nearest* free cell beside its family, which
+packs a map solid: every boundary ends up one tile wide and stops saying anything
+about what it separates.
+
+Measured on the 1,000-person company, one move-and-tidy:
+
+| | clean load | tidy, no spacing | tidy, layout's spacing |
+| --- | ---: | ---: | ---: |
+| cells touching another branch | 53% | **79%** | **53%** |
+| whole branches | 27/58 | 47/58 | 35/58 |
+| curl-back | 37% | 33% | 32% |
+| cost per press | — | 22ms | 32ms |
+
+On Northwind: crowding **81% → 47%**, and the company stops collapsing — span
+129×83 back to 146×163.
+
+**The fix is Law 4 rather than a new rule.** `layoutTerritories` already records
+what it kept clear round every unit, as `spacedBy` — a share of the size of the
+thing it separates. Tidy is handed that and honours it. It is now carried on
+`Allocation` so the lab can pass it; the archipelago allocator has no such
+notion and passes nothing, which leaves tidy packing tight exactly as before.
+
+**And the ranking earned its keep.** The obvious stronger fix is to let a branch
+move out to the rings where its owed gap is actually available. That halves the
+crowding again — and takes whole branches from 47/58 to **31**. It is Law 2
+losing to Law 4, and it is the *other* half of what Greg reported in the same
+breath. So the branch still sits against its family and the room comes from
+choosing which of those cells. Without a ranked rule set that trade would have
+looked like a win.
+
+Two measures were wrong on the way, and both flattered the answer. Counting a
+family as "parent plus direct children" measures an archipelago property the
+atlas never had; what the eye reads is the **outline**, which wraps a unit and
+all its descendants. And counting a unit touching its own grandchild as
+"crowding" measures cohesion, not crowding — kin is a unit's whole subtree plus
+its line of ancestors, and everybody else is a stranger.
+
+#### The five-second re-pickup had no spacing either (2026-10-14)
+
+Two paths re-lay a branch: the **tidy button** (`neaten`) and the **five-second
+re-pickup** (`placeIsland` with `radiateFrom`, which calls `reflow`). Giving the
+first the layout's figures and not the second produced exactly the
+inconsistency Greg named: *"the 'pick up and place within five seconds' rule…
+pushes everything together so the gap between anything is zero, which means it's
+not applying the same rules as the auto-tidy."*
+
+The cause was a hole rather than a decision. `reflow`'s spacing came from
+`gapBetween`, the old model's kinship rule; the drop path stopped passing it on
+2026-10-14 because it was a second, tighter rule, and nothing replaced it on
+this path.
+
+`reflow` now takes the same `TidySpacing` the tidy button gets — `spacedBy`
+plus a kinship test, where kin is a unit's own line of ancestors and its own
+descendants and everybody else is a stranger. Crowding inside a re-treed branch:
+
+| | 1,000-person | Northwind |
+| --- | ---: | ---: |
+| clean load | 48% | 57% |
+| re-tree, before | **98%** | **99%** |
+| re-tree, now | 60% | **51%** |
+
+Cost is 2ms on a 42-unit branch and 11ms on a 173-unit one, and it recomputes
+only when the hand crosses into a new tile, not per pointer event.
+
+A plain drop is still handed nothing. Law 0: the hand outranks the engine, and a
+drop that quietly spaced itself out would be the engine arguing with it.
+
+#### The confetti, found (2026-10-14)
+
+Greg reported it four times and it resisted reproduction for a week. Two things
+hid it, and both are worth not rediscovering.
+
+**A drop onto empty ground is always clean.** Every earlier attempt translated a
+large branch into open space, which `placeIsland` answers with `fits` — a plain
+cell-by-cell translation that cannot break anything. The fault needs the branch
+to *overlap* somebody, and with the gap now a share of a territory's size the
+map is spaced so generously that overlap has to be aimed for. On Northwind the
+worst overlap reachable by any translation of the Everest Region branch is 56 of
+its 1,258 cells.
+
+**"The largest child of the root" is the wrong branch to grab.** The fixtures put
+one pass-through unit under the root, so that branch *is* the whole company and
+nothing is left outside it to collide with. The earlier probe — *"a 332-unit
+branch with five child trees, dropped three ways"* — was testing a translation
+into a vacuum.
+
+The gesture was recovered from the 2026-10-06 session transcript, which had
+preserved the five unit ids Greg's hand grabbed. All five are inside **Everest
+Region**, whose subtree is 1,258 units — exactly the move count his saved
+arrangement held. His arrangement was that one branch moved.
+
+**What it does.** Over 484 overlapping drop targets on the 1,000-person company,
+with today's code:
+
+| where the governing node lands | outcome |
+| --- | --- |
+| on a free cell | 293 `parted`, 157 `nudged`, **11 `gathered`** |
+| **on an occupied cell** | **22 of 23 `gathered`** |
+
+`gathered` is the confetti: the branch is re-laid from scratch and whole families
+inside it fall from **224/248 to about 80**. So it is not random — it is
+overwhelmingly *dropping the node you are holding onto a tile somebody already
+has*, which is the natural way to say "put this over there". It does not rectify
+on a second drag because once the shape is gone, a later clean drop faithfully
+translates the broken shape.
+
+**And it split a proposed deletion in two.** The draft rule set called stopping
+`groupOf` and `gapBetween` reaching the drop path *"two deletions, not
+rewrites… the cheapest high-value change"*. Measured on the clashing drop:
+
+| `placeIsland` given | landing | whole families |
+| --- | --- | --- |
+| `groupOf` + `gapBetween` (today) | `parted` | 224/248 |
+| `groupOf` only | `parted` | 224/248 |
+| neither | **`gathered` every time** | **73–99/248** |
+
+`gapBetween` is the harmful half — removing it alone slightly *improves*
+cohesion, and it is gone. **`groupOf` is load-bearing**: it is what tells a clash
+which body may step aside so the rest can translate as-is, and deleting it turns
+every clashing drop into confetti. It does not want deleting; it wants to
+*become* the territory rather than a flat team id.
+
+A third claim from the same brief did not survive either: **`neaten` is not the
+confetti engine.** On the recovered gesture, tidy *improves* cohesion — children
+touching their family 86.4% → 91.5%, adrift 403 → 251, whole families 1,522 →
+1,541. Stopping it consulting routes may still be right on principle (Law 5), but
+it is not a cheap win and it is not what Greg has been seeing.
+
+Repro: `npm run hex:confetti` for Northwind; `app/lab/hex/confetti.test.ts` for
+the regression, which states Law 2 as an `it.fails` so the suite stays honest
+about it rather than silent.
+
+#### Facing, and why fixing it only got halfway (2026-10-06)
+
+Greg, on the chain from a deep team looping over itself: *"if my child sits at
+an angle to my source spine, then its child will similarly sit at an angle, and
+since we're using hexagons, we end up with spirals within four steps."*
+
+He was right about the mechanism. A unit's children grow along its **spine**,
+and the spine was set from accumulated birth order — *you are the second child,
+so you are 60° off your parent* — rather than from where the unit actually
+ended up. Six turns is a circle, so a branch met itself inside four rungs.
+Measured: **62% of units faced a different way from the one they were placed
+in**, 466 of them by more than 120°.
+
+Three fixes were measured on the 2,562-person company:
+
+| | facing disagrees | >120° out | time |
+| --- | ---: | ---: | ---: |
+| accumulated birth order (before) | 62% | 466 | ~4,000ms |
+| **place once, then face the way you landed** | **45%** | **296** | **645ms** |
+| settle to a fixed point over four passes | 52% | 361 | 1,319ms |
+| offer all six, keep one that lands where it faces | 48% | 370 | 1,603ms |
+
+The single pass wins, and it is kept. It also made the layout **six times
+faster**, which was not the point but is not an accident either: a branch that
+does not wind back on itself is a branch the packer finds room for sooner.
+
+**The two clever versions both failed, and for the same reason.** Iterating
+oscillates rather than converging, because turning a territory changes where it
+fits; and a self-agreeing direction often does not exist at all. Underneath
+both: `placeChild` is dominated by `GROWTH`, which pulls every child toward the
+parent's existing mass **whichever way it is turned**. Direction is not
+something the packer optimises, so no amount of re-asking makes the answer come
+back directional.
+
+Which means the remaining 45% is not a facing problem at all, and Greg's own
+proposal is pitched at the right level where this one was not: make proximity to
+the **lineage** expensive — hardest near the great-grandparent, then the
+grandparent, then the parent — so that radiating outward is what the packer
+wants rather than what it is told. An earlier attempt at a plain homeward
+penalty moved the needle barely at all (35.5% → 33.4% of units sitting nearer
+the centre than their own parent), because it was weak against `GROWTH` *and*
+because, with the facing wrong, "the home side" was not pointing home. It is
+worth trying again now that one of those two is fixed.
+
+#### A scatter tracker in the lab panel
+
+Greg, 2026-10-06: *"can you put a tracker in that measures grouping size and
+distance from parent on the live version while it's running — this should
+establish how many human-nodes are scattered and by how far."*
+
+Two lines in the panel, recomputed with the arrangement so they move the instant
+anything is dragged:
+
+- how many people are **not beside their own family**, and the furthest one;
+- how many teams are **in more than one piece**, the worst, and team sizes.
+
+The second is the one that catches confetti. A team whose people form one
+connected patch reads as one thing; a team in nine pieces is the fault Greg has
+reported four times, whatever produced it. Dragging a 106-unit branch across
+Digital Tailoring left both lines unmoved, which is the first time that claim
+has had a number behind it rather than a screenshot.
+
 #### Still open
 
 - **131ms against 14ms** in teams view, after the 47-fold cut. Closer to affordable, still an
@@ -1114,9 +1443,392 @@ isolated: everything that moves comes from `lib/map/camera/` unchanged, and the
 renderer under it is four hundred lines of `ctx.arc`. If it only worked inside
 `OrbitalMap.tsx` we would not know which of the two was doing the work.
 
+## The compass — where "outward" comes from (2026-10-14)
+
+Greg, after the rule work landed: *"the 5s placement feature bunches peer
+groups together — it does not observe any spacing rules"*, and *"we're getting
+quite a lot of loopback on connection lines still."* Two faults, and the second
+one was not where anybody had been looking.
+
+### The lines were never the fault
+
+Measured on a clean load, before any change: **94–96% of connection lines are
+dead straight**, and only 1–4% wander away from their parent before coming
+back. Routing is not what loops.
+
+What loops is the **way home**. Walk a person up through every manager to the
+master centre and count the rungs that take you *further* out:
+
+| | 45-person | 1,000-person | Northwind |
+| --- | ---: | ---: | ---: |
+| the way home doubles back at least once | 78% | 94% | 97% |
+| rungs that step further out | 17% | 24% | 25% |
+| path walked ÷ direct distance, median | 1.96 | 1.79 | 1.88 |
+| …90th percentile | 2.69 | 4.18 | 4.26 |
+
+Every individual link is straight; the accumulation is not. That is what the
+eye reads as a loop, and it is a placement fault, which makes it the **fifth**
+time a line-drawing problem in this engine turned out to be a placement one.
+
+### Why every previous attempt missed it
+
+Law 3's number — units sitting nearer the master centre than their own parent —
+had sat at 32–35% through two fixes aimed squarely at it. The reason, measured:
+of the 408 offenders on the 1,000-person company, **only 151 were also placed
+behind their parent**. The other 257 sat *forward* of their parent and still
+ended up nearer the middle.
+
+A local rule cannot see those 257, and every rule tried had been local:
+
+- **birth-order facing** — 62% of units faced a way they had not been placed.
+  Greg, 2026-10-06: *"we end up with spirals within four steps."*
+- **reading the facing back off the placement** — 62% → 45% misfacing, and
+  curl-back did not move.
+- **penalising the home side** — 35.5% → 33.4%, and a fresh sweep of it here
+  reproduced the same: 32.1% → 31.3%.
+
+The cause is structural. `placeChild` runs inside `measure`, which is
+bottom-up: when a unit's children are placed, nobody yet knows where that unit
+will stand in the world. "Outward" could only be guessed from the last step
+taken, and a chain of last steps is a random walk.
+
+### What was tried and rejected
+
+- **A second packing pass**, re-placing with true world directions. `placeChild`
+  is **66–68% of layout time** (profiled: 2,073 calls, 283ms of 430ms on the
+  1,000-person company), so this costs about +68%. Greg had just bought that
+  time back by capping `MAX_HALO`.
+- **Reserving a disc per territory**, so a later pass could rearrange inside it
+  freely. Measured: a territory fills only **30% of the disc that bounds it**
+  (mean across 245 territories). Reserving discs would roughly triple the ground
+  each one claims.
+
+Those two are worth recording together, because they are the proof that you
+cannot have exact-shape packing *and* world-aware orientation in one geometric
+pass. The way out is not to make the geometry cleverer.
+
+### The compass
+
+`headings` in `territory.ts` gives every unit a bearing **before a single cell
+is packed**, from the shape of the company alone. The root owns the circle; each
+unit hands its children an arc centred on its own bearing, shared in proportion
+to how much of the company hangs beneath them; a unit's bearing is the lattice
+direction nearest the middle of its arc.
+
+It is O(units), needs no geometry, and because an arc is an **absolute** bearing
+rather than a turn relative to a parent, **it cannot accumulate** — which is the
+failure mode Greg named. It also replaced `settleFacing`'s second placement
+rather than adding to it, so the layout does less work than before.
+
+Two numbers shape it, and both are **chosen rather than measured**: the arc is
+capped at half a turn (±90°, so nothing is ever aimed behind its parent) and
+floored at a sixth (the narrowest fan that can still give two children different
+bearings). Swept across all three companies every setting in range beat having
+no compass, but neighbouring values jump around — one floor giving 9.7%
+curl-back and the next 15.8% — because snapping a continuous bearing to six
+directions flips many units at once. Tuning to the best reading would be
+fitting noise.
+
+### Law 2 outranks Law 3, and what it cost to learn
+
+The first build charged every unit the full price of sitting behind its parent.
+Teams whose children all touch them fell from **90% to 86%**, because `beside`
+is satisfied by touching a *sibling*, so a person could satisfy their family two
+cells out and the backward cost bought exactly that.
+
+Fixing it by lowering the price gave the cohesion back and took curl-back from
+8.1% straight back to 21.2% — the wrong lever. The right one is a gate: a **leaf**
+pays for every ring past its parent's doorstep, at a price no bearing can
+outbid. Insensitive to its exact value between 1,000 and 20,000, which is how
+you tell a gate from a dial.
+
+Scoping that gate to **leaves** rather than to everyone who is not a place is
+worth its own line, because getting it wrong was the single worst reading of the
+session: charged to every person, it caught managers in the middle of long
+people-chains, and on Northwind drove curl-back to **47%** — worse than before
+the compass — and widened the map by half.
+
+### Measured
+
+Clean load, people as the smallest unit, against the same build without the
+compass:
+
+| | 45-person | | 1,000-person | | Northwind | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| | before | after | before | after | before | after |
+| nearer the centre than their parent | 34.9% | **7.3%** | 32.1% | **12.7%** | 32.1% | **11.0%** |
+| dead straight chains | 93.6% | **99.1%** | 94.6% | **98.7%** | 95.0% | **98.8%** |
+| chains under a stranger | 2 | 2 | 16 | **1** | 45 | **12** |
+| children touching their family | 86.2% | **87.2%** | 86.1% | **87.0%** | 86.5% | 86.1% |
+| layout | 19ms | **15ms** | 412ms | **341ms** | 1,176ms | **1,145ms** |
+| radius | 37 | 36 | 155 | 166 | 199 | 252 |
+
+**The cost is width**, and it is real: +7% on the 1,000-person company and
+**+27% on Northwind**, where the worst single offender also went from 28 tiles
+to 50. Cohesion held everywhere and the layout got no slower. Northwind is the
+weakest case on every line here, which is consistent — it is eleven rungs, and
+accumulation is what the compass is fighting.
+
+---
+
+## The gap, read from one side only (2026-10-14)
+
+Greg: *"the 5s placement feature bunches peer groups together."* It was
+observing half of one rule. `reflow` asked *"is my own owed gap clear?"* and
+never *"am I standing in somebody else's?"*, so the unit owed the least decided
+every boundary it took part in — and a person is owed nothing.
+
+Measured on the 1,000-person company, one five-second re-pickup of a
+1,269-unit branch:
+
+| | clean load | 5s re-pickup, before | after | tidy button |
+| --- | ---: | ---: | ---: | ---: |
+| units given the room the layout owes them | 134 | 21 | **110** | 133 |
+| units squeezed | 85 | 198 | **109** | 86 |
+| cells touching a stranger | 50% | 90% | **85%** | 48% |
+| gap between sibling nodes, mean | 4.6 | 2.7 | 2.7 | 4.5 |
+
+On the 45-person company it goes further than the clean load: squeezed **8 → 0**,
+and every tile of owed room delivered.
+
+The fix stamps each unit's owed ground as it is seated, so a candidate cell is
+one lookup rather than a fresh search — the same idea as the atlas's `blocked`
+and `halo` sets, which is why the atlas never had this fault.
+
+**It is two-thirds of the problem, not all of it.** Sibling *node* spacing is
+untouched at 2.7 against the load's 4.6, because `reflow` seats one node at a
+time and reserves nothing for that node's family: two sibling teams are placed a
+respectable distance apart and then their people grow into the space between
+them and interleave. The atlas measures each child's whole subtree first and
+reserves a disc; `neaten` moves whole branches and measures the clear ground
+round the whole body. `reflow` is the only one of the three that cannot, and the
+answer is to retire it — see `docs/TASKS.md`.
+
+### A latency finding, unrelated and worth knowing
+
+`placeIsland` is called on **every pointer move** during a drag. On the
+1,000-person company, dragging a 1,269-unit branch inside the armed five-second
+window costs **170ms per pointer move** — six frames. This predates all of the
+above and none of it made it worse. Small branches are 2ms.
+
+---
+
+## The flung node, and a frontier (2026-10-14, evening)
+
+Greg, after the compass landed: *"its faster and sometimes less buggy, but
+sometimes we're still getting wild deviations. When moving a medium cluster,
+occasionally one node will get flung out, or we'll end up with something that
+looks like digital spaghetti in the connection lines."*
+
+### Measuring the wrong thing, three times
+
+Most of the evening went on this, so it is worth writing down plainly.
+
+**"More than three tiles from its parent"** — the first metric. It said the
+spacing fix had doubled the fault (3.0% → 6.5%). Inspecting the worst cases
+showed they were nearly all **anchors**: the node the hand is holding, sitting
+exactly where the clean load had already put it. A big division has to clear its
+siblings' whole territories, so sitting far from its parent is the rule working.
+
+**"Further from its parent than its own owed room explains"** — better, and
+still wrong, for the same reason: a unit's distance from its parent is set by its
+*siblings'* sizes, not only by its own gap.
+
+**"Touching neither its parent nor any sibling"** — wrong in the most expensive
+way, because it looks right. A unit owed four tiles of clear ground is **meant**
+to sit four tiles out, so touching and well-spaced are opposites. Every attempt
+to improve this number made the spacing worse, and that was not a coincidence —
+it was the same quantity measured with the sign flipped.
+
+**What works: distance to the nearest of parent-or-sibling, less that unit's own
+owed room.** Lost means further out than your own clear ground explains. On that
+measure the clean load sits at 4.2% and a five-second re-pickup at 5.6%, with
+the worst case 7 tiles.
+
+### The frontier, and why tuning cannot cross it
+
+Before finding the right metric, four separate mechanisms were tried against the
+wrong one. All four failed the same way, and the pattern is the useful part:
+
+| what was tried | flung | spacing |
+| --- | --- | --- |
+| clamp how far a unit may travel for its gap | better | collapses |
+| grade the gap breach instead of yes-or-no | no better | shares room out |
+| price the two laws against each other | slides | slides |
+| gate on touching family, as the atlas does | 3.4% | collapses |
+
+Every one slid along a single line: **cohesion bought bunching, and spacing
+bought flinging, with nothing in between.** The ranking applied literally — Law 2
+strictly above Law 4, the family price set above the gap price — produces the
+worst bunching of all: units given their owed room fell from 115 to 1.
+
+The reason is structural and is the same finding as the morning's. **The atlas
+grows the ground to make room; `reflow` has to fit a branch into the hole that is
+already there.** For `reflow` the two laws compete for the same cells, so no
+weighting between them can satisfy both. That is the argument for retiring it —
+see [TASKS.md](TASKS.md) — and it is now evidence rather than opinion.
+
+Two of the dead ends are worth their own note:
+
+- **Grading the breach** (how far into somebody's ground, not merely whether) is
+  the right idea and shares the room out measurably better — total clear ground
+  delivered went 452 → 530. It also costs the early exit, because a maximum
+  cannot be known until the whole disc is scanned: **2.4 seconds per pointer
+  move** on the 1,000-person company against 170ms. It belongs with an engine
+  that can afford it.
+- **A ring-slack break**, the trick `territory.ts` uses, cut that to 112ms and
+  took the room delivered down to 20 of 851 owed. Fast and useless.
+
+### What landed: repair the tail, leave the policy alone
+
+Greg said *"occasionally **one** node"* — an outlier, not a distribution. So the
+search is untouched and `reflow` ends by fetching home anybody genuinely lost.
+
+It is safe in a way none of the tuning was: a unit further from its family than
+its own gap explains has **already** lost Law 2, so moving it cannot cost
+anything a higher law ranks. It is fetched back to a cell at about its owed
+distance — where the layout wanted it — rather than jammed against its relatives,
+which is what made the touching-based version flatten every gap on the branch.
+
+| | 45-person | | 1,000-person | | Northwind | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| | before | after | before | after | before | after |
+| lost by more than a tile | 16 | **1** | 52 | **0** | 104 | **5** |
+| lost by more than three | 3 | **0** | 32 | **0** | 50 | **1** |
+| worst case, tiles | 0 | 0 | 7 | **1** | 10 | **0** |
+| clear ground delivered | 40 | 40 | 452 | 397 | 268 | 239 |
+| cells touching a stranger | 69% | 69% | 81% | 81% | 94% | 94% |
+| nearer the centre than their parent | 12% | 14% | 11% | 11% | 26% | 27% |
+| one pointer move, big branch | — | 5ms | 170ms | 240ms | — | 665ms |
+
+The flung node is gone on every company. The cost is some clear ground on the
+1,000-person company — 452 tiles delivered down to 397, and units getting their
+gap in *full* from 115 to 74 — while the measures that track what the eye reads
+as bunching, cells touching a stranger and sibling spacing, do not move. The
+pointer-move cost rises by about 40%, on top of a figure that was already too
+high before any of this; see the task.
+
+---
+
+## Teams became real, and chains learnt to pass behind (2026-10-15)
+
+Two changes, both from Greg, both aimed at the same screenshot.
+
+### 1. The five-second gesture asks the atlas
+
+Greg: *"I think we need to have the code understand what a team is, so that it
+can calculate the best shape and protected periphery of it… Teams should be — to
+the extent possible — sticky, ie people in the same team should glue together
+where space allows, and where space doesn't, the whole team should move, rather
+than isolate one human."*
+
+**What a team looked like before.** On a clean load the atlas is perfect: all 230
+teams on the 1,000-person company in one connected piece, every person **exactly
+one tile** from their team node, nobody adrift. Not 99% — all of them. It manages
+that by measuring a team and reserving its ground *before* placing anybody.
+
+**What the gesture did to them.** `reflow` has no measuring pass, no reservation
+and no idea what a team is — it walks the company one unit at a time asking
+*"what is the nearest cell to your parent that satisfies your spacing?"*
+Instrumented over a whole-company re-tidy, **55% of units found a legal cell at
+an average of 3.9 rings from their parent** (it should be 1), and the other
+**45% found nothing legal within sixteen rings and gave up**, taking whatever was
+nearest. Those two numbers are both of Greg's complaints from one cause: the 45%
+make the compression, the 55% make the broken teams.
+
+The reason the near cells were refused is worth keeping: as the upper rungs are
+seated, each division stamps a halo of reserved ground up to twelve tiles wide,
+and a person is refused any cell inside a halo belonging to a division that is
+not their own. In the compressed re-laid map those halos overlap nearly
+everything, so the ground beside a person's own manager usually belongs to the
+division next door.
+
+**The fix is to stop `reflow` doing it.** `relayBranch` hands the subtree to
+`layoutTerritories` — the same engine, the same two passes — rotated to grow away
+from home and handed the company's own compass so it keeps facing the way it
+always faced.
+
+| | 45-person | | 1,000-person | | Northwind | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| | reflow | atlas | reflow | atlas | reflow | atlas |
+| teams in one piece | 74% | **100%** | 73% | **100%** | 40% | **100%** |
+| teams with nobody adrift | 89% | **100%** | 81% | **100%** | 53% | **100%** |
+| person → their team, mean | 1.64 | **1.00** | 2.46 | **1.00** | 3.53 | **1.00** |
+| worst | 6 | **1** | 16 | **1** | 16 | **1** |
+| span | 30×23 | **26×32** | 82×89 | **174×152** | 112×99 | **285×277** |
+
+**Every figure after the gesture is now identical to a clean load** — span,
+cohesion, curl-back, teams. Re-tidying a branch gives you the layout the engine
+would have chosen, which is what it always should have meant.
+
+**And it is far cheaper.** A branch's own shape does not change as the hand
+moves, only where it lands, so the atlas runs **once** when the gesture arms and
+after that carrying the branch is a translation: **1ms per pointer move against
+`reflow`'s 256ms.** `restBranch` offers the body the cell under the hand, then
+rings outward, and takes the first offset where every one of its cells is free —
+so a branch that cannot fit settles nearby **whole** rather than seeping into the
+gaps.
+
+**Two bugs found on the way.**
+
+- *The gesture refused its own natural form.* A landing was only worked out once
+  the pointer crossed into a different cell. Picking a node straight back up and
+  setting it down where it already was — which is the whole five-second rule —
+  never leaves its own cell, so the release found no landing and refused the drop
+  with *"there is nowhere free nearby"* on a nearly empty map. An armed pick-up
+  now has its answer before the hand moves.
+- *A skewed bearing.* The direction away from home was read straight off `q` and
+  `r`. `cellToWorld` scales the two axes differently — `(1.5q, √3(r + q/2))` — so
+  the angle was wrong by a little every time.
+
+### 2. Chains may pass behind a colleague, and are faded where they do
+
+Greg: *"we need to make it so that chaining can run behind existing colleagues —
+perhaps by fading the colour of the connection line."*
+
+Those are one idea. Running behind somebody cost **260** — twenty-six steps of
+detour — which made it a thing to avoid at nearly any price, and avoiding it is
+what drew the switchbacks: a chain that may not pass behind has to go *round*,
+and the detour is paid in distance, which is the thing the eye follows.
+
+At **30** — three steps — a chain steps behind one tile rather than walking four
+round it, and still takes open ground when open ground is close:
+
+| | 1,000-person | | Northwind | |
+| --- | ---: | ---: | ---: | ---: |
+| | before | after | before | after |
+| dead straight | 98.7% | **100%** | 98.8% | **100%** |
+| detouring | 0.9% | **0%** | 0.6% | **0%** |
+| chains passing behind a tile | 1 | 45 | 12 | 125 |
+
+It is only acceptable because it is **drawn** as passing behind. `runsOf` cuts a
+walk into the stretches that are behind somebody and the stretches in the open —
+sharing boundary cells, or the line would come apart into dashes at every tile —
+and the lab draws the hidden ones at `BEHIND_ALPHA`. A line that crosses a tile
+at full strength reads as going *through* it, which is the thing that looks like
+tangle; faded, it reads as going behind, and the eye drops it and picks it up on
+the far side.
+
+**It does not shorten the longest chains.** 103 steps on Northwind, unchanged.
+Those are long because a unit's node sits in the middle of its own territory
+rather than at its door — a placement fault, written up in
+[MAP-REVIEW-2026-10-15.md](MAP-REVIEW-2026-10-15.md). The fade makes them
+legible; it does not make them short.
+
+### A measurement mistake worth recording
+
+Every probe in this session's first half built its tree with
+`buildOrbitalTree(org)` while the lab builds it with
+`{ mergePassThroughRoot: false }`. On the small company that is a five-unit tree
+against a three-unit one. The numbers above were all re-taken with the lab's own
+option and did not move, but they could have, and the next probe should start
+from how `HexLab` builds its tree rather than from the default.
+
+---
+
 ## Verified, and not
 
-**Verified by tests** (67 new, 733 across the suite, all passing): ring and
+**Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and
 spiral geometry; cell↔world round-tripping over 841 cells; neighbours exactly
 two inradii apart; Law 1 by re-running and by reversing the input order; Law 4
 on four company sizes, both densities — every unit in its own cell, no disc

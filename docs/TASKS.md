@@ -217,6 +217,427 @@ consequences — pointed at by `release` only.
 Until that exists, `release` is a rehearsal in costume: better than nothing,
 but it will not catch the volume-and-migration problems it is there for.
 
+### ▶ Branches face the wrong way, so the map spirals back on itself — *Claude, from Greg 2026-10-06*
+
+On `/lab/hex` in atlas mode, the line from a deep team back to the master centre
+visibly loops over itself. Greg, 2026-10-06, seeing it on Northwind: the mapping
+*"seems to loop back on itself."*
+
+**Measured: 62% of units face a different direction from the one they were
+placed in**, and 466 of them are more than 120° out. A unit's children grow
+along its *spine*, and the spine was being set from accumulated birth order —
+"you are the second child, so you are 60° off your parent" — rather than from
+where the unit actually ended up. So a unit placed to the north-east can be
+facing south-west, and its whole subtree grows back across its own parent. Every
+rung adds another relative turn, so a branch spirals and meets itself. Greg:
+*"if my child sits at an angle to my source spine, then its child will similarly
+sit at an angle, and since we're using hexagons, we end up with spirals within
+four steps."*
+
+A related number: 35% of units sit **nearer the master centre than their own
+parent does**, worst case 19 tiles nearer. Penalising the home side directly
+barely moved it (35.5% → 33.4%) — because with the facing wrong, "the home side"
+was not pointing home. The two are the same fault seen twice.
+
+The nesting itself is sound: zero descendants intrude on the centre past their
+own division on the 2,562-person company, so this is about orientation, not
+containment.
+
+The fix is to derive a unit's facing from where it was actually placed rather
+than from birth order, which is self-correcting at every rung instead of
+accumulating. It is circular — you cannot know where a child lands until you
+have rotated it — so it wants two passes rather than six.
+
+**☑ Done 2026-10-14 — and the fix above was not the one that worked.** Deriving
+the facing from the placement did land, and did what it promised (62% → 45%
+misfacing), and **curl-back did not move**. Nor did penalising the home side
+(35.5% → 33.4%, re-measured here as 32.1% → 31.3%). The reason, measured: of the
+408 units nearer the centre than their parent, only 151 were also *behind* their
+parent. The other 257 sat forward of their parent and still ended up nearer the
+middle — invisible to any rule phrased relative to a parent, which all three
+were.
+
+What worked is a **compass**: every unit is given an absolute bearing from the
+shape of the company before any packing happens, so the packer is told which way
+is out rather than inferring it. 35% → 7% on the 45-person company, 32% → 13% on
+the 1,000-person, 32% → 11% on Northwind; chains dead straight 94% → 99%; layout
+no slower, because it replaced a placement pass rather than adding one. It costs
+width: +7% and +27% on the two larger companies. `headings` in `territory.ts`,
+written up in [HEX-LAYOUT.md](HEX-LAYOUT.md).
+
+---
+
+### ☑ A unit travels to find its gap instead of staying with its family — *Claude, 2026-10-14, found and fixed the same day*
+
+Greg, 2026-10-14, after the spacing fix landed: *"sometimes we're still getting
+wild deviations. When moving a medium cluster, occasionally one node will get
+flung out, or we'll end up with something that looks like digital spaghetti in
+the connection lines."*
+
+**This one is new, and it came in with that same fix.** Making the spacing rule
+read from both sides was right, but it left the search unchanged: when a unit
+cannot get the clear ground it is owed anywhere near its family, it keeps
+looking outward until it finds somewhere that satisfies the gap. So it gets its
+room by leaving home. Measured on Digital Tailoring, over eight branches
+re-picked within the five-second window, units ending up more than three tiles
+from their own parent went **3.0% → 6.5%**, and the 95th percentile went from
+**2 tiles to 5**. That is the flung node, and a node five tiles out draws a long
+chain, which is the spaghetti.
+
+The answer is already in [MAP-LAWS.md](MAP-LAWS.md) and needs no new decision:
+**Law 2 outranks Law 4.** A body stays whole beats one measure of distance, so
+when the owed room is not available beside your family you sit tight against
+your family and go without it. The previous session made exactly this call for
+the tidy path — *"the branch stays against its family and the room comes from
+choosing which cell"* — and the drop path has the ranking the wrong way round.
+
+`firstClearCell` in `arrange.ts`: it should prefer a nearer cell that misses the
+gap over a further one that meets it, rather than scanning out to `maxRings` for
+the first cell that qualifies.
+
+**☑ Done 2026-10-14, and the fix above is not the one that worked.** Preferring
+a nearer tight cell is exactly one of four mechanisms tried, and all four slid
+along the same line: cohesion bought bunching and spacing bought flinging, with
+nothing in between. Applying the law ranking literally — the family price set
+above the gap price — gave the *worst* bunching of all, taking units given their
+owed room from 115 to 1.
+
+The reason is structural, and it is the same one as the task below: the atlas
+grows the ground to make room, while `reflow` has to fit a branch into the hole
+that is already there, so for `reflow` the two laws compete for the same cells
+and no weighting satisfies both.
+
+What landed instead leaves the search alone and repairs the tail, because Greg
+reported *"occasionally **one** node"* — an outlier, not a distribution. A unit
+further from its family than its own owed room explains has already lost Law 2
+outright, so fetching it back cannot cost anything a higher law ranks. Units lost
+by more than a tile: **52 → 0** on the 1,000-person company, **104 → 5** on
+Northwind, **16 → 1** on Digital Tailoring. It costs some clear ground on the
+largest companies and about 40% more work per pointer move. Measurements, and
+the three metrics that measured the wrong thing first, are in
+[HEX-LAYOUT.md](HEX-LAYOUT.md).
+
+---
+
+### 🟡 Open question: should a company start as concentric rings? — *Greg, 2026-10-14*
+
+**Not a task yet — Greg is sleeping on it.** Recorded so it is not lost and so
+nobody rediscovers the reasoning.
+
+Greg, after a day on the placement rules: *"I think we're going to have to put
+some more firm rules around what shape a company takes, albeit within the
+hexagonal layout paradigm, and albeit to start with before a user manually
+rearranges everything. This might see us revert to a more radial arrangement
+more like what we have on the main branch — with concentric rings of hexagons
+being the initial placements for nodes depending on how far they are from
+master-centre."*
+
+Two things from 2026-10-14 bear on it directly:
+
+- **Half of it already exists.** The compass (`headings` in `territory.ts`) now
+  gives every unit an absolute bearing worked out from the shape of the company
+  before any packing happens. A ring-by-rung scheme is the *other* polar
+  coordinate — bearing plus radius. So this reads less like a revert than like
+  finishing the idea that landed today, and the packer would become a tie-break
+  within a ring rather than the thing that decides position.
+- **It would also answer the fault above.** Most of the trouble this week comes
+  from the packer searching for somewhere that satisfies competing rules and
+  travelling when it cannot. Rings remove the search: your rung says your radius,
+  your bearing says your direction, and the only question left is which cell on
+  that arc.
+
+What it would cost, and what nobody has measured: a ring has a fixed
+circumference, so a wide rung has to either spill or compress, and *"no unit in
+any demo company has more than five children"* while a practitioner we spoke to
+ran ninety pods. That is the case to test first.
+
+Greg also said, same message: *"Manual rearranging is doing a good job — I like
+that."* Whatever is decided, the hand path is working and is not what needs
+changing.
+
+---
+
+### ☑ The hex map is still sized by circular geometry — *Claude, from Greg 2026-10-15, fixed same day*
+
+Greg, 2026-10-15: *"on Hex we should not be observing old laws or codes — almost
+at all. Hex should almost be a completely clean build inspired by, but not
+copying, the earlier orbital model."* The law numbering that prompted this is
+fixed. This is the part underneath it, and it is a real inheritance rather than a
+naming slip.
+
+**How big a hexagon cell is — the number every other size on the map is derived
+from — is currently worked out from how big a circle of people would be.**
+`scene.ts` asks the orbital engine for `seatRingRadius(UNIT_RADIUS,
+MAX_SEAT_RINGS - 1) + SEAT_RADIUS`: the radius of a ring of seats orbiting a
+disc. It also takes the drawn size of a node (`UNIT_RADIUS`), the size of a
+person's dot (`SEAT_RADIUS`), how work marks are arranged round somebody
+(`workGridPoints`), and the fan angle for an empty arc (`widestGap`) from the
+same place.
+
+This matters because the hex study already decided that circular geometry was
+the wrong answer for a hexagon once: `people.ts` exists precisely because the
+orbital `placeUnitSeats` *"sits the first six people inside the unit and the rest
+on circular rings"*, which is not how people orbit a hex node. That lesson was
+applied to where people stand and not to how big anything is.
+
+**Why it has not simply been ripped out.** Emitting an orbital `OrbitalScene` is
+a deliberate isolation strategy and it earns its keep: camera, visibility,
+signal, work and basket all consume that shape, so the hex study inherited fit,
+cull, wheel zoom, the mark budget and the health rings without a line of change.
+Breaking the contract costs all of that. The question is not *whether* hex should
+emit an `OrbitalScene` — it probably should — but whether it should be **deriving
+its own fundamental sizes from circular constants** while doing so.
+
+What to do, in order: give `lib/map/layout/hex/` its own cell-size and node-size
+constants derived from the lattice (`people.ts` already has `CLEARANCE =
+2/√3`, the hexagon's own inradius ratio); keep emitting `OrbitalScene`; then
+check nothing moved. Worth doing **before** any radial rewrite rather than after,
+because a ring layout will want to set these numbers itself.
+
+A smaller, related wart: every hex file imports `OrbitalTree` and `UnitNode` from
+`layout/model`. That one is **correct** — it is the company's own shape, shared by
+every engine, not orbital layout logic. Only the name is now misleading.
+
+**☑ Done 2026-10-15.** `cellRadiusFor` in `people.ts` now derives the cell from
+the lattice rule that places the people — the inverse of `ringsBetween` — so the
+two formulas are the same formula. `tight` moved by **0.3%**: the circular
+version had been landing on very nearly the right answer by accident, which is
+why it survived from day one. `roomy` grew **14%**, and that is a correction
+rather than a cost — the work reach was being computed for a 9.5-unit orbital
+dot when a person on this map is 14.25, so a person's work was under-reserved and
+could overlap the neighbouring tile at 1.75× and beyond. A mid-rung cell now
+holds 3 rings and 126 seats where it held 2 and 66.
+
+Hex now owns `PERSON_RADIUS` and `NODE_MARK_RADIUS` outright rather than deriving
+them from the orbital map's dot. What still crosses the boundary, and why each
+one is correct, is written at the import in `scene.ts`: the `OrbitalScene` shape
+it hands back (the whole isolation strategy), the work-mark furniture, and one
+angle utility. Four tests in `people.test.ts` hold the new rule, including that
+doubling every length doubles the answer — no constant has crept in from a
+circumference.
+
+---
+
+### ☑ The five-second re-pickup is a second engine for placing things — *Claude, from Greg 2026-10-14, done 2026-10-15*
+
+When you put a tile down and pick the same one up again within five seconds, the
+map takes that as *"now tidy this branch"* and re-lays everything beneath it.
+Greg, 2026-10-14: *"the 5s placement feature bunches peer groups together — it
+does not observe any spacing rules."*
+
+Half of that is now fixed: the rule about how much clear ground a thing is owed
+was only ever being asked from one side, so whichever of two neighbours was owed
+less decided the gap between them — and a person is owed nothing. Reading it
+from both sides took units squeezed inside a re-laid branch from 198 down to 109
+against a clean load's 85, and on the 45-person company from 8 to 0.
+
+**The other half is not a spacing rule, it is a second engine.** Three different
+things can lay out a branch, and only one of them understands territories. The
+atlas measures a child's whole family first and reserves ground for all of it;
+the tidy button moves whole branches and measures the clear ground round the
+whole body; the five-second path seats one node at a time and reserves nothing
+for that node's family. So two sibling teams get placed a respectable distance
+apart, and then their people grow into the space between them and interleave.
+Measured: sibling nodes end up 2.7 tiles apart against the clean load's 4.6, and
+no amount of handing this path better numbers will change that.
+
+The answer is in [MAP-LAWS.md](MAP-LAWS.md)'s own ownership table — *"where does
+a unit go: the atlas; nothing else places anything"* — so: have the five-second
+gesture call the atlas on the branch, oriented away from home and anchored where
+the hand let go, and retire `reflow` from this path. It should finish the
+bunching and fix facing inside a re-laid branch at the same time. `arrange.ts`,
+`HexLab.tsx`.
+
+**☑ Done 2026-10-15.** The gesture now hands the branch to the atlas
+(`relayBranch` + `restBranch` in `territory.ts`) instead of `reflow`. Teams in
+one piece went from 73%/40% to **100%** on every company, a person sits exactly
+one tile from their team again, and every figure after the gesture matches a
+clean load. It is also 250× cheaper per pointer move, because the branch's shape
+is worked out once when the gesture arms rather than on every movement of the
+hand. Measurements in [HEX-LAYOUT.md](HEX-LAYOUT.md).
+
+`reflow` is still used for a plain drop that cannot keep its silhouette, and for
+the clash path. Retiring it entirely is not done.
+
+**Strengthened 2026-10-14 evening, from a night spent failing to avoid it.** Four
+separate mechanisms were tried against the flung-node fault above — clamping
+travel, grading the gap breach, pricing the laws against each other, gating on
+family — and every one traded one of Greg's two complaints for the other. The
+frontier is real and it has one cause: **the atlas grows the ground to make
+room; `reflow` fits a branch into the hole that is already there.** So inside
+`reflow` the two laws compete for the same cells and no weighting satisfies
+both. This is no longer a tidiness argument about one owner per question; it is
+the only way to get both things Greg has asked for.
+
+---
+
+### ☐ Dragging a big branch costs six frames per mouse move — *Claude, 2026-10-14*
+
+Nobody has reported this and it is worth knowing before somebody does. While a
+drag is live, the map recomputes where the whole branch would land on **every
+movement of the pointer**. On the 1,000-person company, dragging a branch of
+1,269 units inside the armed five-second window takes **170ms each time the
+pointer moves** — about six frames, so the branch visibly lags the hand. Small
+branches are 2ms and fine.
+
+This is long-standing and nothing recent made it worse; it was found while
+measuring something else. It matters more than it looks, because the gesture it
+spoils is exactly the one Greg has been reporting problems with — some of what
+reads as *"the auto-rearrange struggles"* may simply be this. Worth confirming
+which before treating them as one fault.
+
+`placeIsland` in `arrange.ts`, called from `onPointerMove` in `HexLab.tsx`. The
+likely fix is to recompute only when the target cell changes *and* to bound the
+work by the branch, rather than re-laying 1,269 units to answer a question about
+where one node goes.
+
+---
+
+### ☐ The drag path still thinks the map is an archipelago — *Claude, from Greg 2026-10-06*
+
+Greg has reported the same shape of problem four times now: moving a family
+scatters it, the tidy-up makes it worse rather than better, and groups
+*"magnetically align"* to neighbours nobody asked them to join.
+
+**`arrange.ts` and `tidy.ts` were written when the map was an archipelago of
+cells. The layout is now nested territories. The drag path is speaking the older
+model**, and every one of those symptoms is a consequence. The clearest number:
+`neaten` moves **1,775 of 2,957 units** on the atlas against 898 on the
+archipelago — it is rearranging more than half the company with rules that
+predate territories.
+
+One principle would settle it: **the branch in the hand is rigid, and everything
+else yields.** A drop either fits or displaces whole territories; it never
+re-lays-out what is being carried. Tidy-up re-runs the territory layout for the
+affected subtree rather than gathering cells the old way.
+
+**Reproduced 2026-10-14, and narrower than it looked.** The gesture was
+recovered from the 2026-10-06 session transcript — five units Greg grabbed, all
+inside Everest Region, whose subtree is 1,258 units, exactly the move count his
+saved arrangement held.
+
+The earlier probe missed it for two reasons. A drop into *empty* ground is always
+a clean translation, and the map is now spaced so widely that an overlap has to
+be aimed for; and "the largest child of the root" is the whole company in these
+fixtures, so there was nothing outside it to collide with.
+
+What it actually is: **dropping the node you are holding onto a tile somebody
+already has.** 22 of 23 such drops break the branch, against 11 of 450 when the
+node lands on free ground. The landing falls back from `parted` to `gathered`,
+which re-lays the branch from scratch, and whole families inside it go from
+224/248 to about 80. It does not rectify on a second drag because the shape is
+already gone.
+
+Two things from the hand-off brief did not survive the measurement, and the
+plan should not be run as written:
+
+- **Do not delete `groupOf` from the drop path.** It is the only thing keeping a
+  clashing drop whole; removing it turns *every* clashing drop into confetti. It
+  wants to become the territory, not to go. (`gapBetween` is the harmful half and
+  has gone — `HexLab.tsx`, 2026-10-14.)
+- **`neaten` is not the confetti engine.** On the recovered gesture, tidy
+  improves cohesion markedly: 86.4% → 91.5% touching family, 403 adrift → 251.
+  Stopping it consulting routes is still right on principle (Law 5) but it is
+  not a cheap win and not the reported fault.
+
+The remaining work is the real one: **teach the drop path what a territory is**,
+so the body that steps aside on a clash is a territory at the rung you grabbed
+rather than a flat team id. Law 2 is written as an `it.fails` in
+`app/lab/hex/confetti.test.ts`; when it starts failing, the fix has landed.
+
+Repro: `npm run hex:confetti` (Northwind) and the test above (1,000-person).
+
+Do the facing fault above first; it may well change what this one looks like.
+
+---
+
+### ✔ Decided: master-centre's halo is capped at 12 — *Greg, 2026-10-14*
+
+Greg asked for the space around the master centre to be *"HUUUGE"*, and removed
+the cap on it: *"the spacing gap cap at 5 is invented. We can revoke it."* The
+rule that sets spacing — a gap is a third of the size of what it separates — is
+self-limiting and needs no cap. But there is still a guard in the code, at 48
+tiles, to stop a pathological company spinning, and **on the two biggest
+companies the guard is what decides the gap at the top**, not the rule.
+
+So the top of the map is currently a little tighter than Greg asked for, and the
+reason is a number that is not supposed to be a design decision.
+
+What it costs to give him what he asked for, measured on Northwind with people as
+units:
+
+| guard | layout time | widest gap | units clipped | curl-back |
+| --- | ---: | ---: | ---: | ---: |
+| **48 (today)** | **5.7s** | 48 | 6 | 35.0% |
+| 96 | 16.0s | 96 | 2 | 32.8% |
+| 200 | 25.9s | 119 | **0** | 32.8% |
+
+Past 200 nothing changes — the rule settles at 119 on its own, which is the point
+of a share-based gap. Family cohesion is identical at every setting (86.5%).
+
+**The trade is four and a half times the layout time for a map that looks the way
+he asked, and slightly less curl-back.** 5.7 seconds already fails the standing
+bar of *"an entry-level iPad from five years ago"*, so this is really a question
+about the parked performance work below: lazy per-team interiors would likely pay
+for the wider guard several times over.
+
+**Greg took the speed.** The halo is capped at 12 (`MAX_HALO` in `territory.ts`),
+which is 1.4s instead of 6.6s on Northwind in people view, with identical family
+cohesion and slightly better curl-back. The centre is visibly narrower than the
+"in extremis" version he asked to see on 2026-10-03, and that is the trade he
+made knowingly.
+
+Wanting the full halo *and* the speed is what the lazy per-team interiors work
+below is for. When that lands, lift the cap and re-measure — the rule settles at
+119 on its own and needs no cap at all once the search is not walking the whole
+company.
+
+---
+
+### ☐ The atlas takes four seconds on the largest company — *Claude, 2026-10-04*
+
+With people as the smallest unit, the 2,562-person company takes about four
+seconds to lay out in atlas mode. Uncapped spacing takes **233 seconds**, which
+is why `MAX_TIER_GAP` has a number in it again.
+
+Two attempts made no difference: starting the ring search outside a node's halo
+rather than walking it saved nothing, and enumerating an individual's
+family-adjacent cells improved the layout without moving the clock. It is the
+search itself at this scale.
+
+Greg has parked this for now — *"I've got a fast enough machine for it not to
+matter in these iterations"* — and the lazy-loading work that would also address
+it is preserved on the `hex-lazy-interiors` branch. It needs real work rather
+than a tweak, and it blocks the atlas becoming the only view, given the bar is
+*"an entry-level iPad from five years ago"*.
+
+---
+
+### ☐ The heaviest tests fail on a busy machine, and say nothing useful when they do
+
+Six tests on the big fixtures — the orbital map's placement and overlap checks
+on the 2,562-person company — run comfortably inside a second on a quiet
+machine, and **fail outright on a busy one**. They have Vitest's default
+five-second limit, so what you see is `Test timed out in 5000ms`, which tells
+you nothing about what broke. On 2026-10-04 a background macOS file scan took
+the load average to 17 and six of them fell over at once; the same six passed
+minutes earlier and passed again with the working changes stashed, so there was
+never anything wrong with the code.
+
+That is a real cost even though nothing is broken. An agent who sees six red
+tests has to stop and prove they are unrelated, and the obvious reading — "I
+broke something" — is the wrong one. A human running the suite while a build is
+going would reach the same dead end.
+
+The fix is to give the heavy fixtures a timeout that reflects what they actually
+do, rather than inheriting a default meant for unit tests. They are measuring
+geometry over thousands of units; several seconds is a normal cost, not a
+symptom. The ones that fell over are in the orbital map's own test files.
+
+Worth doing before anyone relies on a green suite as a gate.
+
+---
+
 ### ☐ Point GitHub at the working branch, not production
 
 GitHub has a "default" branch: the one people land on when they open the
