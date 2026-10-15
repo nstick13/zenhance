@@ -60,7 +60,6 @@
  * Pure: same company, same cells, for ever.
  */
 import type { OrbitalTree, UnitNode } from "@/lib/map/layout/model";
-import type { Allocation } from "@/lib/map/layout/hex/allocate";
 import {
   type Cell,
   DIRECTIONS,
@@ -71,6 +70,55 @@ import {
   ring,
   spiral,
 } from "@/lib/map/layout/hex/coords";
+
+/**
+ * **What the rest of the map consumes.**
+ *
+ * It lived in `allocate.ts` until 2026-10-15, because the archipelago allocator
+ * was the first thing to produce one. That allocator is gone — Greg: *"remove
+ * the 'archipelago' view, let's use everything via Atlas, one view mechanic for
+ * now"* — so it lives with the engine that produces it.
+ */
+export type Allocation = {
+  /** unit id → its cell. */
+  cells: Map<string, Cell>;
+  /** cell key → the unit sitting there. */
+  occupants: Map<string, string>;
+  /** unit id → how many steps from its parent. 1 means it touches the parent
+   *  itself; more means it reached its family through a sibling. */
+  steps: Map<string, number>;
+  /** Units that could not touch their family and sit apart from it. */
+  exclaves: Set<string>;
+  /** unit id → the top-level branch it belongs to, for territory colouring. */
+  branchOf: Map<string, string>;
+  /** Furthest ring any unit reached, for a quick extent. */
+  radius: number;
+  /**
+   * unit id → the clear ground the layout kept round it, in tiles.
+   *
+   * It is what `tidy` is handed so that there is one
+   * measure of distance on the map rather than two (Law 4) — and it is a
+   * property of the tree, so a hand arrangement never changes what a unit is
+   * owed.
+   */
+  spacedBy?: ReadonlyMap<string, number>;
+  stats: {
+    placed: number;
+    /** Touching the parent or a sibling — the promise this layout makes. */
+    connected: number;
+    /** Touching the parent itself. Cannot exceed five per parent, and since
+     *  2026-09-30 does not need to. */
+    touchingParent: number;
+    exclaves: number;
+    /** Placed apart on purpose, under the archipelago rule. Not a failure. */
+    islands: number;
+    /** Families that are a single connected patch, out of all families. */
+    wholeFamilies: number;
+    families: number;
+    worstReach: number;
+  };
+};
+
 
 export type Region = { centre: Cell; radius: number };
 

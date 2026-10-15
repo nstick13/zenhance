@@ -39,7 +39,7 @@ export default async function HexLabPage({
    * knows this experiment is happening.
    */
   const strata = params.strata === "people" ? "people" : "teams";
-  const { org: payload, groups, leads, ancestry } = buildLabCompany(key, strata);
+  const { org: payload, groups, leads } = buildLabCompany(key, strata);
 
   return (
     <main style={{ position: "fixed", inset: 0, background: "#fbfbfd", overflow: "hidden" }}>
@@ -87,7 +87,6 @@ export default async function HexLabPage({
         initialDensity={params.density === "tight" ? "tight" : "roomy"}
         groups={groups}
         leads={leads}
-        ancestry={ancestry}
       />
     </main>
   );

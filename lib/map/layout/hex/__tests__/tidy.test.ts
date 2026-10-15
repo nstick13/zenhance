@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { buildOrbitalTree, type OrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
-import { allocate } from "@/lib/map/layout/hex/allocate";
+import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory";
 import {
   chainsOf, countCrossings, neaten, rotateCell, segmentsCross,
 } from "@/lib/map/layout/hex/tidy";

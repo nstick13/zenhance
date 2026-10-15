@@ -61,7 +61,6 @@ const ENGINE_OF: Record<string, Engine> = {
   // "where does every node sit" and nothing else. It sits beside the
   // orbital engine rather than replacing it — see docs/HEX-LAYOUT.md.
   "lib/map/layout/hex/coords.ts": "layout",
-  "lib/map/layout/hex/allocate.ts": "layout",
   "lib/map/layout/hex/scene.ts": "layout",
   "lib/map/layout/hex/arrange.ts": "layout",
   "lib/map/layout/hex/territory.ts": "layout",

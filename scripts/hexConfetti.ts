@@ -8,21 +8,21 @@
  * 1,258 units — exactly the move count his saved arrangement held), and a drop
  * aimed to overlap rather than into open ground.
  *
- * It prints the three ways `placeIsland` can be called, because that is the
- * decision a draft rule set got wrong: `gapBetween` is the half that should go,
- * and `groupOf` is the half holding the branch together. See `docs/MAP-LAWS.md`.
+ * It prints the two ways `placeIsland` can be called, because that is the
+ * decision a draft rule set got wrong: it proposed deleting `groupOf` *and*
+ * `gapBetween`, and only one of those was right. `gapBetween` has since gone
+ * with the archipelago; `groupOf` is the half holding the branch together, and
+ * this is what says so. See `docs/MAP-LAWS.md`.
  */
 import { buildLabCompany } from "@/app/lab/hex/company";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import { layoutTerritories } from "@/lib/map/layout/hex/territory";
 import { branchOf, placeIsland } from "@/lib/map/layout/hex/arrange";
 import { cellKey, hexDistance, neighbours, type Cell } from "@/lib/map/layout/hex/coords";
-import { TEAM_GAP } from "@/lib/map/layout/hex/allocate";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { hexSizeFor } from "@/lib/map/layout/hex/scene";
 
 const EVEREST = "e56cb367-e560-4e56-8e68-e6832df4e480";
-const GAP_BY_RUNGS = [0, 1, 2, 3];
 
 function measure(tree: OrbitalTree, cells: ReadonlyMap<string, Cell>, scope?: Set<string>) {
   const occ = new Map<string, string>(); let buried = 0;
@@ -63,23 +63,13 @@ function measure(tree: OrbitalTree, cells: ReadonlyMap<string, Cell>, scope?: Se
 }
 const pct = (n: number, d: number) => `${((100 * n) / Math.max(1, d)).toFixed(1)}%`;
 
-const { org, groups, leads, ancestry } = buildLabCompany("northwind", "people");
+const { org, groups, leads } = buildLabCompany("northwind", "people");
 const tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
 const peopleIds = new Set(groups.map(([id]) => id));
 const base = layoutTerritories(tree, { leads: new Set(leads), people: peopleIds });
 
 const groupMap = new Map(groups);
 const groupOf = (id: string) => groupMap.get(id) ?? id;
-const lineOf = new Map(ancestry);
-const gapBetween = (a: string, b: string) => {
-  const ga = groupOf(a), gb = groupOf(b);
-  if (ga === gb) return 0;
-  const la = [ga, ...(lineOf.get(ga) ?? [])];
-  const lb = new Set([gb, ...(lineOf.get(gb) ?? [])]);
-  let rungs = GAP_BY_RUNGS.length - 1;
-  for (let i = 0; i < la.length; i++) if (lb.has(la[i])) { rungs = i; break; }
-  return Math.min(TEAM_GAP, GAP_BY_RUNGS[Math.min(rungs, GAP_BY_RUNGS.length - 1)]);
-};
 
 const branch = branchOf(tree, EVEREST);
 const own = base.cells.get(EVEREST)!;
@@ -119,7 +109,7 @@ row("clean load — whole company", measure(tree, base.cells));
 row("clean load — Everest branch only", measure(tree, base.cells, branch));
 
 for (const [label, target] of scenarios) {
-  for (const mode of ["both", "groupOf only", "neither"] as const) {
+  for (const mode of ["groupOf", "neither"] as const) {
     const cells = new Map(base.cells);
     const occupants = new Map(base.occupants);
     const members = new Map<string, Cell>();
@@ -128,7 +118,6 @@ for (const [label, target] of scenarios) {
       occupants, members, EVEREST, target,
       (id) => tree.units.get(id)?.childIds ?? [], null,
       mode === "neither" ? undefined : groupOf,
-      mode === "both" ? gapBetween : undefined,
     );
     const tag = `${label} · ${mode}`;
     if (landing.kind === "no-room") { console.log(`${tag.padEnd(46)}  DROP REFUSED`); continue; }

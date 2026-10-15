@@ -48,22 +48,15 @@ import {
  *   `hexRingParam` maps one onto a hexagonal ring — so this is an angle
  *   utility, not a circular layout rule.
  */
-import {
-  WORK_CAPSULE_GAP,
-  workCapsuleLength,
-  workGridPoints,
-} from "@/lib/map/layout/geometry";
-import type { OrbitalTree, Seat, SeatKind } from "@/lib/map/layout/model";
-import { allocate, type Allocation } from "@/lib/map/layout/hex/allocate";
+import { WORK_CAPSULE_GAP, workCapsuleLength } from "@/lib/map/layout/geometry";
+import type { OrbitalTree } from "@/lib/map/layout/model";
+import { allocateByTerritory, type Allocation } from "@/lib/map/layout/hex/territory";
 import {
   MAX_PEOPLE_RINGS,
   NODE_MARK_RADIUS,
   PERSON_RADIUS,
   SEAT_RING_GAP,
   cellRadiusFor,
-  placePeople,
-  ringsBetween,
-  type SeatRequest,
 } from "@/lib/map/layout/hex/people";
 import {
   type Cell,
@@ -214,26 +207,12 @@ export type HexLayoutOptions = {
   allocation?: Allocation;
 };
 
-/** The smallest arc covering a set of angles: a full turn when the widest gap
- *  between neighbours is nothing to speak of. */
-function coveringArc(angles: readonly number[]): number {
-  if (angles.length === 0) return 0;
-  if (angles.length === 1) return 0;
-  const TAU = Math.PI * 2;
-  const sorted = [...angles].map((a) => ((a % TAU) + TAU) % TAU).sort((a, b) => a - b);
-  let widest = sorted[0] + TAU - sorted[sorted.length - 1];
-  for (let i = 1; i < sorted.length; i++) widest = Math.max(widest, sorted[i] - sorted[i - 1]);
-  return Math.max(0, TAU - widest);
-}
 
-/** Leads first, then members, then open roles — the order people are seated
- *  in, so the nearest ring fills with the people who are actually there. */
-const SEAT_RANK: Record<SeatKind, number> = { lead: 0, member: 1, open: 2 };
 
 export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): HexScene {
   const density = options.density ?? "roomy";
   const size = hexSizeFor(density);
-  const allocation = options.allocation ?? allocate(tree);
+  const allocation = options.allocation ?? allocateByTerritory(tree);
   // How deep the company goes, which is what grades every node's size.
   let deepest = 0;
   for (const id of allocation.cells.keys()) {
@@ -272,58 +251,28 @@ export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): He
     }
     const fanAngle = occupied.length > 0 ? widestGap(occupied) : 0;
 
-    // People orbit the *node hexagon*, on hexagonal rings inside the cell —
-    // never inside the node, never over the boundary into the neighbour's
-    // tile. The lead sits on the home side, where the chain arrives.
+    /**
+     * **People are no longer placed.**
+     *
+     * Greg, 2026-10-15: *"when viewing 'teams' don't show the dots for people —
+     * that's a hangover from the orbits model. It's redundant in this version."*
+     *
+     * It was. On the orbital map a unit was a disc and its people orbited it, so
+     * the dots were how you saw a team at all. Here a team *is* a hexagon with
+     * ground of its own, and the people view promotes every person to a hexagon
+     * in their own right, so the dots said a second time what the tile already
+     * said. Placing them was about 8ms of Northwind's layout — not the reason
+     * to stop, but there is no reason to keep working it out either.
+     *
+     * `people.ts` is kept, and not because it is sentimental: `cellRadiusFor` —
+     * how big a cell has to be — is derived from the rule that seats people on
+     * hexagonal rings, and that is still the rule the lattice sizing rests on.
+     * If people never come back, the question of what should size a cell is
+     * open; see `docs/TASKS.md`.
+     */
     const nodeR = size * nodeScale(unit.depth, deepest);
-    const personR = PERSON_RADIUS;
-    const rings = ringsBetween(nodeR, size, personR, SEAT_RING_GAP);
-    const requests: SeatRequest[] = unit.seatIds
-      .map((id) => tree.seats.get(id))
-      .filter((seat): seat is Seat => !!seat)
-      .sort((a, b) => SEAT_RANK[a.kind] - SEAT_RANK[b.kind] || a.name.localeCompare(b.name))
-      .map((seat) => ({ id: seat.id, kind: seat.kind === "lead" ? "lead" : seat.kind === "open" ? "open" : "person" }));
-    const placed = placePeople({
-      centre, nodeR, cellR: size, seatR: personR, gap: SEAT_RING_GAP, homeAngle,
-      seats: requests,
-    });
-    const spotAngles: number[] = [];
-    for (const spot of placed) {
-      const seat = tree.seats.get(spot.id);
-      if (!seat) continue;
-      const angle = Math.atan2(spot.y - centre.y, spot.x - centre.x);
-      seats.push({
-        id: seat.id,
-        unitId: unit.id,
-        personId: seat.personId,
-        photoUrl: seat.photoUrl ?? null,
-        name: seat.name,
-        role: seat.role,
-        kind: seat.kind,
-        shared: seat.shared,
-        allocationPct: seat.allocationPct,
-        x: spot.x,
-        y: spot.y,
-        r: spot.r,
-        angle,
-        work: workGridPoints(seat.workCount, { x: spot.x, y: spot.y }, angle),
-      });
-      links.push({
-        id: `link-${seat.id}`,
-        kind: "seat",
-        sourceId: unit.id,
-        targetId: seat.id,
-        from: centre,
-        to: { x: spot.x, y: spot.y },
-        depth: unit.depth + 1,
-      });
-      spotAngles.push(angle);
-    }
-    // The smallest arc that covers everyone — the whole circle once a big team
-    // wraps. Only the orbital renderer reads this, but a field that lies is
-    // worse than one nobody reads.
-    const seatSpan = coveringArc(spotAngles);
-    const firstRing = rings[0]?.r ?? nodeR;
+    const seatSpan = 0;
+    const firstRing = nodeR;
 
     units.push({
       id: unit.id,

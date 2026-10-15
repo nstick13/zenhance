@@ -38,9 +38,6 @@ export type LabCompany = {
   groups: [string, string][];
   /** The people who lead the unit they report to. */
   leads: string[];
-  /** Each unit's line of ancestry, so the layout can tell a sibling from a
-   *  cousin from a stranger. */
-  ancestry: [string, string[]][];
 };
 
 export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
@@ -112,18 +109,10 @@ export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
     })),
   };
 
-  const byId = new Map(org.units.map((x) => [x.id, x]));
-  const ancestry: [string, string[]][] = org.units.map((u) => {
-    const line: string[] = [];
-    let at: string | null = u.parentId ?? null;
-    while (at) { line.push(at); at = byId.get(at)?.parentId ?? null; }
-    return [u.id, line];
-  });
 
   return {
     org: payload,
     groups: personUnits.map((u) => [u.id, u.team]),
     leads: personUnits.filter((u) => u.isLead).map((u) => u.id),
-    ancestry,
   };
 }

@@ -28,7 +28,6 @@ import { neaten } from "@/lib/map/layout/hex/tidy";
 import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
-import { allocate, TEAM_GAP } from "@/lib/map/layout/hex/allocate";
 import {
   allocateByTerritory,
   headings,
@@ -111,20 +110,6 @@ const BEHIND_ALPHA = 0.18;
  */
 const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
-/**
- * Clear tiles between two groups, by how many rungs up to their common
- * ancestor: index 1 is a sibling, 2 a cousin, 3+ anyone further off.
- *
- * **One knob, in one place**, because this is the number Greg is judging by eye
- * and it should be changed without reading the allocator. Measured on
- * Northwind, the ladder below is met by every pair but one in 395 — the rule
- * is enforced; whether one tile between siblings *reads* as separation is the
- * question the knob exists to answer.
- *
- * Raising it costs map: the whole company spreads, and the allocation gets
- * slower because every region hunts further for clear water.
- */
-const GAP_BY_RUNGS = [0, 1, 2, 3];
 
 /**
  * How far the hand may drift and still be holding, as a share of a cell.
@@ -234,7 +219,7 @@ type Pending =
   | { kind: "reshape"; unitId: string; cells: Map<string, Cell> };
 
 export default function HexLab({
-  org, companyKey, initialDensity, groups, leads, ancestry,
+  org, companyKey, initialDensity, groups, leads,
 }: {
   org: LabOrg;
   companyKey: string;
@@ -244,25 +229,11 @@ export default function HexLab({
   groups?: readonly (readonly [string, string])[];
   /** The people who lead the unit they hang from. */
   leads?: readonly string[];
-  /** Each group's line of ancestors, nearest first — how the layout tells a
-   *  sibling from a cousin when deciding how far apart to put them. */
-  ancestry?: readonly (readonly [string, readonly string[]])[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
   const [density, setDensity] = useState<HexDensity>(initialDensity);
   const [mode, setMode] = useState<"hex" | "orbits">("hex");
-  /**
-   * Which arrangement the lattice is given (Greg, 2026-10-03).
-   *
-   * *"We need to gently push for the whole thing to render with more visual
-   * organisation."* The atlas nests every unit's ground inside its parent's, so
-   * a division is somewhere you can point at rather than a hue shared by teams
-   * scattered among its siblings'. It sits beside the archipelago rather than
-   * replacing it, because the only way to settle which reads better is to put
-   * them one keystroke apart.
-   */
-  const [shape, setShape] = useState<"archipelago" | "atlas">("atlas");
   const [hover, setHover] = useState<string | null>(null);
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -292,10 +263,13 @@ export default function HexLab({
   // per-browser and per-company, and every read and write is wrapped: a private
   // window or blocked site data throws rather than returning nothing, and an
   // arrangement is not worth a blank page.
-  /** Per company **and per shape**: an arrangement built on the archipelago is
-   *  not an arrangement of the atlas, and replaying one on the other puts two
-   *  units on a cell. */
-  const storeKey = `zenhance.lab.hex.${companyKey}.${shape}`;
+  /**
+   * **The `.atlas` suffix stays, though there is nothing to tell it apart from
+   * any more.** It is there because arrangements saved before 2026-10-15 carry
+   * it, and Greg has one on Northwind that is the only specimen anybody has of
+   * a hand-built arrangement at that scale. Changing the key would orphan it.
+   */
+  const storeKey = `zenhance.lab.hex.${companyKey}.atlas`;
 
   useEffect(() => {
     setLoaded(false);
@@ -357,39 +331,10 @@ export default function HexLab({
     return (unitId: string) => map.get(unitId) ?? unitId;
   }, [groups]);
 
-  /**
-   * How many clear tiles two groups want between them: one rung up to their
-   * common ancestor is a sibling and wants one tile, two rungs is a cousin and
-   * wants two, anything further wants the full gap.
-   */
-  const gapBetween = useMemo(() => {
-    if (!ancestry?.length) return undefined;
-    const line = new Map(ancestry.map(([id, up]) => [id, up]));
-    const cache = new Map<string, number>();
-    return (a: string, b: string) => {
-      if (a === b) return 0;
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-      const had = cache.get(key);
-      if (had !== undefined) return had;
-      const up = line.get(a) ?? [];
-      const theirs = new Set([b, ...(line.get(b) ?? [])]);
-      // Rungs from `a` to the first ancestor it shares with `b`. The unit
-      // itself counts as rung 0, so a shared parent gives 1 — a sibling.
-      let rungs = GAP_BY_RUNGS.length - 1;
-      for (let i = 0; i < up.length; i++) {
-        if (theirs.has(up[i])) { rungs = i + 1; break; }
-      }
-      const gap = Math.min(TEAM_GAP, GAP_BY_RUNGS[Math.min(rungs, GAP_BY_RUNGS.length - 1)]);
-      cache.set(key, gap);
-      return gap;
-    };
-  }, [ancestry]);
 
   const baseAllocation = useMemo(
-    () => (shape === "atlas"
-      ? allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds })
-      : allocate(baseTree, { groupOf, gapBetween })),
-    [baseTree, groupOf, gapBetween, shape, leadIds, peopleIds],
+    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds }),
+    [baseTree, leadIds, peopleIds],
   );
 
   /**
@@ -724,14 +669,8 @@ export default function HexLab({
     canvas.style.height = `${size.height}px`;
 
     const { scale } = camera;
-    const base = revealAt(scale);
     const view = cullBox(camera, size);
     const hexSize = hexScene?.hex.size ?? 1;
-    // Every cell is the same size here, so people arrive by how big a cell is
-    // on screen rather than by world scale.
-    const reveal = hexScene
-      ? { ...base, people: smoothstep(PEOPLE_AT_CELL_PX[0], PEOPLE_AT_CELL_PX[1], hexSize * scale) }
-      : base;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -1076,23 +1015,18 @@ export default function HexLab({
       ctx.stroke();
     }
 
-    if (reveal.people > 0.01) {
-      ctx.globalAlpha = reveal.people;
-      for (const unit of visible) {
-        for (const seat of scene.seatsByUnit.get(unit.id) ?? []) {
-          ctx.beginPath();
-          ctx.arc(seat.x, seat.y, seat.r, 0, Math.PI * 2);
-          ctx.fillStyle = seat.kind === "lead" ? "#1e293b" : seat.kind === "open" ? "#fff" : "#94a3b8";
-          ctx.fill();
-          if (seat.kind === "open") {
-            ctx.lineWidth = 1.2 / scale;
-            ctx.strokeStyle = "#f59e0b";
-            ctx.stroke();
-          }
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
+    /**
+     * **People are not drawn as dots any more.**
+     *
+     * Greg, 2026-10-15: *"when viewing 'teams' don't show the dots for people —
+     * that's a hangover from the orbits model. It's redundant in this version."*
+     *
+     * It was: on the orbital map a unit was a disc and its people orbited it, so
+     * dots round a node were how you saw a team at all. Here a team *is* a
+     * hexagon with ground of its own, and the people view promotes every person
+     * to a hexagon in their own right — so the dots were a second, fainter way
+     * of saying what the tile already said.
+     */
 
     ctx.restore();
 
@@ -1302,7 +1236,6 @@ export default function HexLab({
         // from 224/248 to about 80 — the confetti itself. A draft rule set
         // proposed deleting both; see `app/lab/hex/confetti.test.ts`.
         groupOf,
-        undefined,
         // Only consulted when the gesture asked for a tree — `treeIt` above.
         tidySpacing,
       );
@@ -1392,8 +1325,7 @@ export default function HexLab({
     // Law 4: one measure of distance. `spacedBy` is what `layoutTerritories`
     // actually kept clear round each unit — a share of the size of the thing it
     // separates — and it is a property of the tree, so a hand arrangement does
-    // not change what a unit is owed. The archipelago allocator has no such
-    // figure, and passing nothing leaves tidy packing tight, as before.
+    // not change what a unit is owed.
     const result = neaten(
       tree, allocation.cells, pinned, hexScene.hex.size,
       allocation.spacedBy,
@@ -1492,25 +1424,6 @@ export default function HexLab({
    *  from the map, which is the one fault nothing else here would show. */
   const missing = tree.units.size - allocation.cells.size;
 
-  /**
-   * People a cell could not hold.
-   *
-   * A unit's rings are the gap between its node and the edge of its tile, and
-   * since 2026-10-02 there are four of them, holding people half again as big
-   * as before. A shallow unit has a big node and a thin gap, so a large team
-   * high up the tree can ask for more room than its cell has. Spilling into the
-   * neighbour is the one thing a lattice must not do, so the layout leaves
-   * those people out — and a number on the screen is the difference between a
-   * known trade and a silent one.
-   */
-  const unseated = useMemo(() => {
-    let missing = 0;
-    for (const unit of scene.units) {
-      const got = scene.seatsByUnit.get(unit.id)?.length ?? 0;
-      missing += Math.max(0, unit.seatIds.length - got);
-    }
-    return missing;
-  }, [scene]);
 
   const hovered = hover ? scene.unitById.get(hover) : null;
   const tier = tierAt(
@@ -1703,11 +1616,6 @@ export default function HexLab({
           <Btn small onClick={() => setMode("orbits")} active={mode === "orbits"}>orbits (today)</Btn>
         </Row>
         <Row>
-          <span style={{ color: "#6b7280" }}>shape</span>
-          <Btn small onClick={() => setShape("atlas")} active={mode === "hex" && shape === "atlas"} disabled={mode !== "hex"}>atlas</Btn>
-          <Btn small onClick={() => setShape("archipelago")} active={mode === "hex" && shape === "archipelago"} disabled={mode !== "hex"}>archipelago</Btn>
-        </Row>
-        <Row>
           <span style={{ color: "#6b7280" }}>cell</span>
           {(["roomy", "tight"] as HexDensity[]).map((d) => (
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
@@ -1743,7 +1651,7 @@ export default function HexLab({
         )}
         <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
         <Small suppressHydrationWarning>
-          {scene.units.length} units · {scene.seats.length} people · laid out in {ms.toFixed(0)}ms
+          {scene.units.length} units · {tree.seats.size} people · laid out in {ms.toFixed(0)}ms
         </Small>
         {stats ? (
           <>
@@ -1799,13 +1707,6 @@ export default function HexLab({
           <Small style={{ color: "#b91c1c" }}>
             <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
             they cannot be pointed at. Please tell Claude what you just did.
-          </Small>
-        )}
-        {unseated > 0 && (
-          <Small style={{ color: "#b45309" }}>
-            <b>{unseated}</b> {unseated === 1 ? "person has" : "people have"}{" "}
-            no room in their cell — four rings is all a tile holds, and a shallow
-            unit&rsquo;s node leaves less of one.
           </Small>
         )}
         <Small style={{ color: "#94a3b8" }}>

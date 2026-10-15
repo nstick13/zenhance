@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
-import { allocate } from "@/lib/map/layout/hex/allocate";
+import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory";
 import { Router, corners, routeAll, runsOf, straightWalk } from "@/lib/map/layout/hex/route";
 import {
   DIRECTIONS, cellKey, cellToWorld, hexDistance, neighbours, type Cell,

@@ -315,7 +315,6 @@ export function partedLanding(
    * first law is that a branch lands there. Everything the layout moves *for*
    * you obeys the gap.
    */
-  gapBetween?: (a: string, b: string) => number,
 ): { cells: Map<string, Cell>; moved: number } | null {
   const anchor = members.get(anchorId);
   if (!anchor) return null;
@@ -352,55 +351,43 @@ export function partedLanding(
     }
   };
   /** Far enough from everybody this group is not related to. */
-  const spaced = (cell: Cell, group: string): boolean => {
-    if (!gapBetween) return true;
-    for (const near of spiral(cell, MAX_CHANNEL)) {
-      const who = taken.get(cellKey(near));
-      if (!who) continue;
-      const other = groupOf(who);
-      if (other === group) continue;
-      if (hexDistance(cell, near) <= gapBetween(group, other)) return false;
-    }
-    return true;
-  };
 
-  const clear = (
-    ids: readonly string[], offset: { q: number; r: number }, obeySpacing: boolean,
-  ) =>
+  /**
+   * Free ground, and nothing else to satisfy.
+   *
+   * It used to take an `obeySpacing` flag and consult the archipelago's
+   * `gapBetween`. That rule went with the archipelago on 2026-10-15, and it had
+   * already stopped reaching this path on 2026-10-14 — Law 4, the layout owns
+   * spacing and the drop path holds no rule of its own.
+   */
+  const clear = (ids: readonly string[], offset: { q: number; r: number }) =>
     ids.every((id) => {
       const at = shifted.get(id)!;
-      const cell = { q: at.q + offset.q, r: at.r + offset.r };
-      if (taken.has(cellKey(cell))) return false;
-      return !obeySpacing || spaced(cell, groupOf(id));
+      return !taken.has(cellKey({ q: at.q + offset.q, r: at.r + offset.r }));
     });
 
   let moved = 0;
   for (const group of order) {
     const ids = byGroup.get(group)!;
-    const obey = group !== anchorGroup;
-    if (clear(ids, { q: 0, r: 0 }, obey)) { claim(ids, { q: 0, r: 0 }); continue; }
+    if (clear(ids, { q: 0, r: 0 })) { claim(ids, { q: 0, r: 0 }); continue; }
     if (group === anchorGroup) return null; // the hand's own landing is taken
-    // Nearest offset, from where it would have gone, that takes the whole group
-    // *and* leaves it the air it is owed.
+    /**
+     * The nearest offset from where it would have gone that takes the whole
+     * group.
+     *
+     * One pass, not two. There used to be a spaced search followed by a merely
+     * non-overlapping one, because the archipelago's `gapBetween` could refuse
+     * ground that occupancy allowed. That rule went with the archipelago on
+     * 2026-10-15 and the two passes became the same pass.
+     */
     let placed = false;
     for (const near of spiral({ q: 0, r: 0 }, PART_SEARCH_RINGS)) {
       if (near.q === 0 && near.r === 0) continue;
-      if (!clear(ids, near, true)) continue;
+      if (!clear(ids, near)) continue;
       claim(ids, near);
       moved++;
       placed = true;
       break;
-    }
-    // Rather than refuse the drop, fall back to merely not overlapping. A
-    // branch that cannot be spaced still has to go somewhere.
-    if (!placed) {
-      for (const near of spiral({ q: 0, r: 0 }, PART_SEARCH_RINGS)) {
-        if (!clear(ids, near, false)) continue;
-        claim(ids, near);
-        moved++;
-        placed = true;
-        break;
-      }
     }
     if (!placed) return null;
   }
@@ -447,9 +434,6 @@ const NUDGE_RINGS = 2;
  */
 const LOST = 1;
 
-/** The widest channel the spacing rules ever ask for, so a clearance check
- *  knows how far to look. */
-const MAX_CHANNEL = 3;
 
 /**
  * **The layout's own spacing, handed to the paths that re-lay a branch.**
@@ -562,8 +546,6 @@ export function placeIsland(
   /** What travels as one body when something has to move aside. A team,
    *  normally. Without it a clash is all-or-nothing, as it used to be. */
   groupOf?: (unitId: string) => string,
-  /** The archipelago spacing, used when the gesture asks for a tidy up. */
-  gapBetween?: (a: string, b: string) => number,
   /**
    * The atlas's own spacing, applied **only** when the gesture asks for a tidy —
    * which is what `radiateFrom` means. A plain drop is never spaced: Law 0, the
@@ -601,7 +583,6 @@ export function placeIsland(
     if (seat) {
       const treed = reflow(
         occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom,
-        groupOf && gapBetween ? { groupOf, gapBetween } : undefined,
         tidySpacing,
       );
       if (treed) return { kind: "radiated", cells: treed, anchor: seat };
@@ -646,7 +627,7 @@ export function placeIsland(
   // **Part, rather than reflow.** One cell catching something used to cost the
   // whole branch its shape. Move aside only what is actually in the way.
   if (groupOf) {
-    const parted = partedLanding(occupancy, members, anchorId, target, groupOf, gapBetween);
+    const parted = partedLanding(occupancy, members, anchorId, target, groupOf);
     if (parted) {
       return { kind: "parted", cells: parted.cells, anchor: target, moved: parted.moved };
     }
@@ -762,17 +743,6 @@ function reflow(
   /** Where the branch's own parent is, when it is outside the branch. Given it,
    *  the layout grows away from it instead of in all directions. */
   homeward?: Cell | null,
-  /**
-   * The archipelago rules, so a tidy up lays a branch out the way the company
-   * was laid out on load. Greg, 2026-10-03: *"this tidy up function should
-   * follow the same rules as the on-load: siblings should land with a channel
-   * between them of one hexagon tile; cousins two, and anything less related
-   * three."*
-   */
-  spacing?: {
-    groupOf: (unitId: string) => string;
-    gapBetween: (a: string, b: string) => number;
-  },
   /** The layout's own spacing. Takes precedence over `spacing`, which is the
    *  archipelago's and is kept only for that shape. */
   clearance?: TidySpacing,
@@ -801,29 +771,6 @@ function reflow(
   // is the unit they hang from.
   const cameFrom = new Map<string, Cell>();
   if (homeward) cameFrom.set(anchorId, homeward);
-
-  // Which group sits where, so the spacing rules can be applied as we go.
-  //
-  // Seeded from the **whole map**, not just this branch. Seeding it only from
-  // the branch is a mistake that reads as working: every cell inside the branch
-  // is spaced correctly, and the branch still lands on top of the neighbours it
-  // cannot see.
-  const groupAt = new Map<string, string>();
-  if (spacing) {
-    for (const [key, id] of taken) groupAt.set(key, spacing.groupOf(id));
-    for (const [id, cell] of out) groupAt.set(cellKey(cell), spacing.groupOf(id));
-  }
-
-  /** Is this cell far enough from everybody this unit is not related to? */
-  const clearEnough = (cell: Cell, group: string): boolean => {
-    if (!spacing) return true;
-    for (const near of spiral(cell, MAX_CHANNEL)) {
-      const other = groupAt.get(cellKey(near));
-      if (other === undefined || other === group) continue;
-      if (hexDistance(cell, near) <= spacing.gapBetween(group, other)) return false;
-    }
-    return true;
-  };
 
   /**
    * **Clear ground somebody else is already owed** — cell key → who owes it.
@@ -907,7 +854,6 @@ function reflow(
     if (!parentCell) continue;
     const back = cameFrom.get(parentId);
     for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
-      const group = spacing?.groupOf(childId);
       const owed = clearance ? clearance.clearFor(childId) : 0;
       const cell = clearance
         // The atlas: a child takes the nearest cell that still keeps the room
@@ -918,16 +864,10 @@ function reflow(
             taken, parentCell, (c) => roomEnough(c, childId),
             back ?? homeward ?? null, Math.max(16, owed + 4),
           )
-        : group !== undefined
-          // The archipelago: not allowed to grow into the island next door.
-          // This is where a tidy used to magnetise a branch onto whatever was
-          // nearest, family or not: `nearestFreeCell` knows nothing of groups.
-          ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
-          : homeward
+        : homeward
             ? radiatingCell(taken, parentCell, back ?? null)
             : nearestFreeCell(taken, parentCell, { maxRings: 14 });
       if (!cell) return null;
-      if (group !== undefined) groupAt.set(cellKey(cell), group);
       out.set(childId, cell);
       taken.set(cellKey(cell), childId);
       // Its own clear ground, so the next unit along has to respect it.

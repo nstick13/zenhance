@@ -42,7 +42,7 @@ import {
   worldToCell,
   axialRoute,
 } from "@/lib/map/layout/hex/coords";
-import { allocate } from "@/lib/map/layout/hex/allocate";
+import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory";
 import {
   contentRadius, hexSizeFor, layoutHex, nodeAreaFraction, nodeScale,
 } from "@/lib/map/layout/hex/scene";
@@ -330,63 +330,72 @@ describe("touching means one thing on this lattice", () => {
   });
 });
 
+/**
+ * **Re-based on the atlas, 2026-10-15**, when the archipelago allocator was
+ * deleted. Greg: *"remove the 'archipelago' view — let's use everything via
+ * Atlas. One view mechanic for now."*
+ *
+ * Every number in this block used to be the archipelago's, and the two engines
+ * are not alike: the archipelago packed cells tight, and the atlas reserves
+ * ground for a family before it places anybody. So most of what was here was
+ * deleted rather than loosened — a test whose bar is lowered until it passes
+ * has stopped saying anything — and what remains is what still holds a promise
+ * somebody cares about.
+ *
+ * The cohesion numbers the atlas owes are in `territory.test.ts`, which has
+ * always measured the engine we actually ship.
+ */
 describe("the cells a company gets", () => {
-  it("joins most children to their family, and says so when it cannot", () => {
-    const a = allocate(treeOf(deep(2400, 11)));
-    const children = a.stats.placed - 1;
-    // 88% on 2026-09-30; 94% since the doorstep price. The rest are exclaves,
-    // which rule 8 treats as a legitimate arrangement rather than a failure.
-    expect(a.stats.connected / children).toBeGreaterThan(0.9);
-    expect(a.stats.connected + a.stats.exclaves).toBe(children);
-  });
-
-  /**
-   * The doorstep price. A unit's six neighbours are the only cells its own
-   * children can touch it from, and nothing used to stop a cousin's subtree —
-   * seated earlier, because the walk is depth-first — parking on all of them.
-   *
-   * These are both measured numbers with room under them, not targets. They
-   * are here because the thing they protect is invisible in a screenshot: a
-   * child that cannot touch its parent needs a chain that walks, and a chain
-   * that walks is what crosses somebody else's tile.
-   */
-  it("does not let a cousin's branch eat the ground a parent's children need", () => {
-    const a = allocate(treeOf(deep(2400, 11)));
-    const children = a.stats.placed - 1;
-    // 46% before the doorstep price, 49% after.
-    expect(a.stats.touchingParent / children).toBeGreaterThan(0.47);
-    // 48 before, 25 after.
-    expect(a.stats.exclaves).toBeLessThan(35);
-  });
-
-  it("keeps most families in one patch, which is all that says they are a family", () => {
-    const a = allocate(treeOf(deep(2400, 11)));
-    // 86/131 before the doorstep price, 106/131 after.
-    expect(a.stats.wholeFamilies / a.stats.families).toBeGreaterThan(0.75);
-  });
-
-  it("gives a small company a perfect tessellation", () => {
-    const a = allocate(treeOf(deep(45, 4)));
-    expect(a.stats.exclaves).toBe(0);
-    expect(a.stats.wholeFamilies).toBe(a.stats.families);
-  });
-
-  it("records a jump as a real distance, so the renderer can curve the link", () => {
+  it("gives every unit its own cell, and nobody is lost", () => {
     const tree = treeOf(deep(2400, 11));
     const a = allocate(tree);
-    for (const [unitId, steps] of a.steps) {
-      const unit = tree.units.get(unitId);
-      if (!unit?.parentId) continue;
-      const cell = a.cells.get(unitId)!;
-      const parent = a.cells.get(unit.parentId)!;
-      expect(steps).toBe(hexDistance(cell, parent));
+    expect(a.cells.size).toBe(tree.units.size);
+    expect(a.occupants.size).toBe(tree.units.size);
+  });
+
+  it("seats no more children against a parent than a hexagon has sides", () => {
+    // Not a rule anybody chose — a cell has six neighbours, so the seventh
+    // child of any unit has to reach its parent past a sibling. It is the limit
+    // the whole study exists to find out about.
+    const tree = treeOf(deep(2400, 11));
+    const a = allocate(tree);
+    for (const unit of tree.units.values()) {
+      const own = a.cells.get(unit.id);
+      if (!own) continue;
+      let touching = 0;
+      for (const kid of unit.childIds) {
+        const c = a.cells.get(kid);
+        if (c && hexDistance(c, own) === 1) touching++;
+      }
+      expect(touching, unit.name).toBeLessThanOrEqual(6);
     }
   });
 
-  it("grows a chain by its length, not exponentially", () => {
-    const short = allocate(treeOf(deep(400, 6)));
-    const long = allocate(treeOf(deep(400, 16)));
-    expect(long.radius).toBeLessThan(short.radius * 4);
+  /**
+   * **The study's headline claim, corrected.**
+   *
+   * `HEX-LAYOUT.md` opened by saying the same company fits in 8,500 x 8,900
+   * against the orbital layout's 39,842 x 57,611. That was the **archipelago**,
+   * which packed cells tight, and it is no longer what runs. Measured on the
+   * 2,562-person company with the atlas:
+   *
+   *   tight   41,397 x 25,939   1.04x as wide as the orbital layout, 0.45x as tall
+   *   roomy   69,419 x 43,498   1.74x as wide, 0.76x as tall
+   *
+   * So at the density the lab actually opens on, **the atlas covers about a
+   * third more ground than the layout it replaced.** It buys that back in
+   * legibility — reserved ground is what keeps a team in one piece — but the
+   * compactness win belonged to the engine that was deleted, and a test that
+   * went on asserting it would be asserting something false.
+   *
+   * This is held as a ceiling with room under it, so that a change which makes
+   * the map dramatically bigger still has to answer for itself.
+   */
+  it("stays within a known extent, which is bigger than it used to be", () => {
+    const scene = layoutHex(treeOf(deep(2400, 11)), { density: "tight" });
+    const b = scene.bounds!;
+    expect(b.maxX - b.minX).toBeLessThan(50_000);
+    expect(b.maxY - b.minY).toBeLessThan(35_000);
   });
 });
 
@@ -421,9 +430,16 @@ describe("a company that branches wider than a hexagon has sides", () => {
     const a = allocate(tree);
     for (const unit of tree.units.values()) {
       const touching = unit.childIds.filter((id) => (a.steps.get(id) ?? 99) === 1);
-      // Six neighbours, one of which is the way home. This is the geometry, and
-      // it is the ceiling rule 1 exists to get around.
-      expect(touching.length).toBeLessThanOrEqual(unit.parentId ? 5 : 6);
+      /**
+       * Six neighbours, and that is the whole ceiling. It used to be five for
+       * any unit with a parent, because the archipelago kept one neighbour
+       * clear as the way home. The atlas will use all six, and since 2026-10-15
+       * a chain may pass behind a tile rather than needing open ground to leave
+       * by — so the sixth seat costs a faded stretch of line instead of an
+       * exclave. This is the geometry, and it is the limit the study exists to
+       * find out about.
+       */
+      expect(touching.length).toBeLessThanOrEqual(6);
     }
   });
 
@@ -499,11 +515,4 @@ describe("how much room a cell reserves", () => {
     expect(hexSizeFor("tight") / hexSizeFor("roomy")).toBeLessThan(0.8);
   });
 
-  it("packs a company far tighter than the orbital layout does", () => {
-    const scene = layoutHex(treeOf(deep(2400, 11)), { density: "tight" });
-    const b = scene.bounds!;
-    // The river layout measures 39,842 x 57,611 on this company.
-    expect(b.maxX - b.minX).toBeLessThan(39842 / 3);
-    expect(b.maxY - b.minY).toBeLessThan(57611 / 3);
-  });
 });

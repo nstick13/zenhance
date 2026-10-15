@@ -524,18 +524,21 @@ describe("moving a branch that is already an archipelago", () => {
 });
 
 /**
- * The rule the rearrange path never learned (Greg, 2026-10-03).
+ * **What a clash does, now that the drop path holds no spacing rule at all.**
  *
- * *"I'm still seeing touching people who are of differing teams
- * post-auto-rearrange… my hunch is we have a clash from some deeper legacy
- * behaviour in the layout engine."*
+ * This block used to prove the opposite — that a travelling group would not
+ * come to rest tight against a stranger — because the drop path carried the
+ * archipelago's `gapBetween`. That rule stopped reaching this path on
+ * 2026-10-14 (Law 4: the layout owns spacing and the drop path holds none of
+ * its own) and went altogether with the archipelago on 2026-10-15.
  *
- * He was right, and it was two places: `partedLanding` asked only whether a
- * cell was **occupied**, and `reflow` seated against the nearest free cell with
- * no idea whose island it was next to. Both predate the archipelago spacing, so
- * a carefully spaced company came apart the first time anybody moved anything.
+ * What is left is the half that was load-bearing: `groupOf`, which says what
+ * travels as one body when something has to move aside. Measured over 484
+ * clashing drops on the 1,000-person company, removing it turns every one of
+ * them from `parted` into a re-laid branch and takes whole families from
+ * 224/248 to about 80 — which is the confetti itself. See `confetti.test.ts`.
  */
-describe("a drop obeys the spacing, not only the occupancy", () => {
+describe("a clash steps one group aside and leaves the rest alone", () => {
   /** Two groups travelling together: the anchor's team, and a second team. */
   const island = new Map([
     ["sales", at(0, 0)],
@@ -544,28 +547,34 @@ describe("a drop obeys the spacing, not only the occupancy", () => {
   ]);
   const groups = (id: string) =>
     id === "south" ? "b" : id === "them" ? "c" : "a";
-  const oneClearTile = () => 1;
 
   /** A stranger parked exactly where `south` would otherwise come to rest. */
-  const stranger = new Map([[cellKey(at(15, 0)), "them"]]);
+  const stranger = new Map([[cellKey(at(14, 0)), "them"]]);
 
-  it("will not land a travelling group tight against another group", () => {
-    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups, oneClearTile);
+  it("lands the anchor exactly where the hand let go", () => {
+    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups);
     expect(landed).not.toBeNull();
-    // `south` would have translated to 14,0 — one cell from the stranger.
-    expect(hexDistance(landed!.cells.get("south")!, at(15, 0))).toBeGreaterThan(1);
-  });
-
-  it("still lands the anchor exactly where the hand let go", () => {
-    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups, oneClearTile);
     expect(landed!.cells.get("sales")).toEqual(at(10, 0));
     // And the anchor's own team keeps its shape beside it.
     expect(landed!.cells.get("north")).toEqual(at(11, 0));
   });
 
-  it("without a gap rule it only avoids overlapping, as it always did", () => {
+  it("moves only the group that was actually in the way", () => {
     const landed = partedLanding(stranger, island, "sales", at(10, 0), groups);
-    expect(landed!.cells.get("south")).toEqual(at(14, 0));
+    expect(landed!.moved).toBe(1);
+    // `south` would have translated onto the stranger at 14,0.
+    expect(landed!.cells.get("south")).not.toEqual(at(14, 0));
+  });
+
+  it("never puts the group it moved on top of anybody", () => {
+    const landed = partedLanding(stranger, island, "sales", at(10, 0), groups);
+    const seen = new Set<string>();
+    for (const cell of landed!.cells.values()) {
+      const key = cellKey(cell);
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+      expect(stranger.has(key)).toBe(false);
+    }
   });
 });
 
@@ -592,7 +601,7 @@ describe("Law 4 — the gap is one measure, read from both sides", () => {
   const island = new Map([["sales", at(0, 0)], ["pip", at(1, 0)]]);
   const landing = placeIsland(
     neighbour, island, "sales", at(10, 0), kids, at(0, 0),
-    undefined, undefined, { clearFor: owed, isKin: strangers },
+    undefined, { clearFor: owed, isKin: strangers },
   );
 
   it("keeps a unit owed nothing out of a division's clear ground", () => {
@@ -670,7 +679,7 @@ describe("Law 2 — nobody is left stranded by a tidy", () => {
     occupancy, members, grabbed.u.id, laid.cells.get(grabbed.u.id)!,
     (id) => tree.units.get(id)?.childIds ?? [],
     laid.cells.get(grabbed.u.parentId!)!,
-    undefined, undefined, { clearFor: owed, isKin },
+    undefined, { clearFor: owed, isKin },
   );
 
   const strayed = () => {
