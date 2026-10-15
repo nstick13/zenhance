@@ -22,7 +22,6 @@
  * orbital engine unchanged.
  */
 import {
-  MAX_SEAT_RINGS,
   widestGap,
   type Band,
   type Link,
@@ -30,18 +29,38 @@ import {
   type PlacedSeat,
   type PlacedUnit,
 } from "@/lib/map/layout/layout";
+/**
+ * **What is still taken from the orbital engine, and why each one stays.**
+ *
+ * Greg, 2026-10-15: *"Hex should almost be a completely clean build inspired by,
+ * but not copying, the earlier orbital model."* Everything that decided a
+ * *size* has gone — see `cellRadiusFor` in `people.ts`. What is left is not
+ * layout:
+ *
+ * - `OrbitalScene` and its parts are the **shape this hands back**, and that is
+ *   the whole isolation strategy: camera, visibility, signal, work and basket
+ *   all read it, so the study inherited fit, cull, wheel zoom, the mark budget
+ *   and the health rings without a line of change.
+ * - `workGridPoints` and the capsule constants are the size and arrangement of
+ *   a person's **work marks**. That is furniture drawn beside somebody, the
+ *   same on any layout, and nothing about it assumes a circle.
+ * - `widestGap` finds the widest unused bearing. The lattice has bearings too —
+ *   `hexRingParam` maps one onto a hexagonal ring — so this is an angle
+ *   utility, not a circular layout rule.
+ */
 import {
-  SEAT_RADIUS,
-  UNIT_RADIUS,
-  seatFurnitureReach,
-  seatRingRadius,
+  WORK_CAPSULE_GAP,
+  workCapsuleLength,
   workGridPoints,
 } from "@/lib/map/layout/geometry";
 import type { OrbitalTree, Seat, SeatKind } from "@/lib/map/layout/model";
 import { allocate, type Allocation } from "@/lib/map/layout/hex/allocate";
 import {
-  PERSON_SCALE,
+  MAX_PEOPLE_RINGS,
+  NODE_MARK_RADIUS,
+  PERSON_RADIUS,
   SEAT_RING_GAP,
+  cellRadiusFor,
   placePeople,
   ringsBetween,
   type SeatRequest,
@@ -78,18 +97,59 @@ import {
  */
 export type HexDensity = "roomy" | "tight";
 
+/**
+ * How much of its cell a node fills, at the top and bottom of the company.
+ * Declared here because the cell's own size is solved against the floor — see
+ * `SIZING_NODE_SHARE` — and a constant used in a calculation has to exist
+ * before it.
+ */
+const NODE_MAX_SHARE = 0.85;
+const NODE_MIN_SHARE = 0.1;
+
 /** Work items assumed per person when sizing a cell. The map's own default. */
 const SIZING_WORK_COUNT = 6;
 
-/** The radius a unit's content actually occupies, at the layout's declared
- *  maximum of two seat rings. */
+/**
+ * **The rung a cell is sized for.**
+ *
+ * A cell has to hold the people of whichever unit actually has any, and that is
+ * a team — the deepest rung, where `nodeAreaFraction` is at its floor. Sizing
+ * for the master centre instead would size every cell in the company for the
+ * one node that holds nobody.
+ */
+const SIZING_NODE_SHARE = NODE_MIN_SHARE;
+
+/** How far a person's work reaches past them, for a person this size. The
+ *  capsule's own dimensions; the `+ seatR` is the person they sit beside. */
+const workReachFor = (seatR: number, count: number): number =>
+  count > 0 ? seatR + WORK_CAPSULE_GAP + workCapsuleLength(count) : seatR;
+
+/**
+ * The radius a unit's content actually occupies — **worked out from the lattice
+ * rule that places the people, and nothing else.**
+ *
+ * `tight` reserves for the people. `roomy` also keeps the outermost ring's work
+ * inside the cell, so nothing can overlap at any zoom.
+ *
+ * Until 2026-10-15 both came from the orbital engine's circular seat rings, and
+ * the number that sized a hexagon had no relationship to the number that filled
+ * it. Replacing it changed `tight` by 0.3% — the old formula had been arriving
+ * at very nearly the right answer by accident, which is exactly why it survived
+ * so long. See `cellRadiusFor`.
+ */
 export function contentRadius(density: HexDensity): number {
-  const people = seatRingRadius(UNIT_RADIUS, MAX_SEAT_RINGS - 1) + SEAT_RADIUS;
-  if (density === "tight") return people;
-  return (
-    seatRingRadius(UNIT_RADIUS, MAX_SEAT_RINGS - 1) +
-    Math.max(SEAT_RADIUS, seatFurnitureReach(SIZING_WORK_COUNT))
-  );
+  const common = {
+    rings: MAX_PEOPLE_RINGS,
+    nodeScale: Math.sqrt(SIZING_NODE_SHARE),
+    seatR: PERSON_RADIUS,
+    gap: SEAT_RING_GAP,
+  };
+  const cellR = density === "tight"
+    ? cellRadiusFor(common)
+    : cellRadiusFor({ ...common, outerReach: workReachFor(PERSON_RADIUS, SIZING_WORK_COUNT) });
+  // `cellRadiusFor` answers in circumradius; `hexSizeFor` wants the same thing,
+  // so the inradius is what the rest of the scene calls "content".
+  return cellR * (Math.sqrt(3) / 2);
 }
 
 /** A hexagon's circumradius, so its *inradius* — centre to edge, the tight
@@ -119,9 +179,6 @@ export function hexSizeFor(density: HexDensity): number {
  * the gap is what tells two peers apart — what gives the chain lines somewhere
  * to run, and now what the company's people stand on.
  */
-const NODE_MAX_SHARE = 0.85;
-const NODE_MIN_SHARE = 0.1;
-
 export function nodeAreaFraction(depth: number, maxDepth: number): number {
   if (maxDepth <= 0) return NODE_MAX_SHARE;
   const t = Math.min(1, Math.max(0, depth / maxDepth));
@@ -200,7 +257,7 @@ export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): He
     // drew a white blob over the tile. Importance is carried by the hexagon's
     // own size, which is graded by rung, and never by how many people a unit
     // happens to hold.
-    const unitR = UNIT_RADIUS;
+    const unitR = NODE_MARK_RADIUS;
 
     // Which directions are already spoken for: the line home to the parent,
     // and the line out to each child. People take whatever is left, so they
@@ -219,7 +276,7 @@ export function layoutHex(tree: OrbitalTree, options: HexLayoutOptions = {}): He
     // never inside the node, never over the boundary into the neighbour's
     // tile. The lead sits on the home side, where the chain arrives.
     const nodeR = size * nodeScale(unit.depth, deepest);
-    const personR = SEAT_RADIUS * PERSON_SCALE;
+    const personR = PERSON_RADIUS;
     const rings = ringsBetween(nodeR, size, personR, SEAT_RING_GAP);
     const requests: SeatRequest[] = unit.seatIds
       .map((id) => tree.seats.get(id))

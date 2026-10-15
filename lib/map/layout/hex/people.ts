@@ -60,8 +60,33 @@ export type PersonSeat = {
 export type SeatRequest = { id: string; kind: "person" | "lead" | "open" };
 
 /** How much bigger a person is here than on the orbital map. Greg, 2026-10-02:
- *  *"let's make human nodes 50% bigger — scale 1.5x."* */
+ *  *"let's make human nodes 50% bigger — scale 1.5x."* Kept for the record; the
+ *  size itself is `PERSON_RADIUS` below, which no longer follows the orbital
+ *  map's dot if that changes. */
 export const PERSON_SCALE = 1.5;
+
+/**
+ * **How big a person is on this map**, in world units.
+ *
+ * 14.25 is where Greg's *"50% bigger"* landed against the orbital map's 9.5,
+ * and it is written here as its own number rather than imported from there.
+ * Greg, 2026-10-15: *"Hex should almost be a completely clean build inspired
+ * by, but not copying, the earlier orbital model."* An engine that derives its
+ * sizes from another engine's follows it when it moves, which is the opposite
+ * of what that asks for.
+ */
+export const PERSON_RADIUS = 14.25;
+
+/**
+ * **How big the node mark in the middle of a cell is drawn.**
+ *
+ * The hexagon is what carries a unit's importance — graded by rung, see
+ * `nodeAreaFraction` — so this is only the dot the renderer puts at the centre,
+ * one size everywhere. It was the orbital map's `UNIT_RADIUS`, which is
+ * `SEAT_RADIUS * √2`; that relationship meant something on a map where people
+ * sat in rings round a disc and means nothing here.
+ */
+export const NODE_MARK_RADIUS = 13.44;
 
 /** Clear air between two rings, on top of the two dots' own diameters. Greg
  *  asked for *"a bit more spacing"* on the same day; this is what sets it. */
@@ -153,6 +178,56 @@ export type RingPlan = { r: number; slots: number };
  * not a failure: a unit whose node fills its tile has nowhere to stand anyone,
  * and the caller should say so rather than drawing people over the edge.
  */
+/**
+ * **How big a cell has to be, worked out from the lattice and nothing else.**
+ *
+ * This is the inverse of `ringsBetween` below, and it is the single most
+ * consequential number on the map: every other size is a share of it.
+ *
+ * Until 2026-10-15 it was not derived from the lattice at all. The cell was
+ * sized as *the radius of a ring of seats orbiting a disc* — the orbital
+ * engine's `seatRingRadius(UNIT_RADIUS, MAX_SEAT_RINGS - 1) + SEAT_RADIUS` —
+ * so the formula that decided how big a hexagon was and the formula that
+ * decided where people stood inside it were unrelated. One assumed two
+ * circular rings; the other walks up to four hexagonal ones. Greg, 2026-10-15:
+ * *"fix the hex sizing to use lattice geometry."*
+ *
+ * The derivation, in one line each:
+ *
+ * - people stand on hexagonal rings, `step` apart, the first clear of the node
+ *   and the last inside the cell — that is `ringsBetween`;
+ * - the narrowest gap between two concentric hexagons is at the middle of a
+ *   side, so a dot needs `CLEARANCE` times its own radius of circumradius to
+ *   clear a boundary — **an edge-touch, not a distance from a centre**;
+ * - the node is a share of the cell, so it scales with the answer, which is
+ *   what puts `nodeScale` on the left of the division.
+ *
+ * **No π, and no circle.** The only constant in it is `2/√3`, which is the
+ * hexagon's own inradius ratio. That is the rule to keep when the layout goes
+ * radial: a ring here is a ring of *cells*, and its size comes from counting
+ * lattice steps, never from a circumference.
+ */
+export function cellRadiusFor(options: {
+  /** How many rings of people the cell must hold. */
+  rings: number;
+  /** The node's share of the cell as a *length*, not an area — `nodeScale`. */
+  nodeScale: number;
+  /** A person's radius. */
+  seatR: number;
+  /** Clear air between one ring and the next. */
+  gap: number;
+  /** How far the outermost ring's content reaches past those people's centres.
+   *  Their own radius, unless their work has to fit inside the cell too. */
+  outerReach?: number;
+}): number {
+  const { rings, nodeScale, seatR, gap, outerReach = seatR } = options;
+  if (rings <= 0) return 0;
+  const step = 2 * seatR + gap;
+  const span = CLEARANCE * (seatR + outerReach) + (rings - 1) * step;
+  // The node grows with the cell, so it is solved for rather than subtracted.
+  return span / Math.max(1e-6, 1 - nodeScale);
+}
+
 export function ringsBetween(
   nodeR: number,
   cellR: number,

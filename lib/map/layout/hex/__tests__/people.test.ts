@@ -8,9 +8,11 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  CLEARANCE,
   MAX_PEOPLE_RINGS,
-  PERSON_SCALE,
+  PERSON_RADIUS,
   SEAT_RING_GAP,
+  cellRadiusFor,
   capacity,
   hexRingParam,
   placePeople,
@@ -19,10 +21,9 @@ import {
   type SeatRequest,
 } from "@/lib/map/layout/hex/people";
 import { hexSizeFor, nodeScale } from "@/lib/map/layout/hex/scene";
-import { SEAT_RADIUS } from "@/lib/map/layout/geometry";
 
 const CELL = hexSizeFor("roomy");
-const SEAT = SEAT_RADIUS * PERSON_SCALE;
+const SEAT = PERSON_RADIUS;
 const GAP = SEAT_RING_GAP;
 const TEAM_NODE = CELL * nodeScale(8, 8);
 const CENTRE = { x: 0, y: 0 };
@@ -195,5 +196,80 @@ describe("where a team's people stand", () => {
     const radii = (out: typeof a) => out.map((s) => +Math.hypot(s.x, s.y).toFixed(6)).sort();
     expect(radii(a)).toEqual(radii(b));
     expect(a[0].x).not.toBeCloseTo(b[0].x, 3);
+  });
+});
+
+describe("a cell is sized by the lattice, not by a circle", () => {
+  /**
+   * Greg, 2026-10-15: *"fix the hex sizing to use lattice geometry."*
+   *
+   * Until then the cell's size came from the orbital engine —
+   * `seatRingRadius(UNIT_RADIUS, MAX_SEAT_RINGS - 1) + SEAT_RADIUS`, the radius
+   * of a ring of seats orbiting a disc. So the formula that decided how big a
+   * hexagon was and the formula that decided where people stood inside it were
+   * unrelated: one assumed two circular rings, the other walks up to four
+   * hexagonal ones. It happened to land within 0.3% of the right answer, which
+   * is why it survived from the first day of the study.
+   *
+   * These hold the two properties the old arrangement could not promise.
+   */
+  it("fits exactly as many rings as it was sized for", () => {
+    for (const share of [0.1, 0.45]) {
+      const nodeScaleAt = Math.sqrt(share);
+      const cellR = cellRadiusFor({
+        rings: MAX_PEOPLE_RINGS, nodeScale: nodeScaleAt,
+        seatR: PERSON_RADIUS, gap: SEAT_RING_GAP,
+      });
+      const fitted = ringsBetween(cellR * nodeScaleAt, cellR, PERSON_RADIUS, SEAT_RING_GAP);
+      expect(fitted.length, `node at ${share} of the cell's area`).toBe(MAX_PEOPLE_RINGS);
+    }
+  });
+
+  it("asks for more room the more it has to hold, and never for less", () => {
+    const base = { nodeScale: Math.sqrt(0.1), seatR: PERSON_RADIUS, gap: SEAT_RING_GAP };
+    let last = 0;
+    for (const rings of [1, 2, 3, 4]) {
+      const r = cellRadiusFor({ ...base, rings });
+      expect(r).toBeGreaterThan(last);
+      last = r;
+    }
+    // A bigger node in the same cell needs a bigger cell, because the node is a
+    // share of the answer rather than a fixed lump inside it.
+    expect(cellRadiusFor({ ...base, rings: 4, nodeScale: Math.sqrt(0.45) }))
+      .toBeGreaterThan(cellRadiusFor({ ...base, rings: 4 }));
+    // And work to house pushes it out further still.
+    expect(cellRadiusFor({ ...base, rings: 4, outerReach: PERSON_RADIUS * 3 }))
+      .toBeGreaterThan(cellRadiusFor({ ...base, rings: 4 }));
+  });
+
+  it("holds no π — a hexagon is sized by its own edges", () => {
+    // The only irrational in the rule is 2/√3, the hexagon's inradius ratio:
+    // the narrowest gap between two concentric hexagons, measured at the middle
+    // of a side. That is an edge-touch, not a distance from a centre.
+    expect(CLEARANCE).toBeCloseTo(2 / Math.sqrt(3), 12);
+    // Doubling every length doubles the answer and nothing else — no constant
+    // term has crept in from a circumference.
+    const base = { rings: 3, nodeScale: Math.sqrt(0.1), seatR: PERSON_RADIUS, gap: SEAT_RING_GAP };
+    const twice = { ...base, seatR: PERSON_RADIUS * 2, gap: SEAT_RING_GAP * 2 };
+    expect(cellRadiusFor(twice)).toBeCloseTo(cellRadiusFor(base) * 2, 9);
+  });
+
+  it("keeps everybody inside their own tile, touching the edge at most", () => {
+    for (const density of ["tight", "roomy"] as const) {
+      const cellR = hexSizeFor(density);
+      for (const share of [0.85, 0.45, 0.1]) {
+        const seats: SeatRequest[] = Array.from({ length: 200 }, (_, i) => ({
+          id: `p${i}`, kind: i === 0 ? "lead" : "person",
+        }));
+        const placed = placePeople({
+          centre: { x: 0, y: 0 }, nodeR: cellR * Math.sqrt(share), cellR,
+          seatR: PERSON_RADIUS, gap: SEAT_RING_GAP, homeAngle: 0, seats,
+        });
+        for (const seat of placed) {
+          const reach = Math.hypot(seat.x, seat.y) + CLEARANCE * seat.r;
+          expect(reach / cellR, `${density}, node at ${share}`).toBeLessThanOrEqual(1 + 1e-9);
+        }
+      }
+    }
   });
 });
