@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
-import { allocateByTerritory, layoutTerritories, rotate, nearestDirection, MAX_TIER_GAP, SIBLING_GAP } from "@/lib/map/layout/hex/territory";
+import { allocateByTerritory, headings, layoutTerritories, rotate, nearestDirection, MAX_HALO, SIBLING_GAP } from "@/lib/map/layout/hex/territory";
 import { DIRECTIONS, cellKey, hexDistance, type Cell } from "@/lib/map/layout/hex/coords";
 
 const treeOf = (people: number, maxDepth: number): OrbitalTree => {
@@ -136,8 +136,9 @@ describe("a company laid out as an atlas", () => {
     expect(apart).toBe(checked);
   });
 
-  /** Law 1, which has held since the first day of this study: the picture is a
-   *  pure function of the company. */
+  /** The standing requirement that has held since the first day of this study:
+   *  the picture is a pure function of the company. Not a numbered law — see
+   *  `docs/MAP-LAWS.md`. */
   it("gives the same company the same cells, every time and in any order", () => {
     const tree = treeOf(1000, 8);
     const once = layoutTerritories(tree);
@@ -166,7 +167,7 @@ describe("a company laid out as an atlas", () => {
    */
   it("measures up against the archipelago", () => {
     const tree = treeOf(2400, 11);
-    const atlas = allocateByTerritory(tree);
+    const atlas = allocateByTerritory(tree, { maxGap: 3 });
     const children = atlas.stats.placed - 1;
     /**
      * **85% sit where the rule put them**, which is the number that means
@@ -191,7 +192,9 @@ describe("a company laid out as an atlas", () => {
    */
   it("gives the master centre room and leaves the team level snug", () => {
     const tree = treeOf(2400, 11);
-    const laid = layoutTerritories(tree);
+    // An explicit cap: `MAX_HALO` is a design decision, and a test
+    // that moves with it is not holding anything.
+    const laid = layoutTerritories(tree, { maxGap: 3 });
     const root = tree.units.get(tree.rootId)!;
     const centre = laid.cells.get(root.id)!;
 
@@ -219,8 +222,8 @@ describe("a company laid out as an atlas", () => {
     expect(teams).toBeGreaterThan(50);
     expect(snug / teams).toBeGreaterThan(0.9);
 
-    // And the spacing a unit was held at never exceeds the cap.
-    for (const by of laid.spacedBy.values()) expect(by).toBeLessThanOrEqual(MAX_TIER_GAP);
+    // And the spacing a unit was held at never exceeds the cap it was given.
+    for (const by of laid.spacedBy.values()) expect(by).toBeLessThanOrEqual(3);
   });
 
   /** `buildOrbitalTree` invents a root for an empty company rather than
@@ -262,6 +265,103 @@ describe("a company laid out as an atlas", () => {
     expect(new Set([...laid.cells.values()].map(cellKey)).size).toBe(tree.units.size);
   });
 
+  /**
+   * Greg, 2026-10-03: *"yes, I said nodes… but I also mean people/teams too —
+   * with the exception of team leads."*
+   *
+   * So the halo turns away a child's **whole territory**, people and all,
+   * rather than merely holding its node at a distance — and the unit's own lead
+   * walks straight through it.
+   */
+  describe("the halo round a high node", () => {
+    /** A root with a lead and two sizeable reports, each with a team under it,
+     *  so the root earns a real tier. */
+    const company = () => {
+      const units: { id: string; name: string; parentId: string | null; leadPersonId: string | null }[] =
+        [{ id: "root", name: "Root", parentId: null, leadPersonId: null },
+         { id: "chief", name: "Chief", parentId: "root", leadPersonId: null }];
+      for (const side of ["a", "b"]) {
+        units.push({ id: side, name: side, parentId: "root", leadPersonId: null });
+        for (let r = 0; r < 3; r++) {
+          units.push({ id: `${side}-t${r}`, name: `${side}-t${r}`, parentId: side, leadPersonId: null });
+          for (let p = 0; p < 5; p++) {
+            units.push({ id: `${side}-t${r}-p${p}`, name: `p`, parentId: `${side}-t${r}`, leadPersonId: null });
+          }
+        }
+      }
+      return buildOrbitalTree({ units, people: [], assignments: [] }, {
+        mergePassThroughRoot: false, workCountFor: () => 6,
+      });
+    };
+
+    it("turns away a whole territory, not just the node at its head", () => {
+      const tree = company();
+      const laid = layoutTerritories(tree, { maxGap: 4, leads: new Set(["chief"]) });
+      const centre = laid.cells.get("root")!;
+      const bubble = Math.max(0, (laid.spacedBy.get("a") ?? 0));
+      expect(bubble).toBeGreaterThan(0);
+      // Nothing of either report's subtree — its people included — may stand
+      // inside the halo.
+      for (const [id, cell] of laid.cells) {
+        if (id === "root" || id === "chief") continue;
+        expect(hexDistance(cell, centre)).toBeGreaterThan(bubble);
+      }
+    });
+
+    it("lets the unit's own lead through it", () => {
+      const tree = company();
+      const laid = layoutTerritories(tree, { maxGap: 4, leads: new Set(["chief"]) });
+      const centre = laid.cells.get("root")!;
+      expect(hexDistance(laid.cells.get("chief")!, centre)).toBe(1);
+    });
+
+    it("keeps the lead outside when it is not marked as one", () => {
+      const tree = company();
+      const laid = layoutTerritories(tree, { maxGap: 4 });
+      const centre = laid.cells.get("root")!;
+      expect(hexDistance(laid.cells.get("chief")!, centre)).toBeGreaterThan(1);
+    });
+
+    it("seats everybody however wide the halo gets", () => {
+      const tree = company();
+      for (const maxGap of [0, 2, 6, Infinity]) {
+        const laid = layoutTerritories(tree, { maxGap, leads: new Set(["chief"]) });
+        expect(laid.stats.unplaced).toBe(0);
+        expect(laid.cells.size).toBe(tree.units.size);
+        expect(new Set([...laid.cells.values()].map(cellKey)).size).toBe(tree.units.size);
+      }
+    });
+  });
+
+  /**
+   * **The cap must not reach down into the companies anybody demonstrates.**
+   *
+   * `MAX_HALO` is a design decision — 12, chosen on 2026-10-14 for load time,
+   * against a rule that would otherwise settle at a halo of 119 on the largest
+   * company. It is allowed to shape the top of a big map. It is not allowed to
+   * be the thing deciding gaps on Sparrow Jam or Digital Tailoring, which is
+   * where every map change is checked: if it ever does, the demo companies have
+   * stopped showing what the spacing rule actually does.
+   */
+  it("never decides a gap on the two demo companies", () => {
+    for (const [people, maxDepth] of [[10, 2], [45, 4]] as const) {
+      const laid = layoutTerritories(treeOf(people, maxDepth));
+      const widest = Math.max(0, ...laid.spacedBy.values());
+      expect(widest, `${people} people / ${maxDepth} rungs`).toBeLessThan(MAX_HALO);
+    }
+  });
+
+  /**
+   * How far down the cap reaches on the biggest company, pinned so a change is
+   * visible rather than silent. At 48 it clipped 1 unit here; at 12 it reaches
+   * further, which is the width Greg traded for the 4.7× speedup.
+   */
+  it("clips only the top of the largest company, and says how far", () => {
+    const laid = layoutTerritories(treeOf(2400, 11));
+    const clipped = [...laid.spacedBy.values()].filter((v) => v >= MAX_HALO);
+    expect(clipped.length).toBeLessThanOrEqual(12);
+  });
+
   it("does not fall over on a company with no units", () => {
     const empty = buildOrbitalTree({ units: [], people: [], assignments: [] }, {
       mergePassThroughRoot: false, workCountFor: () => 6,
@@ -278,5 +378,101 @@ describe("a company laid out as an atlas", () => {
     );
     const laid = layoutTerritories(one);
     expect(laid.cells.get("a")).toEqual({ q: 0, r: 0 } satisfies Cell);
+  });
+});
+
+describe("Law 3 — children sit outward, and the compass is how", () => {
+  const org = buildDeepOrg("law3", { people: 600, maxDepth: 7, seed: 11 });
+  const tree = buildOrbitalTree(org);
+
+  it("gives every unit a bearing, and none to argue with", () => {
+    const compass = headings(tree);
+    for (const unit of tree.units.values()) {
+      expect(compass.get(unit.id), unit.name).toBeTypeOf("number");
+      expect(compass.get(unit.id)).toBeGreaterThanOrEqual(0);
+      expect(compass.get(unit.id)).toBeLessThan(6);
+    }
+  });
+
+  it("costs nothing to work out — it is the shape of the company, not geometry", () => {
+    // It runs before a single cell is packed, so it may not consult a layout.
+    const t = performance.now();
+    for (let i = 0; i < 20; i++) headings(tree);
+    expect((performance.now() - t) / 20).toBeLessThan(50);
+  });
+
+  it("is the same answer every time, like the layout it feeds", () => {
+    const a = headings(tree);
+    const b = headings(tree);
+    for (const [id, dir] of a) expect(b.get(id)).toBe(dir);
+  });
+
+  /**
+   * **The number Law 3 owes the panel.**
+   *
+   * Greg, 2026-10-14: *"we're getting quite a lot of loopback on connection
+   * lines still."* The lines were never the fault — 95% of them were already
+   * dead straight. What loops is where things sit: a third of all units stood
+   * nearer the master centre than their own parent, so the line home had to
+   * come back inward.
+   *
+   * Before the compass this was 32–35% on every company. A bare majority would
+   * be a coin toss, so the bar is set where it cannot pass by accident and
+   * still leaves room for the cases the laws above it win: Law 2 keeps a body
+   * whole first, and a leaf is held to its parent's doorstep whichever side
+   * that is on.
+   */
+  it("leaves few units nearer the centre than their own parent", () => {
+    const laid = layoutTerritories(tree);
+    const centre = laid.cells.get(tree.rootId)!;
+    let kids = 0;
+    let curled = 0;
+    for (const unit of tree.units.values()) {
+      if (!unit.parentId) continue;
+      const own = laid.cells.get(unit.id);
+      const up = laid.cells.get(unit.parentId);
+      if (!own || !up) continue;
+      kids++;
+      if (hexDistance(own, centre) < hexDistance(up, centre)) curled++;
+    }
+    expect(kids).toBeGreaterThan(100);
+    expect(curled / kids).toBeLessThan(0.2);
+  });
+
+  /**
+   * **The guard on the win above.** A bearing is easy to satisfy if you are
+   * allowed to put everybody wherever it points, and the result would be a map
+   * that reads outward and has stopped being a family tree.
+   *
+   * The bar is just under what this fixture gives, because what matters is that
+   * the figure does not *move*: measured at **59.6% with the compass and 59.6%
+   * without it** — identical — so the curl-back win cost no cohesion at all
+   * here. (It is low in absolute terms because this fixture is team-level and
+   * small, where half the units are structural nodes rather than places. The
+   * companies in the lab, with people as the smallest unit, sit at 86–87%, and
+   * that figure also held across the change.)
+   */
+  it("is not bought by scattering families — Law 2 outranks Law 3", () => {
+    const laid = layoutTerritories(tree);
+    let kids = 0;
+    let touching = 0;
+    for (const unit of tree.units.values()) {
+      if (!unit.parentId) continue;
+      const own = laid.cells.get(unit.id);
+      if (!own) continue;
+      kids++;
+      const kin = new Set<string>();
+      const up = laid.cells.get(unit.parentId);
+      if (up) kin.add(cellKey(up));
+      for (const sib of tree.units.get(unit.parentId)?.childIds ?? []) {
+        if (sib === unit.id) continue;
+        const c = laid.cells.get(sib);
+        if (c) kin.add(cellKey(c));
+      }
+      for (const d of DIRECTIONS) {
+        if (kin.has(cellKey({ q: own.q + d.q, r: own.r + d.r }))) { touching++; break; }
+      }
+    }
+    expect(touching / kids).toBeGreaterThan(0.55);
   });
 });

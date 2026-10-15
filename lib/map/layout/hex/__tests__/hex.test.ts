@@ -1,18 +1,28 @@
 /**
- * The hex lattice, and the promises it makes (2026-09-29).
+ * The hex lattice, and the promises it makes (2026-09-29, renumbered
+ * 2026-10-15).
  *
- * Three of the orbital engine's four laws carry over to the grid unchanged,
- * because they are properties rather than geometry. They are re-proved here
- * against the new layout rather than assumed:
+ * **The hex map answers to one law set, and it is `docs/MAP-LAWS.md`.** The
+ * orbital engine's own four laws do not apply here and are not cited here.
  *
- *   Law 1 — the picture is a pure function of the company
- *   Law 3 — (not applicable yet: nothing authors a hex placement by hand)
- *   Law 4 — nothing is drawn on top of anything else
+ * That is not pedantry, and this file is the reason it had to be written down.
+ * The two sets share the word "law" and their numbers *collide*: the orbital
+ * set's Law 4 is "never overlap two bodies", while the map's Law 4 is "one
+ * measure of distance". This file carried the orbital numbering from the day
+ * the study began, so a test here called *"Law 4 — nothing sits on top of
+ * anything else"* was proving what the map calls **Law 1**. Greg, 2026-10-15:
+ * *"on Hex we should not be observing old laws or codes — almost at all. Hex
+ * should almost be a completely clean build inspired by, but not copying, the
+ * earlier orbital model."*
  *
- * Law 2 ("a node lands exactly where the hand let go") has no meaning until
- * the study can be dragged, and its meaning will change when it does: on a
- * lattice a node lands in the *cell* under the hand. That is deliberately not
- * tested here — see docs/HEX-LAYOUT.md § Open risks.
+ * What this file holds:
+ *
+ *   Map Law 1 — one cell, one unit
+ *   The standing requirement that the picture is a pure function of the company
+ *
+ * Purity is **not** a numbered map law. It was the orbital engine's Law 1, it
+ * is still true and still worth proving, and it now lives in `MAP-LAWS.md` as a
+ * standing requirement instead of borrowing a number that means something else.
  */
 import { describe, expect, it } from "vitest";
 import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
@@ -176,7 +186,7 @@ describe("connection lines run along the lattice's own angles", () => {
   });
 });
 
-describe("Law 1 — the picture is a pure function of the company", () => {
+describe("the picture is a pure function of the company", () => {
   it("gives identical cells for the same company, every time", () => {
     const tree = treeOf(deep(1000, 8));
     const a = allocate(tree);
@@ -195,7 +205,7 @@ describe("Law 1 — the picture is a pure function of the company", () => {
   });
 });
 
-describe("Law 4 — nothing sits on top of anything else", () => {
+describe("Law 1 — one cell, one unit, and nothing drawn on top of anything", () => {
   it.each(COMPANIES)("gives every unit in %s its own cell", (_name, input) => {
     const tree = treeOf(input);
     const a = allocate(tree);
@@ -261,6 +271,61 @@ describe("Law 4 — nothing sits on top of anything else", () => {
         }
         expect(clear).toBe(true);
       }
+    }
+  });
+});
+
+/**
+ * Greg, 2026-10-06: *"does a human node touch its sibling in space — are any of
+ * the vertexes of the human node hexagon touching a sibling? The grid is
+ * non-Euclidean, it's hexagonal, so measuring spacing on one axis, when there
+ * are three, will give room for error."*
+ *
+ * The worry is exactly right for a square grid, where two cells can share a
+ * corner without sharing a side and "next to" means two different things. On a
+ * honeycomb it cannot happen: **three** hexagons meet at every vertex, and all
+ * three pairs among them share an edge. So touching at a corner and touching
+ * along a side are the same relation, and `neighbours()` is the whole of it.
+ *
+ * It is the reason the lattice was chosen (see `coords.ts`), and it is worth a
+ * test rather than an assurance, because every spacing rule in the engine
+ * counts rings and would be quietly wrong if it were not true.
+ */
+describe("touching means one thing on this lattice", () => {
+  /** The six corners of a cell's hexagon, rounded so they can be compared. */
+  const cornersOf = (cell: { q: number; r: number }): string[] => {
+    const c = cellToWorld(cell, 100);
+    return Array.from({ length: 6 }, (_, i) => {
+      const a = (Math.PI / 3) * i;
+      return `${Math.round(c.x + 100 * Math.cos(a))},${Math.round(c.y + 100 * Math.sin(a))}`;
+    });
+  };
+
+  it("gives a neighbour exactly two shared corners, and nobody else any", () => {
+    const home = { q: 3, r: -2 };
+    const mine = new Set(cornersOf(home));
+    const touching = new Set(neighbours(home).map(cellKey));
+    for (const other of spiral(home, 4)) {
+      if (cellKey(other) === cellKey(home)) continue;
+      const shared = cornersOf(other).filter((c) => mine.has(c)).length;
+      if (touching.has(cellKey(other))) {
+        // A side is two corners. Never one — that would be a corner-only touch.
+        expect(shared).toBe(2);
+      } else {
+        // Everything else is genuinely clear of it, corners included.
+        expect(shared).toBe(0);
+      }
+    }
+  });
+
+  it("has no diagonal: one clear ring really is clear", () => {
+    // The property every spacing rule in the engine leans on. A cell two rings
+    // out shares no corner with home, so "one clear tile between them" means
+    // the hexagons do not meet at any point whatsoever.
+    const home = { q: 0, r: 0 };
+    const mine = new Set(cornersOf(home));
+    for (const other of ring(home, 2)) {
+      expect(cornersOf(other).some((c) => mine.has(c))).toBe(false);
     }
   });
 });
