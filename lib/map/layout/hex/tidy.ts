@@ -15,9 +15,13 @@
  * ## What "neaten" is allowed to touch
  *
  * **Anything a person placed by hand stays exactly where they put it.** That is
- * the whole difference between this and the reset — and it is Law 3 of the
- * orbital engine, which said the same thing about authored placements. Every
- * other unit is the layout's to move.
+ * the whole difference between this and the reset, and it is **Law 0** — the
+ * hand outranks the engine. Every other unit is the layout's to move.
+ *
+ * (It used to cite the orbital engine's Law 3, which said the same thing about
+ * authored placements. The hex map answers to `docs/MAP-LAWS.md` alone; see the
+ * note at the top of `__tests__/hex.test.ts` for why the two sets must never be
+ * mixed.)
  *
  * ## How
  *
@@ -45,6 +49,7 @@ import {
   cellToWorld,
   hexDistance,
   neighbours,
+  ring,
 } from "@/lib/map/layout/hex/coords";
 
 /** Rotate a cell `steps` sixths of a turn about `centre`.
@@ -137,6 +142,10 @@ export function countCrossings(chains: readonly Chain[]): { siblings: number; co
 
 type Box = { minX: number; minY: number; maxX: number; maxY: number };
 
+/** A branch's extent in cell coordinates, so the spacing check can throw away
+ *  the strangers that are plainly nowhere near it before measuring anything. */
+type Bounds = { minQ: number; maxQ: number; minR: number; maxR: number };
+
 const boundsOf = (chain: Chain): Box => {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p of chain.points) {
@@ -168,6 +177,10 @@ export type NeatenResult = {
   turned: number;
   before: { siblings: number; cousins: number };
   after: { siblings: number; cousins: number };
+  /** How many gathered branches got all the clear ground the layout owed them,
+   *  and how many had to settle for less because there was nowhere that did.
+   *  A tidy that quietly stops spacing things is the fault this reports. */
+  spaced: { full: number; squeezed: number };
 };
 
 /** Every unit at or below this one. */
@@ -191,9 +204,47 @@ export function neaten(
   cells: ReadonlyMap<string, Cell>,
   pinned: ReadonlySet<string>,
   size: number,
+  /**
+   * **The clear ground the layout owes each unit** — `spacedBy` straight off
+   * `layoutTerritories`, which is a share of the size of the territory it
+   * separates.
+   *
+   * Law 4: *one measure of distance*. Tidy does not get a spacing rule of its
+   * own; it is handed the layout's and honours it. Omit it and tidy packs
+   * everything tight, which is what it did between 2026-10-14 and this
+   * change — Greg: *"the auto-tidy works amazingly, but it doesn't provide any
+   * space between peer groups… they bunch together with no space between
+   * them."* He was right, and it was measurable: cells touching somebody from
+   * another household went from **10% on a clean load to 69% after one
+   * move-and-tidy**, and the company collapsed from 145×149 to 128×77.
+   *
+   * The cause was this file's gather phase, which seats a drifted branch on
+   * the *nearest* free cell beside its family and had no notion that anything
+   * else deserved room.
+   */
+  clearance?: ReadonlyMap<string, number>,
 ): NeatenResult {
   const placed = new Map(cells);
   let gathered = 0;
+  let fullySpaced = 0;
+  let squeezed = 0;
+
+  /**
+   * Who a unit is *not* required to keep its distance from: itself, its own
+   * subtree, and its line of ancestors.
+   *
+   * A child belongs inside its parent's ground and may sit against it — that is
+   * Law 2, a body stays whole. The gap is between *bodies*, so a sibling's
+   * subtree, a cousin's, and anybody else's are all strangers to be spaced
+   * from. Without this distinction the rule would forbid a branch from ever
+   * reaching its own parent and nothing could be gathered at all.
+   */
+  const ancestorsOf = (id: string): Set<string> => {
+    const out = new Set<string>();
+    let up = tree.units.get(id)?.parentId ?? null;
+    while (up) { out.add(up); up = tree.units.get(up)?.parentId ?? null; }
+    return out;
+  };
   let allChains = chainsOf(tree, placed, size);
   const before = countCrossings(allChains);
   let turned = 0;
@@ -219,7 +270,6 @@ export function neaten(
       const here = placed.get(unit.id);
       const home = unit.parentId ? placed.get(unit.parentId) : null;
       if (!here || !home) continue;
-      if (hexDistance(here, home) <= 1) continue; // already against its family
 
       const mine = subtree(tree, unit.id);
       if ([...mine].some((id) => pinned.has(id))) continue; // a hand is in there
@@ -236,16 +286,90 @@ export function neaten(
         if (cell && hexDistance(cell, home) <= 1) family.push(cell);
       }
 
+      // What the layout would have left clear round this unit, and who has to
+      // stay outside it.
+      const owed = clearance?.get(unit.id) ?? 0;
+      const kin = ancestorsOf(unit.id);
+      const strangers: Cell[] = [];
+      if (owed > 0) {
+        for (const [id, cell] of placed) {
+          if (mine.has(id) || kin.has(id)) continue;
+          strangers.push(cell);
+        }
+      }
+
+      /**
+       * The clear ground this landing would actually achieve, never more than
+       * what is owed — so a branch is not rewarded for drifting into the
+       * wilderness, only for not pressing against the neighbours.
+       */
+      const clearanceOf = (branchCells: Set<string>, box: Bounds): number => {
+        if (owed <= 0) return 0;
+        let worst = owed;
+        for (const s of strangers) {
+          if (s.q < box.minQ - owed || s.q > box.maxQ + owed) continue;
+          if (s.r < box.minR - owed || s.r > box.maxR + owed) continue;
+          for (let r = 0; r <= worst; r++) {
+            const shell = r === 0 ? [s] : ring(s, r);
+            let hit = false;
+            for (const c of shell) if (branchCells.has(cellKey(c))) { hit = true; break; }
+            if (hit) { worst = Math.max(0, r - 1); break; }
+          }
+          if (worst === 0) break;
+        }
+        return worst;
+      };
+
+      /**
+       * **A branch sits against its family. Full stop.**
+       *
+       * Law 2 outranks Law 4, and this is where that ranking earns its keep.
+       * Letting a branch move out to the rings where its owed gap *is*
+       * available halves the bunching — 70% of cells touching a stranger down
+       * to 40% — and costs branch integrity: whole branches fall from 47 of 58
+       * to 31. Measured 2026-10-14 on the 1,000-person company, and it is the
+       * other half of what Greg reported in the same breath as the bunching:
+       * *"they do tend to split in some cases."*
+       *
+       * So the candidates stay what they were — the cells touching this
+       * branch's own family — and the room comes from choosing *which* of them,
+       * and from the turn below, which cannot break a branch because it moves
+       * the whole thing at once.
+       */
+      const options: Cell[] = family.flatMap((member) => neighbours(member));
+
+      // Leaving it alone is always on the table, and wins ties: churn in an
+      // arrangement somebody is looking at is its own cost.
       let target: Cell | null = null;
-      let bestD = Infinity;
+      let bestD = hexDistance(home, here);
+      let bestClear = -1;
       const seen = new Set<string>();
-      for (const member of family) {
-        for (const candidate of neighbours(member)) {
+      {
+        const own = new Set<string>();
+        const box: Bounds = {
+          minQ: Infinity, maxQ: -Infinity, minR: Infinity, maxR: -Infinity,
+        };
+        for (const id of mine) {
+          const at = placed.get(id);
+          if (!at) continue;
+          own.add(cellKey(at));
+          box.minQ = Math.min(box.minQ, at.q); box.maxQ = Math.max(box.maxQ, at.q);
+          box.minR = Math.min(box.minR, at.r); box.maxR = Math.max(box.maxR, at.r);
+        }
+        bestClear = clearanceOf(own, box);
+      }
+
+      for (const candidate of options) {
+        {
           const key = cellKey(candidate);
           if (seen.has(key) || taken.has(key)) continue;
           seen.add(key);
           // Every cell the branch would need has to be free as well.
           let fits = true;
+          const branchCells = new Set<string>();
+          const box: Bounds = {
+            minQ: Infinity, maxQ: -Infinity, minR: Infinity, maxR: -Infinity,
+          };
           for (const id of mine) {
             const from = placed.get(id);
             if (!from) continue;
@@ -254,12 +378,24 @@ export function neaten(
               r: from.r - here.r + candidate.r,
             };
             if (taken.has(cellKey(to))) { fits = false; break; }
+            branchCells.add(cellKey(to));
+            box.minQ = Math.min(box.minQ, to.q); box.maxQ = Math.max(box.maxQ, to.q);
+            box.minR = Math.min(box.minR, to.r); box.maxR = Math.max(box.maxR, to.r);
           }
           if (!fits) continue;
+
+          // **Room first, then nearness.** The old rule was nearness alone,
+          // and nearness alone is what packs a map solid: every branch takes
+          // the first free cell against its family, so every boundary on the
+          // map becomes one tile wide and stops meaning anything.
+          const clear = clearanceOf(branchCells, box);
           const d = hexDistance(home, candidate);
-          if (d < bestD) { bestD = d; target = candidate; }
+          if (clear > bestClear || (clear === bestClear && d < bestD)) {
+            bestClear = clear; bestD = d; target = candidate;
+          }
         }
       }
+      if (owed > 0) { if (bestClear >= owed) fullySpaced++; else squeezed++; }
       if (!target) continue;
 
       for (const id of mine) {
@@ -352,11 +488,27 @@ export function neaten(
         }
       }
 
-      // Cousins are what Greg asked to clear; siblings are allowed to converge
-      // on their shared parent and cost a tenth as much. Facing the right way
-      // is the tie-break, and a tie goes to leaving the branch alone — turning
-      // one that gains nothing is churn, and churn in a hand-made arrangement
-      // is its own cost.
+      /**
+       * **This breaks Law 5, and it is the only place that does.**
+       *
+       * `docs/MAP-LAWS.md`: *"The engine may not move a unit to improve a
+       * line."* No exception clause. Here the dominant term is exactly that —
+       * the crossings a rotation would cause, cousins weighted ten to one —
+       * and facing the right way is the tie-break under it.
+       *
+       * It is marked rather than fixed because removing it is not a one-line
+       * change and the measurements do not yet say what replaces it: on the
+       * recovered gesture this phase *improves* cohesion markedly (children
+       * touching their family 86.4% → 91.5%). The law predicts the price
+       * anyway — *"on a small branch there are few chains and the territory
+       * wins; on a big one the crossing count outvotes it"* — which is the
+       * shape of what Greg reports on large companies and not on small ones.
+       *
+       * Cousins are what Greg asked to clear; siblings are allowed to converge
+       * on their shared parent and cost a tenth as much. A tie goes to leaving
+       * the branch alone — turning one that gains nothing is churn, and churn
+       * in a hand-made arrangement is its own cost.
+       */
       const score =
         -(cousinHits * 10 + siblingHits) + outward * 0.5 + (steps === 0 ? 1e-6 : 0);
       if (score > bestScore) { bestScore = score; bestSteps = steps; }
@@ -377,5 +529,6 @@ export function neaten(
     gathered,
     before,
     after: countCrossings(chainsOf(tree, placed, size)),
+    spaced: { full: fullySpaced, squeezed },
   };
 }

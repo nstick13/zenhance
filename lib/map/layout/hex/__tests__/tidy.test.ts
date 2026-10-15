@@ -2,13 +2,14 @@
  * Neatening an arrangement without undoing it (2026-09-30).
  */
 import { describe, expect, it } from "vitest";
-import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { buildOrbitalTree, type OrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { allocate } from "@/lib/map/layout/hex/allocate";
 import {
   chainsOf, countCrossings, neaten, rotateCell, segmentsCross,
 } from "@/lib/map/layout/hex/tidy";
-import { cellKey, hexDistance, type Cell } from "@/lib/map/layout/hex/coords";
+import { cellKey, hexDistance, neighbours, type Cell } from "@/lib/map/layout/hex/coords";
+import { layoutTerritories } from "@/lib/map/layout/hex/territory";
 
 const at = (q: number, r: number): Cell => ({ q, r });
 
@@ -196,5 +197,101 @@ describe("neatening a real company", () => {
     expect(result.gathered).toBeGreaterThan(0);
     const keys = [...result.cells.values()].map(cellKey);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+/**
+ * **Tidy keeps the room the layout left** (Greg, 2026-10-14).
+ *
+ * *"The auto-tidy works amazingly, but it doesn't provide any space between
+ * peer groups… they bunch together with no space between them."*
+ *
+ * He was right, and it was this file. The gather phase seats a drifted branch
+ * on the **nearest** free cell beside its family, and had no notion that
+ * anything was owed room — so every boundary on the map ended up one tile wide
+ * and stopped saying anything about what it separated. Measured on the
+ * 1,000-person company, one move-and-tidy took cells touching somebody from
+ * another branch from 53% to 79%, and the company collapsed from 145×149 to
+ * 128×77.
+ *
+ * The fix is Law 4: tidy does not get a spacing rule of its own, it is handed
+ * the layout's — `spacedBy`, a share of the size of the thing it separates.
+ *
+ * It is a *preference*, not a gate, and that ranking matters. Letting a branch
+ * move out to where its owed gap is actually available halves the bunching
+ * again and breaks branches apart — whole branches 47/58 down to 31 — which is
+ * Law 2 losing to Law 4. So the branch still sits against its family, and the
+ * room comes from choosing which of those cells.
+ */
+describe("tidy keeps the room the layout left", () => {
+  const build = () => {
+    const org = buildDeepOrg("hexlab", { people: 1000, maxDepth: 8, seed: 7 });
+    const tree = buildOrbitalTree(
+      {
+        units: org.units.map((u) => ({
+          id: u.id, name: u.name, parentId: u.parentId ?? null,
+          leadPersonId: u.leadPersonId ?? null,
+        })),
+        people: org.people.map((p) => ({ id: p.id, name: p.name })),
+        assignments: org.assignments.map((a) => ({
+          personId: a.personId, orgUnitId: a.orgUnitId, allocationPct: a.allocationPct ?? 100,
+        })),
+      },
+      { mergePassThroughRoot: false, workCountFor: () => 6 },
+    );
+    return { tree, laid: layoutTerritories(tree) };
+  };
+
+  /** Cells pressing against a unit that is neither kin nor descendant. */
+  const crowded = (tree: OrbitalTree, cells: ReadonlyMap<string, Cell>): number => {
+    const kin = new Map<string, Set<string>>();
+    for (const u of tree.units.values()) {
+      const set = new Set<string>();
+      const stack = [u.id];
+      while (stack.length) {
+        const at = stack.pop()!;
+        set.add(at);
+        for (const c of tree.units.get(at)?.childIds ?? []) stack.push(c);
+      }
+      let up = u.parentId ?? null;
+      while (up) { set.add(up); up = tree.units.get(up)?.parentId ?? null; }
+      kin.set(u.id, set);
+    }
+    const at = new Map<string, string>();
+    for (const [id, c] of cells) at.set(cellKey(c), id);
+    let n = 0;
+    for (const [id, c] of cells) {
+      for (const nb of neighbours(c)) {
+        const who = at.get(cellKey(nb));
+        if (who && !kin.get(id)!.has(who)) { n++; break; }
+      }
+    }
+    return n;
+  };
+
+  it("leaves the map no more crowded than the layout drew it", () => {
+    const { tree, laid } = build();
+    const before = crowded(tree, laid.cells);
+    const after = crowded(tree, neaten(tree, laid.cells, new Set(), 100, laid.spacedBy).cells);
+    // Without the layout's figures this rises by about half; with them it does
+    // not rise at all.
+    expect(after).toBeLessThanOrEqual(before);
+  });
+
+  it("packs the map tight when it is given no figures — the old behaviour", () => {
+    const { tree, laid } = build();
+    const before = crowded(tree, laid.cells);
+    const after = crowded(tree, neaten(tree, laid.cells, new Set(), 100).cells);
+    // Kept deliberately: the archipelago allocator has no such figures, and
+    // this is what tidy does without them.
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("says how many branches it could not give the full gap to", () => {
+    const { tree, laid } = build();
+    const result = neaten(tree, laid.cells, new Set(), 100, laid.spacedBy);
+    expect(result.spaced.full + result.spaced.squeezed).toBeGreaterThan(0);
+    // A tidy that silently stops spacing things is the fault this reports.
+    expect(result.spaced.full).toBeGreaterThan(result.spaced.squeezed);
   });
 });

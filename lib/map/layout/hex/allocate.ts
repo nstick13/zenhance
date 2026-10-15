@@ -23,8 +23,8 @@
  * 3. **Branches do not interleave.** A big division's territory should read as
  *    one place, not as confetti mixed with its neighbour's.
  * 4. **The same company always gets the same cells.** No randomness, no
- *    settling pass, no dependence on the viewport — Law 1, unchanged from the
- *    orbital engine.
+ *    settling pass, no dependence on the viewport. A standing requirement of
+ *    the map rather than a numbered law — see `docs/MAP-LAWS.md`.
  *
  * ## How
  *
@@ -113,6 +113,16 @@ export type Allocation = {
   branchOf: Map<string, string>;
   /** Furthest ring any unit reached, for a quick extent. */
   radius: number;
+  /**
+   * unit id → the clear ground the layout kept round it, in tiles.
+   *
+   * Only the atlas has such a notion; the archipelago spaces by kinship rung
+   * and leaves this undefined. It is what `tidy` is handed so that there is one
+   * measure of distance on the map rather than two (Law 4) — and it is a
+   * property of the tree, so a hand arrangement never changes what a unit is
+   * owed.
+   */
+  spacedBy?: ReadonlyMap<string, number>;
   stats: {
     placed: number;
     /** Touching the parent or a sibling — the promise this layout makes. */

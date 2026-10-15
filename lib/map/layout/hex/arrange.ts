@@ -437,9 +437,39 @@ export function isOnePatch(cells: Iterable<Cell>): boolean {
  *  the branch still lands where the hand meant. */
 const NUDGE_RINGS = 2;
 
+/**
+ * **How much further than its own clear ground a unit may sit from its family
+ * before it counts as lost.**
+ *
+ * The slack in the repair at the end of `reflow`. One tile, because the point
+ * is to catch the outlier the eye finds — the node adrift dragging a long chain
+ * behind it — and not to re-decide placements that are merely a little loose.
+ */
+const LOST = 1;
+
 /** The widest channel the spacing rules ever ask for, so a clearance check
  *  knows how far to look. */
 const MAX_CHANNEL = 3;
+
+/**
+ * **The layout's own spacing, handed to the paths that re-lay a branch.**
+ *
+ * Law 4: one measure of distance. `clearFor` is `spacedBy` straight off
+ * `layoutTerritories` — the clear ground it kept round a unit, a share of the
+ * size of the thing it separates. `isKin` says who that clear ground does *not*
+ * apply to: a unit's own line of ancestors and its own descendants, because a
+ * body sits inside its parent's ground (Law 2). Everybody else is a stranger.
+ *
+ * This is **not** passed on a plain hand drop. Law 0: where a hand puts
+ * something is not the engine's business to improve, and a drop that silently
+ * spaced itself out would be the engine arguing with the hand. It is passed
+ * when the gesture asks for a tidy — which is what picking the same node up
+ * again within five seconds means.
+ */
+export type TidySpacing = {
+  clearFor: (unitId: string) => number;
+  isKin: (a: string, b: string) => boolean;
+};
 
 /**
  * Clear water for a new island in a tidy up — on the right side of its parent.
@@ -534,6 +564,12 @@ export function placeIsland(
   groupOf?: (unitId: string) => string,
   /** The archipelago spacing, used when the gesture asks for a tidy up. */
   gapBetween?: (a: string, b: string) => number,
+  /**
+   * The atlas's own spacing, applied **only** when the gesture asks for a tidy —
+   * which is what `radiateFrom` means. A plain drop is never spaced: Law 0, the
+   * hand outranks the engine.
+   */
+  tidySpacing?: TidySpacing,
 ): IslandLanding {
   const anchor = members.get(anchorId);
   if (!anchor) return { kind: "no-room" };
@@ -566,6 +602,7 @@ export function placeIsland(
       const treed = reflow(
         occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom,
         groupOf && gapBetween ? { groupOf, gapBetween } : undefined,
+        tidySpacing,
       );
       if (treed) return { kind: "radiated", cells: treed, anchor: seat };
     }
@@ -736,6 +773,9 @@ function reflow(
     groupOf: (unitId: string) => string;
     gapBetween: (a: string, b: string) => number;
   },
+  /** The layout's own spacing. Takes precedence over `spacing`, which is the
+   *  archipelago's and is kept only for that shape. */
+  clearance?: TidySpacing,
 ): Map<string, Cell> | null {
   const taken = new Map<string, string>();
   for (const [key, id] of occupancy) if (!moving.has(id)) taken.set(key, id);
@@ -785,6 +825,81 @@ function reflow(
     return true;
   };
 
+  /**
+   * **Clear ground somebody else is already owed** — cell key → who owes it.
+   *
+   * Greg, 2026-10-14: *"the 5s placement feature bunches peer groups together —
+   * it does not observe any spacing rules."* It was observing one half of them.
+   * The check below asked *"is my own owed gap clear?"* and never *"am I
+   * standing in somebody else's?"*, so a person owed nothing walked straight up
+   * to a division owed twelve. The gap is one measure between two bodies (Law
+   * 4), and a rule applied from one side only is not that measure.
+   *
+   * The atlas cannot make this mistake, because it reserves the gap as
+   * **ground** — `blocked` and `halo` in `territory.ts` — so whoever arrives
+   * second is simply kept out. This is the same idea: stamp the owed ground
+   * once as each unit is seated, then a candidate cell is a single lookup
+   * rather than a fresh search. Measured on the 1,000-person company it is
+   * also what pays for the second half of the rule — see `latency` in
+   * `docs/HEX-LAYOUT.md`.
+   *
+   * A cell can be owed to several units at once: sibling halos are all the same
+   * width and the siblings sit about that far apart, so they overlap by design.
+   * Keeping only one claimant would let a unit through whenever the one we kept
+   * happened to be its own kin.
+   */
+  const owedTo = new Map<string, string[]>();
+  const reserve = (cell: Cell, unitId: string) => {
+    if (!clearance) return;
+    const owed = clearance.clearFor(unitId);
+    if (owed <= 0) return;
+    for (const near of spiral(cell, owed)) {
+      const key = cellKey(near);
+      const had = owedTo.get(key);
+      if (had) had.push(unitId);
+      else owedTo.set(key, [unitId]);
+    }
+  };
+  if (clearance) {
+    // Seeded from the **whole map**, for the reason `groupAt` is: a branch that
+    // spaces itself perfectly internally still lands in the clear ground of the
+    // neighbours it cannot see.
+    for (const [key, id] of taken) reserve(cellFromKey(key), id);
+  }
+
+  /**
+   * The same question the atlas asks: does this unit get the clear ground the
+   * **layout** left it, and does it leave everybody else theirs?
+   *
+   * Greg, 2026-10-14, on the five-second re-pickup: *"that pushes everything
+   * together so the gap between anything is zero, which means it's not applying
+   * the same rules as the auto-tidy. To me that feels inconsistent."* He was
+   * right, and it was a hole rather than a decision: this path took its spacing
+   * from `gapBetween`, which the drop path stopped passing on 2026-10-14
+   * because it was the old model's second rule. Nothing replaced it here.
+   */
+  const roomEnough = (cell: Cell, unitId: string): boolean => {
+    if (!clearance) return true;
+    // Ground already owed to somebody who is not family. One lookup, whatever
+    // the gap is — which is what makes asking at all affordable here.
+    const theirs = owedTo.get(cellKey(cell));
+    if (theirs) {
+      for (const who of theirs) {
+        if (who === unitId) continue;
+        if (!clearance.isKin(unitId, who)) return false;
+      }
+    }
+    const owed = clearance.clearFor(unitId);
+    if (owed <= 0) return true;
+    for (const near of spiral(cell, owed)) {
+      const who = taken.get(cellKey(near));
+      if (!who || who === unitId) continue;
+      if (clearance.isKin(unitId, who)) continue;
+      return false;
+    }
+    return true;
+  };
+
   const queue: string[] = [anchorId];
   while (queue.length) {
     const parentId = queue.shift()!;
@@ -793,12 +908,18 @@ function reflow(
     const back = cameFrom.get(parentId);
     for (const childId of [...(kidsOf.get(parentId) ?? [])].sort()) {
       const group = spacing?.groupOf(childId);
-      const sameIsland = group !== undefined && group === spacing!.groupOf(parentId);
-      const cell = group !== undefined && !sameIsland
-        // A new island: find clear water, the same rule the allocator uses.
-        ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
+      const owed = clearance ? clearance.clearFor(childId) : 0;
+      const cell = clearance
+        // The atlas: a child takes the nearest cell that still keeps the room
+        // the layout left it. `maxRings` has to clear the gap itself, or a unit
+        // owed wide ground would never find anywhere that satisfies it and
+        // would fall back to the first free cell — which is the bunching.
+        ? firstClearCell(
+            taken, parentCell, (c) => roomEnough(c, childId),
+            back ?? homeward ?? null, Math.max(16, owed + 4),
+          )
         : group !== undefined
-          // Same island, but still not allowed to grow into the one next door.
+          // The archipelago: not allowed to grow into the island next door.
           // This is where a tidy used to magnetise a branch onto whatever was
           // nearest, family or not: `nearestFreeCell` knows nothing of groups.
           ? firstClearCell(taken, parentCell, (c) => clearEnough(c, group), back ?? homeward ?? null)
@@ -809,6 +930,8 @@ function reflow(
       if (group !== undefined) groupAt.set(cellKey(cell), group);
       out.set(childId, cell);
       taken.set(cellKey(cell), childId);
+      // Its own clear ground, so the next unit along has to respect it.
+      reserve(cell, childId);
       cameFrom.set(childId, parentCell);
       queue.push(childId);
     }
@@ -822,6 +945,107 @@ function reflow(
     if (!cell) return null;
     out.set(id, cell);
     taken.set(cellKey(cell), id);
+  }
+
+  /**
+   * **Last: fetch home anybody who ended up touching nobody they belong to.**
+   *
+   * Greg, 2026-10-14: *"occasionally one node will get flung out, or we'll end
+   * up with something that looks like digital spaghetti in the connection
+   * lines."* He is describing an **outlier**, and that is the reason this is a
+   * repair rather than a change to the search above.
+   *
+   * Tuning the search was tried first, about a dozen ways across four
+   * mechanisms — clamping how far a unit may travel, grading how badly a cell
+   * breaches the gap rather than merely whether, pricing the two laws against
+   * each other, and gating on family outright. Every one of them slid along the
+   * same line: cohesion bought bunching and spacing bought flinging, with
+   * nothing in between. The reason is structural and is written up in
+   * `docs/HEX-LAYOUT.md` — `reflow` has to fit a branch into the hole that is
+   * already there, while the atlas grows the ground to make room, so for
+   * `reflow` the two laws genuinely compete for the same cells.
+   *
+   * What does not compete is the tail. A unit touching **no** relative at all
+   * has already lost Law 2 outright, so moving it beside its family cannot cost
+   * anything that law ranks higher — and it is the one the eye finds, because a
+   * node adrift drags a long chain behind it. So the policy is left exactly as
+   * it was and only the casualties are collected: measured on the 1,000-person
+   * company this is about one unit in fifty, and it touches nothing else.
+   */
+  {
+    // Who each unit hangs from, inverted from the tree the walk already built.
+    const upOf = new Map<string, string>();
+    for (const [parent, kids] of kidsOf) for (const kid of kids) upOf.set(kid, parent);
+
+    for (const [id, at] of [...out]) {
+      // Not the anchor: that is where the hand let go, and Law 0 outranks all
+      // of this.
+      if (id === anchorId) continue;
+      const up = upOf.get(id);
+      if (!up) continue;
+      const kin = new Set<string>();
+      const parentCell = out.get(up);
+      if (parentCell) kin.add(cellKey(parentCell));
+      for (const sib of kidsOf.get(up) ?? []) {
+        if (sib === id) continue;
+        const c = out.get(sib);
+        if (c) kin.add(cellKey(c));
+      }
+      if (!kin.size) continue;
+
+      /**
+       * **Lost is not the same as not touching, and the difference is the whole
+       * of this.**
+       *
+       * A unit owed four tiles of clear ground is *meant* to sit four tiles
+       * from its family: touching and well-spaced are opposites, so a repair
+       * that fetches home everybody not touching their family fetches home
+       * everybody who is correctly spaced. Measured, that is 196 units where 52
+       * are actually lost, and parking all of them against their relatives
+       * flattened every gap on the branch — which is the bunching Greg reported
+       * the same morning.
+       *
+       * So: lost means further out than this unit's **own** clear ground
+       * explains, and the cell it is fetched back to is one at about that
+       * distance — where the layout wanted it — rather than against the family.
+       */
+      const owedHere = clearance?.clearFor(id) ?? 0;
+      const want = owedHere + 1;
+      const nearestKin = (c: Cell): number => {
+        let d = Infinity;
+        for (const key of kin) d = Math.min(d, hexDistance(c, cellFromKey(key)));
+        return d;
+      };
+      if (nearestKin(at) <= want + LOST) continue;
+
+      // Back to where its own spacing says it belongs, as near as it can be
+      // got to where the layout put it.
+      let home: Cell | null = null;
+      let best = Infinity;
+      let bestClear = false;
+      for (const key of kin) {
+        for (const c of spiral(cellFromKey(key), want)) {
+          const k = cellKey(c);
+          if (taken.has(k)) continue;
+          if (nearestKin(c) > want) continue;
+          // **Fetching somebody home is no reason to drop them on a stranger.**
+          // Law 4 still applies to the cell this lands on, so a clear one wins
+          // over a tighter one however much nearer the tighter one is.
+          // Distance first: it is arithmetic, and `roomEnough` is a search.
+          // A cell that cannot win on distance is never worth measuring.
+          const d = hexDistance(c, at);
+          if (bestClear && d >= best) continue;
+          const clear = roomEnough(c, id);
+          if ((clear && !bestClear) || (clear === bestClear && d < best)) {
+            best = d; home = c; bestClear = clear;
+          }
+        }
+      }
+      if (!home) continue;
+      taken.delete(cellKey(at));
+      out.set(id, home);
+      taken.set(cellKey(home), id);
+    }
   }
   return out;
 }
