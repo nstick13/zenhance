@@ -29,7 +29,12 @@ import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
 import { allocate, TEAM_GAP } from "@/lib/map/layout/hex/allocate";
-import { allocateByTerritory } from "@/lib/map/layout/hex/territory";
+import {
+  allocateByTerritory,
+  headings,
+  relayBranch,
+  restBranch,
+} from "@/lib/map/layout/hex/territory";
 import {
   branchOf,
   dropOutcome,
@@ -39,7 +44,8 @@ import {
   type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, corners, cornersAt, worldToCell, type Cell,
+  cellKey, cellToWorld, corners, cornersAt, hexDistance, neighbours, worldToCell,
+  type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -79,6 +85,11 @@ const HOLD_MS = 550;
  * than only treeing it away from its parent.
  */
 const RADIATE_WINDOW_MS = 5_000;
+
+/** How faint a connection line goes where it passes behind somebody's tile.
+ *  Faint enough to read as *behind* rather than *through*, strong enough that
+ *  the eye can still follow it out the far side. */
+const BEHIND_ALPHA = 0.18;
 
 /**
  * When the people appear, measured in **cell pixels** rather than world scale
@@ -376,10 +387,56 @@ export default function HexLab({
 
   const baseAllocation = useMemo(
     () => (shape === "atlas"
-      ? allocateByTerritory(baseTree)
+      ? allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds })
       : allocate(baseTree, { groupOf, gapBetween })),
-    [baseTree, groupOf, gapBetween, shape],
+    [baseTree, groupOf, gapBetween, shape, leadIds, peopleIds],
   );
+
+  /**
+   * **The layout's own spacing, for the gestures that re-lay a branch.**
+   *
+   * Greg, 2026-10-14: *"the 'pick up and place within five seconds' rule…
+   * pushes everything together so the gap between anything is zero, which means
+   * it's not applying the same rules as the auto-tidy. To me that feels
+   * inconsistent."*
+   *
+   * It is the same rule now. `spacedBy` is what `layoutTerritories` kept clear
+   * round each unit, and both the tidy button and the five-second re-pickup are
+   * handed it — they are the same gesture at different scopes. A plain drop
+   * still gets nothing, because Law 0 says where a hand puts something is not
+   * the engine's business to improve.
+   */
+  /**
+   * The company's own bearings. Worked out from the shape of the tree before
+   * anything is packed, so it costs one pass over the units and never changes
+   * while a drag is live — see `headings`. A re-laid branch is handed this so
+   * it keeps facing the way it always faced rather than growing outward from
+   * whichever node the hand happened to grab.
+   */
+  const compass = useMemo(() => headings(tree), [tree]);
+
+  const tidySpacing = useMemo(() => {
+    const spacedBy = baseAllocation.spacedBy;
+    if (!spacedBy) return undefined;
+    const depthOf = (id: string) => tree.units.get(id)?.depth ?? 0;
+    return {
+      clearFor: (id: string) => spacedBy.get(id) ?? 0,
+      // Kin is a unit's own line of ancestors and its own descendants — the gap
+      // separates bodies, and a body sits inside its parent's ground. Walking
+      // up from the deeper of the two costs at most the depth of the company.
+      isKin: (a: string, b: string) => {
+        if (a === b) return true;
+        const hi = depthOf(a) > depthOf(b) ? b : a;
+        let lo = depthOf(a) > depthOf(b) ? a : b;
+        while (depthOf(lo) > depthOf(hi)) {
+          const up = tree.units.get(lo)?.parentId;
+          if (!up) return false;
+          lo = up;
+        }
+        return lo === hi;
+      },
+    };
+  }, [baseAllocation, tree]);
 
   /** The allocation with every hand placement applied on top. Reparenting does
    *  **not** re-allocate: Greg's rule is that a reparented tile stays exactly
@@ -596,6 +653,18 @@ export default function HexLab({
     /** The tidy-up gesture is live for this drag: the same node was picked
      *  straight back up inside the window. */
     armedAt: Cell | null;
+    /**
+     * **The branch's own shape, worked out once when the gesture armed.**
+     *
+     * The atlas re-lays the branch — measure every family, reserve its ground,
+     * then place — which is the only way a team survives the journey. That
+     * costs about a third of a second on a thousand people and this runs on
+     * every movement of the pointer, so it is done **once**: a branch's shape
+     * does not change as the hand moves, only where it lands. Carrying it after
+     * that is a translation, measured at 1ms against `reflow`'s 256ms *per
+     * move*. Offsets from the anchor; null when the gesture is not armed.
+     */
+    shape: Map<string, Cell> | null;
     heldOver: string | null;
     holdSince: number;
   };
@@ -737,17 +806,32 @@ export default function HexLab({
         if (!visibleIds.has(chain.unitId) && !visibleIds.has(chain.parentId)) continue;
         const unit = scene.unitById.get(chain.unitId);
         if (!unit) continue;
-        ctx.beginPath();
-        ctx.moveTo(chain.points[0].x, chain.points[0].y);
-        for (let i = 1; i < chain.points.length; i++) {
-          ctx.lineTo(chain.points[i].x, chain.points[i].y);
-        }
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         // Still scaled by the node, so the trunk stays heavier than the twigs.
         ctx.lineWidth = Math.max(0.6, hexSize * 0.27 * nodeScale(unit.depth, maxDepth));
-        ctx.strokeStyle = css(hueFor(chain.unitId), unit.depth, maxDepth, 0.95);
-        ctx.stroke();
+        /**
+         * **A stretch that runs behind somebody is drawn faint.**
+         *
+         * Greg, 2026-10-15: *"we need to make it so that chaining can run
+         * behind existing colleagues — perhaps by fading the colour of the
+         * connection line. This should stop a bunch of the spaghetti
+         * appearance."*
+         *
+         * The router now takes those short cuts rather than walking round
+         * everybody — see `THROUGH_A_STRANGER` — and this is the other half of
+         * the same idea. Without it a line that crosses a tile reads as
+         * *through* it, which is the thing that looks like tangle; faded, it
+         * reads as going behind, and the eye drops it and picks it up again on
+         * the far side.
+         */
+        for (const run of chain.runs) {
+          ctx.beginPath();
+          ctx.moveTo(run.points[0].x, run.points[0].y);
+          for (let i = 1; i < run.points.length; i++) ctx.lineTo(run.points[i].x, run.points[i].y);
+          ctx.strokeStyle = css(hueFor(chain.unitId), unit.depth, maxDepth, run.under ? BEHIND_ALPHA : 0.95);
+          ctx.stroke();
+        }
       }
     }
 
@@ -1092,11 +1176,51 @@ export default function HexLab({
         Date.now() - justMoved.when < RADIATE_WINDOW_MS
           ? justMoved.at
           : null;
+      /**
+       * **Ask the atlas for the branch's shape, now, while the hand is still.**
+       *
+       * Greg, 2026-10-15: *"people in the same team should glue together where
+       * space allows, and where space doesn't, the whole team should move,
+       * rather than isolate one human."* That is measure-then-reserve, and the
+       * atlas is the only engine here that does it — on a clean load every one
+       * of the 1,000-person company's 230 teams is in one piece with every
+       * person exactly one tile from their node. The company's own compass goes
+       * with it so the branch keeps facing the way it always faced.
+       */
+      const parentOfHit = tree.units.get(hit)?.parentId ?? null;
+      const homeCell = parentOfHit ? hexScene.hex.cells.get(parentOfHit) ?? null : null;
+      const grabbedAt = hexScene.hex.cells.get(hit)!;
+      const relaid = armed
+        ? relayBranch({
+            tree, anchorId: hit,
+            homeward: homeCell
+              ? { q: homeCell.q - grabbedAt.q, r: homeCell.r - grabbedAt.r }
+              : null,
+            leads: leadIds, people: peopleIds, compass,
+          })
+        : null;
+      /**
+       * **An armed pick-up shows its answer immediately.**
+       *
+       * A landing used to be worked out only once the pointer crossed into a
+       * *different* cell, which is fine for carrying something somewhere and
+       * wrong for this gesture: picking a node straight back up and setting it
+       * down where it already was is the whole point of the five-second rule,
+       * and that drag never leaves its own cell. The release then found no
+       * landing and refused the drop — *"there is nowhere free nearby"* — on a
+       * map that was nearly empty.
+       */
+      const restedNow = relaid
+        ? restBranch(relaid.cells, grabbedAt, allocation.occupants, new Set(members.keys()))
+        : null;
       setDrag({
-        unitId: hit, members, grabbed: hexScene.hex.cells.get(hit)!,
-        from: world, world, target: hexScene.hex.cells.get(hit)!,
-        landing: null, anchor: null, reshaped: false, radiated: false,
+        unitId: hit, members, grabbed: grabbedAt,
+        from: world, world, target: grabbedAt,
+        landing: restedNow?.cells ?? null,
+        anchor: restedNow?.anchor ?? null,
+        reshaped: false, radiated: Boolean(restedNow),
         armedAt: armed,
+        shape: relaid?.cells ?? null,
         heldOver: null, holdAt: world, holdSince: performance.now(),
       });
       return;
@@ -1134,12 +1258,53 @@ export default function HexLab({
       const parentId = tree.units.get(drag.unitId)?.parentId ?? null;
       const parentCell = parentId ? hexScene.hex.cells.get(parentId) ?? null : null;
       const treeIt = drag.armedAt && parentCell ? parentCell : null;
+
+      /**
+       * **The armed gesture carries a shape; a plain drag carries a silhouette.**
+       *
+       * When the same node is picked straight back up, the branch has already
+       * been re-laid by the atlas — teams measured, ground reserved, every
+       * person against their own node. All that is left is to find where that
+       * body can come to rest, which is a translation and a collision test. A
+       * body that cannot fit under the hand settles nearby **whole**: Law 2
+       * before convenience, and the opposite of what the old path did, which
+       * was to take the branch apart one unit at a time until the pieces fitted.
+       */
+      if (drag.shape) {
+        const rested = restBranch(drag.shape, target, allocation.occupants, new Set(drag.members.keys()));
+        setDrag({
+          ...drag, world, target,
+          landing: rested?.cells ?? null,
+          anchor: rested?.anchor ?? null,
+          reshaped: false,
+          radiated: Boolean(rested),
+          heldOver: null,
+          holdAt: world, holdSince: performance.now(),
+        });
+        return;
+      }
+
       const landing = placeIsland(
         allocation.occupants, drag.members, drag.unitId, target,
         (id) => tree.units.get(id)?.childIds ?? [],
         treeIt,
+        // **`groupOf` stays; `gapBetween` goes.** Law 4: the layout owns
+        // spacing and the drop path holds no rule of its own. `gapBetween` was
+        // the drop path's second, tighter rule — kinship rungs capped at
+        // `TEAM_GAP = 3` — quietly compressing a map whose gaps are a share of
+        // what they separate, on every drag.
+        //
+        // `groupOf` is a different thing wearing the same coat, and it is
+        // load-bearing: it is what tells a clash which body may step aside, so
+        // the rest can translate as-is. Measured over 484 clashing drops on the
+        // 1,000-person company, removing it turns *every* one of them from
+        // `parted` into `gathered` and takes whole families inside the branch
+        // from 224/248 to about 80 — the confetti itself. A draft rule set
+        // proposed deleting both; see `app/lab/hex/confetti.test.ts`.
         groupOf,
-        gapBetween,
+        undefined,
+        // Only consulted when the gesture asked for a tree — `treeIt` above.
+        tidySpacing,
       );
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
@@ -1223,7 +1388,16 @@ export default function HexLab({
       setTidyReport(null);
       return;
     }
-    const result = neaten(tree, allocation.cells, pinned, hexScene.hex.size);
+    // **Tidy is handed the layout's own spacing** rather than inventing one.
+    // Law 4: one measure of distance. `spacedBy` is what `layoutTerritories`
+    // actually kept clear round each unit — a share of the size of the thing it
+    // separates — and it is a property of the tree, so a hand arrangement does
+    // not change what a unit is owed. The archipelago allocator has no such
+    // figure, and passing nothing leaves tidy packing tight, as before.
+    const result = neaten(
+      tree, allocation.cells, pinned, hexScene.hex.size,
+      allocation.spacedBy,
+    );
     setMoves(new Map(result.cells));
     setTidyReport(result);
     setTidyStage(1);
@@ -1235,6 +1409,84 @@ export default function HexLab({
    * drags and reparents produce none — but Greg reported a tile he could not
    * hover on 2026-10-01, and a number on the screen beats a mystery.
    */
+  /**
+   * **A live count of how mixed up the map is** (Greg, 2026-10-06).
+   *
+   * *"I think we're measuring the wrong thing re the confetti. I'd guess we're
+   * measuring something to do with parenting, where we should be measuring
+   * adjacency?"*
+   *
+   * He was right. The first version asked whether each team was internally
+   * whole and whether people sat beside their own manager — and both came back
+   * clean while the screen was plainly a mess, because a thousand intact little
+   * teams strewn across the map is exactly what it was reporting as healthy.
+   *
+   * These ask about **adjacency to strangers** instead, which is what the eye
+   * is actually reading: who is my neighbour, and do they belong with me. A
+   * person pressed against somebody from another team, or a group pressed
+   * against a group it is not part of, is a boundary the eye cannot use.
+   */
+  const scatter = useMemo(() => {
+    if (peopleIds.size === 0 || !groups?.length) return null;
+    const at = new Map<string, string>();
+    for (const [id, cell] of allocation.cells) at.set(cellKey(cell), id);
+    const teamOfPerson = new Map(groups);
+    const teamOf = (id: string) => teamOfPerson.get(id) ?? id;
+
+    let crowded = 0, withNeighbours = 0;
+    for (const id of peopleIds) {
+      const cell = allocation.cells.get(id);
+      if (!cell) continue;
+      const mine = teamOf(id);
+      let any = false, stranger = false;
+      for (const nb of neighbours(cell)) {
+        const who = at.get(cellKey(nb));
+        if (!who) continue;
+        any = true;
+        if (teamOf(who) !== mine) { stranger = true; break; }
+      }
+      if (any) withNeighbours++;
+      if (stranger) crowded++;
+    }
+
+    /** Which ancestor a unit belongs to, `rungs` up from the top. */
+    const branchAt = (id: string, depth: number): string | null => {
+      let up: string | null = id;
+      while (up) {
+        const unit = tree.units.get(up);
+        if (!unit) return null;
+        if (unit.depth === depth) return up;
+        up = unit.parentId ?? null;
+      }
+      return null;
+    };
+    // The rung where the company first fans out — the big territories a reader
+    // would call divisions, whatever the fixture names them.
+    let rung = 1;
+    for (let d = 1; d <= 4; d++) {
+      const n = new Set([...allocation.cells.keys()].map((id) => branchAt(id, d)).filter(Boolean)).size;
+      if (n >= 4) { rung = d; break; }
+      rung = d;
+    }
+    const owner = new Map<string, string>();
+    for (const [id, cell] of allocation.cells) {
+      const a = branchAt(id, rung);
+      if (a) owner.set(cellKey(cell), a);
+    }
+    let touching = 0;
+    for (const [key, mine] of owner) {
+      const [q, r] = key.split(",").map(Number);
+      for (const nb of neighbours({ q, r })) {
+        const theirs = owner.get(cellKey(nb));
+        if (theirs && theirs !== mine) { touching++; break; }
+      }
+    }
+    return {
+      people: peopleIds.size, crowded, withNeighbours,
+      divisions: new Set(owner.values()).size, touching, rung,
+    };
+  }, [peopleIds, groups, tree, allocation]);
+
   const buried = allocation.cells.size - allocation.occupants.size;
   /** Units the layout never gave a cell to. A dropped unit is simply absent
    *  from the map, which is the one fault nothing else here would show. */
@@ -1271,6 +1523,97 @@ export default function HexLab({
         }
       : revealAt(camera.scale),
   );
+  /**
+   * **Counted from what is on the screen, not from what was calculated.**
+   *
+   * The panel used to read these off `allocation.stats`, and the `allocation`
+   * memo builds itself with `{ ...baseAllocation, cells, occupants }` — which
+   * copies the statistics of the **calculated** layout straight through while
+   * replacing the cells underneath them. So after a thousand hand placements
+   * the panel was faithfully describing a map nobody was looking at any more.
+   *
+   * Greg, 2026-10-06, with 1,258 placements of his own on screen: *"it states
+   * that there are 91% of children touching their family, yet on the zoom alone
+   * I can see such examples as 'Cliff Petrov', 'Kit Io', and 'Ben Xu' as
+   * separated from their family groups."* He was reading the arrangement and
+   * the number was reading the calculation. Both were right, about different
+   * maps.
+   *
+   * There is no allowance in this one either. The engine's own figure asks
+   * whether a unit is further out than the spacing rule *told* it to be, which
+   * is the right question of a rule and the wrong question of a picture — and
+   * with the gap now a share of a territory's size that allowance can run to a
+   * dozen tiles, so somebody plainly adrift still counted as connected. On
+   * screen, touching means touching.
+   */
+  const live = useMemo(() => {
+    const cells = allocation.cells;
+    let touchingFamily = 0, touchingParent = 0, children = 0;
+    let families = 0, wholeFamilies = 0;
+    /**
+     * **Law 3, counted live.** How many units sit nearer the master centre
+     * than their own parent does, and the worst case in tiles.
+     *
+     * This had no number on the panel until 2026-10-14: the 33–35% everybody
+     * quoted came from a one-off probe against a build that has since changed,
+     * so the baseline every new rule was to be judged against could not be
+     * seen while using the map. Greg, 2026-10-06, on what it looks like: the
+     * line from a deep team back to the centre *"seems to loop back on
+     * itself."*
+     */
+    let curled = 0, curlWorst = 0;
+    const centre = cells.get(tree.rootId);
+    for (const unit of tree.units.values()) {
+      const own = cells.get(unit.id);
+      if (!own) continue;
+      if (unit.parentId) {
+        children++;
+        const kin = new Set<string>();
+        const parent = cells.get(unit.parentId);
+        if (parent) {
+          kin.add(cellKey(parent));
+          if (hexDistance(own, parent) === 1) touchingParent++;
+        }
+        for (const sib of tree.units.get(unit.parentId)?.childIds ?? []) {
+          if (sib === unit.id) continue;
+          const c = cells.get(sib);
+          if (c) kin.add(cellKey(c));
+        }
+        for (const nb of neighbours(own)) {
+          if (kin.has(cellKey(nb))) { touchingFamily++; break; }
+        }
+        if (parent && centre) {
+          const out = hexDistance(own, centre);
+          const parentOut = hexDistance(parent, centre);
+          // Equal distance is allowed by the law; nearer is not.
+          if (out < parentOut) { curled++; curlWorst = Math.max(curlWorst, parentOut - out); }
+        }
+      }
+      if (unit.childIds.length === 0) continue;
+      families++;
+      const patch = new Set([cellKey(own)]);
+      for (const id of unit.childIds) {
+        const c = cells.get(id);
+        if (c) patch.add(cellKey(c));
+      }
+      const seen = new Set([cellKey(own)]);
+      const queue: Cell[] = [own];
+      while (queue.length) {
+        const at = queue.pop()!;
+        for (const nb of neighbours(at)) {
+          const k = cellKey(nb);
+          if (patch.has(k) && !seen.has(k)) { seen.add(k); queue.push(nb); }
+        }
+      }
+      if (seen.size === patch.size) wholeFamilies++;
+    }
+    return {
+      children, touchingFamily, touchingParent,
+      exclaves: children - touchingFamily, families, wholeFamilies,
+      curled, curlWorst,
+    };
+  }, [allocation, tree]);
+
   const stats = hexScene?.hex.stats ?? null;
   const b = scene.bounds ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   const nameOf = (id: string) => tree.units.get(id)?.name ?? id;
@@ -1385,6 +1728,15 @@ export default function HexLab({
               <Small style={{ color: "#166534" }}>
                 gathered {tidyReport.gathered}, turned {tidyReport.turned} ·
                 {" "}cousin clashes {tidyReport.before.cousins} → {tidyReport.after.cousins}
+                {tidyReport.spaced.full + tidyReport.spaced.squeezed > 0 && (
+                  <>
+                    {" "}· kept the layout&apos;s room for{" "}
+                    <b>{tidyReport.spaced.full}</b>, squeezed{" "}
+                    <b style={{ color: tidyReport.spaced.squeezed === 0 ? "#166534" : "#b45309" }}>
+                      {tidyReport.spaced.squeezed}
+                    </b>
+                  </>
+                )}
               </Small>
             )}
           </>
@@ -1395,15 +1747,24 @@ export default function HexLab({
         </Small>
         {stats ? (
           <>
-            <Small>
+            <Small suppressHydrationWarning>
               <b style={{ color: "#166534" }}>
-                {((100 * stats.connected) / Math.max(1, stats.placed - 1)).toFixed(0)}%
-              </b>{" "}of children touch their family · {stats.exclaves} exclaves
+                {((100 * live.touchingFamily) / Math.max(1, live.children)).toFixed(0)}%
+              </b>{" "}of children touch their family ·{" "}
+              <b style={{ color: live.exclaves === 0 ? "#166534" : "#b91c1c" }}>{live.exclaves}</b>
+              {" "}do not
             </Small>
-            <Small>
-              {stats.wholeFamilies}/{stats.families} families are one patch ·{" "}
-              {((100 * stats.touchingParent) / Math.max(1, stats.placed - 1)).toFixed(0)}% touch the
+            <Small suppressHydrationWarning>
+              {live.wholeFamilies}/{live.families} families are one patch ·{" "}
+              {((100 * live.touchingParent) / Math.max(1, live.children)).toFixed(0)}% touch the
               parent itself
+            </Small>
+            {/* Law 3. Counted from the arrangement on screen, like the rest. */}
+            <Small suppressHydrationWarning>
+              <b style={{ color: live.curled === 0 ? "#166534" : "#b91c1c" }}>
+                {((100 * live.curled) / Math.max(1, live.children)).toFixed(0)}%
+              </b>{" "}sit nearer the centre than their parent
+              {live.curled > 0 ? <> · worst <b>{live.curlWorst}</b> tiles</> : null}
             </Small>
           </>
         ) : (
@@ -1413,6 +1774,20 @@ export default function HexLab({
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
         <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {scatter && (
+          <>
+            <Small suppressHydrationWarning>
+              <b style={{ color: scatter.crowded === 0 ? "#166534" : scatter.crowded > scatter.people / 20 ? "#b91c1c" : "#a16207" }}>
+                {scatter.crowded}
+              </b>{" "}of {scatter.people} people sit next to somebody from another team
+            </Small>
+            <Small suppressHydrationWarning>
+              <b style={{ color: scatter.touching === 0 ? "#166534" : "#b91c1c" }}>{scatter.touching}</b>
+              {" "}cells press against a different one of the {scatter.divisions} top-level
+              groups (rung {scatter.rung})
+            </Small>
+          </>
+        )}
         {missing > 0 && (
           <Small style={{ color: "#b91c1c" }}>
             <b>{missing}</b> unit{missing === 1 ? " is" : "s are"} missing from the map
