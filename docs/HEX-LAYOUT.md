@@ -4,14 +4,33 @@
 on an open plane. That freedom is what makes a big company sprawl: Northwind
 is 40,000 by 58,000 units across, and crossing it takes so much zooming that
 you pass nothing you can read on the way. This study replaces the open plane
-with a **honeycomb** — every team gets one cell of a uniform hexagonal grid,
-and its people orbit inside that cell exactly as they do today. The same
-company then fits in 8,500 by 8,900, lays out four times faster, and reads as
-one continent with coloured regions instead of grey fog. It also found a real
-limit: **a hexagon has six sides, so a manager with sixteen reports cannot
-have them all next to them**, and on companies shaped like that the design
-starts to come apart. That limit, and what to do about it, is the main thing
-this study has to say.
+with a **honeycomb** — every team gets one cell of a uniform hexagonal grid —
+and reads as one continent with coloured regions instead of grey fog. It also
+found a real limit: **a hexagon has six sides, so a manager with sixteen
+reports cannot have them all next to them**, and on companies shaped like that
+the design starts to come apart. That limit, and what to do about it, is the
+main thing this study has to say.
+
+**Two sentences of that paragraph used to be about size, and they have been
+taken out, because they were true of an engine that no longer exists.** The
+first layout — the *archipelago* — packed cells tight and fitted the same
+company into 8,500 by 8,900, under a ninth of the area. It was also the engine
+that produced the confetti, and it was deleted on 2026-10-15. What runs now is
+the **atlas**, which reserves ground for a family before it places anybody, and
+that ground is what the compactness was paying for:
+
+| Northwind, 2,562 people | across | down | against the orbital layout |
+| --- | ---: | ---: | --- |
+| the orbital layout | 39,842 | 57,611 | — |
+| the archipelago (deleted) | ~8,500 | ~8,900 | about a ninth of the area |
+| the atlas, `tight` | 41,397 | 25,939 | about half the area |
+| the atlas, `roomy` (the default) | 69,419 | 43,498 | **about a third more area** |
+
+So at the density the lab opens on, the honeycomb now covers *more* ground than
+the layout it was meant to replace. That is a real cost against the original
+complaint — a big company is still a long way across — and it is the price of
+teams that hold together. It is worth revisiting when the layout goes radial,
+because a ring layout sets its own extent.
 
 Greg asked for it on 2026-09-29. It lives on `lab`, at `/lab/hex`. Nothing
 about `/org` has changed.

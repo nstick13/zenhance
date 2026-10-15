@@ -471,6 +471,39 @@ the only way to get both things Greg has asked for.
 
 ---
 
+### ☐ Nothing decides how big a cell should be any more — *Claude, from Greg 2026-10-15*
+
+Not urgent, and worth settling before the layout goes radial.
+
+A cell's size is the number every other size on the map is a share of. Since
+2026-10-15 it is worked out properly from the lattice — `cellRadiusFor` in
+`people.ts` — as the room needed to stand four hexagonal rings of people round a
+node without anybody crossing a boundary.
+
+**Nothing stands people round a node any more.** Greg, the same day: *"when
+viewing 'teams' don't show the dots for people — that's a hangover from the orbits
+model."* He is right, and the dots have gone. So the cell is now sized to hold
+four rings of people nobody draws, which means the rule is honest arithmetic
+about something that no longer happens.
+
+It is not currently a bug, and that is worth saying precisely: the layout decides
+which *cell* each unit gets, and the cell's size is only the conversion from
+cells to world units at the moment of drawing. The camera fits to whatever that
+is. So changing it moves no unit relative to any other and changes nothing you
+can see — it is a scale, not a shape.
+
+What is open is the question underneath. If a cell only has to hold a node, and a
+node is a *share* of its cell, then any size works and there is no rule left at
+all — just a chosen number. That is fine, but it should be chosen on purpose and
+written down, rather than inherited from a model of people orbiting a node.
+
+Three ways out, and Greg's call which: pick a world scale outright and say so;
+re-derive the cell from what is actually drawn in it (the node, the label, and
+the gap that tells two peers apart); or keep the people-ring rule because people
+come back in some form. `people.ts` is kept intact for the third case.
+
+---
+
 ### ☐ Dragging a big branch costs six frames per mouse move — *Claude, 2026-10-14*
 
 Nobody has reported this and it is worth knowing before somebody does. While a
