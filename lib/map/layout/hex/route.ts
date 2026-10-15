@@ -71,8 +71,33 @@ const TURN = 12;
  */
 const TURN_PER_SPAN = 6;
 
-/** Running under somebody who is not family. The thing being avoided. */
-const THROUGH_A_STRANGER = 260;
+/**
+ * **Running behind somebody who is not family.**
+ *
+ * It was 260 — twenty-six steps of detour — which made it a thing to be avoided
+ * at nearly any cost, and avoiding it is what drew the switchbacks: a chain that
+ * may not pass behind anybody has to go *round* them, and the detour is paid in
+ * distance, which is the thing the eye actually follows.
+ *
+ * Greg, 2026-10-15: *"we need to make it so that chaining can run behind
+ * existing colleagues — perhaps by fading the colour of the connection line.
+ * This should stop a bunch of the spaghetti appearance."* Those are one idea:
+ * passing behind is only acceptable if it **reads** as passing behind, and the
+ * fade is what buys that. See `runs` on `RoutedChain`.
+ *
+ * At 30 — three steps — a chain will step behind one tile rather than walk four
+ * round it, and still prefers open ground when open ground is close. Measured
+ * on the 1,000-person company and on Northwind, it takes dead-straight chains
+ * from 98.8% to **100%** and detours to **zero**, at the price of 45 and 125
+ * chains respectively now passing behind a tile instead of around it.
+ *
+ * It does **not** shorten the longest chains — 103 steps on Northwind, unchanged.
+ * Those are long because a unit's node sits in the middle of its own territory
+ * rather than at its door, which is a placement fault and is written up in
+ * `docs/MAP-REVIEW-2026-10-15.md`. The fade makes them legible; it does not make
+ * them short.
+ */
+const THROUGH_A_STRANGER = 30;
 
 /** Running under a sibling. Greg's exemption: with more than five children one
  *  of them has to reach the parent past another, so this has to be possible —
@@ -134,6 +159,14 @@ const JOIN_A_TRUNK = 5;
 
 const DETOUR_ALLOWANCE = 10;
 
+/** One stretch of a chain, drawn as a single line. */
+export type ChainRun = {
+  points: Point[];
+  /** This stretch runs **behind** somebody's tile rather than over open
+   *  ground, so it is drawn faded. See `runsOf`. */
+  under: boolean;
+};
+
 export type RoutedChain = {
   unitId: string;
   parentId: string;
@@ -142,9 +175,61 @@ export type RoutedChain = {
   /** Those cells in world space, with the straight runs collapsed so the
    *  renderer draws one line per run rather than one per step. */
   points: Point[];
+  /**
+   * The same walk, cut where it passes behind somebody.
+   *
+   * Greg, 2026-10-15: *"we need to make it so that chaining can run behind
+   * existing colleagues — perhaps by fading the colour of the connection line.
+   * This should stop a bunch of the spaghetti appearance."*
+   *
+   * The two halves of that are one idea. A chain that may not pass behind
+   * anybody has to go **round** them, and going round is what draws the long
+   * switchbacks: the detour is paid in distance, and distance is the thing the
+   * eye follows. Letting it pass behind makes it short; fading it where it does
+   * is what keeps that honest, so a line that disappears under a tile reads as
+   * going behind rather than stopping or crossing.
+   */
+  runs: ChainRun[];
   /** Tiles it had to pass under that were not siblings. Zero is the aim. */
   through: number;
 };
+
+/**
+ * Cut a walk into stretches that are behind somebody and stretches that are in
+ * the open, so each can be drawn differently.
+ *
+ * Neighbouring stretches **share** their boundary cell, or the line would come
+ * apart into dashes at every tile it entered.
+ */
+export function runsOf(
+  cells: readonly Cell[],
+  occupied: ReadonlyMap<string, string>,
+  size: number,
+  /** The chain's own two ends: it is not "behind" its own child or parent. */
+  ends: ReadonlySet<string>,
+): ChainRun[] {
+  if (cells.length < 2) return [];
+  const hidden = cells.map((c) => {
+    const who = occupied.get(cellKey(c));
+    return Boolean(who) && !ends.has(who!);
+  });
+  // A step is behind somebody if either tile it touches is.
+  const stepUnder: boolean[] = [];
+  for (let i = 0; i + 1 < cells.length; i++) stepUnder.push(hidden[i] || hidden[i + 1]);
+
+  const out: ChainRun[] = [];
+  let from = 0;
+  for (let i = 1; i <= stepUnder.length; i++) {
+    if (i === stepUnder.length || stepUnder[i] !== stepUnder[from]) {
+      out.push({
+        points: corners(cells.slice(from, i + 1), size),
+        under: stepUnder[from],
+      });
+      from = i;
+    }
+  }
+  return out;
+}
 
 /** Collapse a walk into its straight runs: consecutive steps in the same
  *  direction become one segment, so a chain is drawn as lines, not as a chain
@@ -367,6 +452,7 @@ export function routeAll(
       parentId,
       cells: walk,
       points: corners(walk, size),
+      runs: runsOf(walk, occupied, size, new Set([unit.id, parentId])),
       through: router.strangersUnder(walk, siblings),
     });
   }

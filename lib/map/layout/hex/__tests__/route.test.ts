@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { allocate } from "@/lib/map/layout/hex/allocate";
-import { Router, corners, routeAll, straightWalk } from "@/lib/map/layout/hex/route";
+import { Router, corners, routeAll, runsOf, straightWalk } from "@/lib/map/layout/hex/route";
 import {
   DIRECTIONS, cellKey, cellToWorld, hexDistance, neighbours, type Cell,
 } from "@/lib/map/layout/hex/coords";
@@ -67,11 +67,47 @@ describe("a chain is a walk, not a line", () => {
 });
 
 describe("walking round what it can", () => {
-  it("goes round a stranger rather than under one", () => {
+  /**
+   * **Changed deliberately on 2026-10-15**, and this test used to assert the
+   * opposite — that a chain goes *round* a stranger rather than behind one.
+   *
+   * Greg: *"we need to make it so that chaining can run behind existing
+   * colleagues — perhaps by fading the colour of the connection line. This
+   * should stop a bunch of the spaghetti appearance."* Going round is what
+   * draws the switchbacks: the detour is paid in distance, and distance is what
+   * the eye follows. Measured across the 1,000-person company and Northwind,
+   * allowing it took dead-straight chains from 98.8% to 100% and detours to
+   * zero.
+   *
+   * It is only acceptable because it is **drawn** as passing behind — see
+   * `runs` on `RoutedChain`, and `BEHIND_ALPHA` in the lab.
+   */
+  it("passes behind a stranger rather than walking round them", () => {
     const blocked = new Map([[cellKey(at(1, 0)), "stranger"]]);
     const walk = new Router(blocked, SIZE).route(at(0, 0), at(2, 0), new Set());
-    expect(walk.some((c) => cellKey(c) === cellKey(at(1, 0)))).toBe(false);
+    expect(walk.some((c) => cellKey(c) === cellKey(at(1, 0)))).toBe(true);
+    expect(walk).toHaveLength(3);
     expect(walk.at(-1)).toEqual(at(2, 0));
+  });
+
+  it("says which stretch of itself is behind somebody, so it can be faded", () => {
+    const blocked = new Map([[cellKey(at(1, 0)), "stranger"]]);
+    const walk = new Router(blocked, SIZE).route(at(0, 0), at(2, 0), new Set());
+    const runs = runsOf(walk, blocked, SIZE, new Set(["me", "parent"]));
+    expect(runs.length).toBeGreaterThan(0);
+    expect(runs.some((r) => r.under)).toBe(true);
+    // The stretches join up: each one starts where the last one ended, or the
+    // line would come apart into dashes at every tile it entered.
+    for (let i = 1; i < runs.length; i++) {
+      expect(runs[i].points[0]).toEqual(runs[i - 1].points.at(-1));
+    }
+  });
+
+  it("still takes open ground when open ground is just as short", () => {
+    // Nothing in the way: passing behind is a price, not a preference.
+    const walk = new Router(new Map(), SIZE).route(at(0, 0), at(3, 0), new Set());
+    const runs = runsOf(walk, new Map(), SIZE, new Set());
+    expect(runs.every((r) => !r.under)).toBe(true);
   });
 
   it("goes under a sibling rather than the long way round", () => {
