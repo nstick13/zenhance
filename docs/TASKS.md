@@ -319,9 +319,17 @@ the three metrics that measured the wrong thing first, are in
 
 ---
 
-### 🟡 Open question: should a company start as concentric rings? — *Greg, 2026-10-14*
+### ☑ Decided and built: a company starts as ragged concentric bands — *Greg, 2026-10-14, decided and built 2026-10-16*
 
-**Not a task yet — Greg is sleeping on it.** Recorded so it is not lost and so
+**Decided.** Greg, 2026-10-16, asked to choose between one global set of ring
+radii and each branch stacking its own bands outward from its parent, took the
+second: **ragged rings.** Built the same day as `lib/map/layout/hex/radial.ts`,
+behind a **place** toggle in the lab beside the atlas. The write-up, the
+measurements and the four faults found on the way are in
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § The radial driver. What follows is the
+reasoning as it stood before the decision, kept because it is still the argument.
+
+**Originally raised as:** Recorded so it is not lost and so
 nobody rediscovers the reasoning.
 
 Greg, after a day on the placement rules: *"I think we're going to have to put
@@ -356,6 +364,153 @@ that."* Whatever is decided, the hand path is working and is not what needs
 changing.
 
 ---
+
+### ☑ The radial map has no zones and no bubbles — *Claude, from Greg 2026-10-16, built same day*
+
+**Built.** `lib/map/layout/hex/bubbles.ts`, drawn in the lab under everything
+else, on both drivers. The two requirements turned out to be one object — a zone
+is the ground a branch holds and a bubble is that shape grown by one ring, so
+there is one mechanism and the concentric reading emerges rather than being
+drawn. Write-up: [HEX-LAYOUT.md](HEX-LAYOUT.md) § Bubbles. Above team level only,
+as Greg asked. What it found is the new task below.
+
+**Originally raised as:**
+
+- **The shaded hexagon zones** (requirement 4). A zone is the ground one branch
+  holds at one rung — a band crossed with an arc. The driver knows both numbers
+  and throws them away after placing; they need to come out in the layout so the
+  renderer can shade them.
+- **The bubbles** (requirement 6). *"A bubble is taken as the shape of the
+  contained node then offset wider by one hexagon spacing."* On a lattice this is
+  a dilation by one ring, handed to `outline` in `arrange.ts` — which exists and
+  has the test that matters. Cheap; just not done.
+
+`TerritoryLayout.regions` is currently `{ centre, radius }`, a disc, which is the
+last surviving relic of the territories-as-discs dead end. It is consumed by
+nothing but tests, so it can become a real cell set without breaking a caller.
+
+### ☑ Radial leaves no air between sibling groups — *Claude, 2026-10-16; solved by the spacer rule*
+
+**This is the thing to fix next if the bubbles are to read properly**, and it is
+a placement fault rather than a drawing one.
+
+Radial reserves clear ground between a parent and its children and **none at all
+between siblings**: the clearance is a radius, and the arcs that hold siblings
+apart are a direction, which is not a distance. Measured on the 1,000-person
+company, 14 of 15 sibling bubble pairs overlap against the atlas's 2, and 11 of
+the 15 sibling nodes sit within two cells of each other. It is Greg's oldest
+complaint about this engine — *"the 5s placement feature bunches peer groups
+together"* — reached from a new direction.
+
+Two things were tried on the day and are written up in `bubbles.ts` and
+[HEX-LAYOUT.md](HEX-LAYOUT.md): applying the shared spacing rule **node to node**,
+which barely moved the overlap because a bubble covers a subtree, and cost twenty
+whole families — reverted, since Law 2 outranks Law 4; and **clipping the skirt**
+off other people's nodes, which took it 14 → 10 and is kept.
+
+**Reserving the footprint as an arc was tried on 2026-10-16 and does not work.**
+Greg's suggestion — *"widening a child's arc by what its subtree will need"* —
+was built: arcs sized from the footprint, with the band thickening when a rung's
+regions do not fit. Swept on Northwind, overlapping sibling bubble pairs run
+**27 → 32 → 48 → 56** as the thickening goes 0 → 4 → 8 → 16, while the radius
+runs 97 → 255. **Pushing a crowded rung outward makes the overlap worse**,
+because the room it buys is room for each subtree to sprawl sideways into its
+neighbour. The full sweep and the two other formulations that failed are in
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § Separating siblings.
+
+**Solved** — by Greg's spacer rule the same day, which replaced the spacing rule
+outright: *"all nodes — human and structural — have a one hexagon space around
+them… the only things that can enter that node or human's spacer hexagons are
+humans in the same team or humans that are direct children of a structural
+node."* Nought breaches on every company, and the panel's *"people sitting next
+to somebody from another team"* went from **2,266 of 2,562 to nought**. See
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § The spacer rule and Law 4 in
+[MAP-LAWS.md](MAP-LAWS.md). The drawing work below still stands and is still
+what stops two regions washing the same cells twice.
+
+**Before that, it was treated as a drawing question.** Greg, 2026-10-16: *"two
+regions sharing a border may be what an atlas should look like. Try it in how the
+boundary is drawn."* Partitioning the one-ring skirt between regions instead of
+letting both claim it takes the overlap to **nought on every company under both
+drivers**, and drawing a frontier differently from a coastline makes the shared
+border read as a border. [HEX-LAYOUT.md](HEX-LAYOUT.md) § It was a drawing
+question.
+
+**It is parked rather than done**, because the placement fault is real and
+unfixed: sibling regions in radial sit closer together than the atlas's do, and
+the drawing now handles that gracefully rather than curing it. Unpark this if the
+map ever wants genuine air between regions — a label in the gap, or a region
+grabbable by its margin. The three ideas already spent are node-to-node spacing,
+footprint-as-arc and thickening; the sweep says thickening makes it worse.
+
+### ☐ A statistic that measures the rule again — *Claude, 2026-10-16*
+
+In the teams view every unit is structural, and the spacer rule forbids two
+structural nodes from touching — so the panel's *"families in one piece"* reads
+**0 of 130**. Nothing is wrong: a family cannot be one connected patch when its
+members may not be adjacent. The number is measuring the instruction.
+
+**This is the third time this engine has done it** — `spacedBy` was added when
+*"units not touching their family"* started counting units held apart on purpose,
+and the same thing happened to raw adjacency after the tier spacing landed. The
+fix is the same shape: ask whether a unit is **where the rule put it**, not
+whether it is next to its parent. Worth doing before anybody reads that figure
+and thinks the map is broken.
+
+### ☐ Decision: what a bubble does to the spacing rule — *Claude, from Greg 2026-10-16*
+
+**Largely overtaken by the spacer rule**, which gives every node a clear hexagon
+and so gives every bubble room to be drawn one cell out. Kept because the tiers
+question underneath it is not settled: bubbles are still drawn above team level
+only, and nobody has looked at what a bubble round a *team* would do now that
+teams have their own clear ring.
+
+**Parked at Greg's instruction** — *"assume bubbles only above team level for now
+so the spacing rule doesn't move"* — and recorded so the reasoning is not lost.
+
+**A bubble drawn one cell out from a group needs two clear cells between
+siblings**, or two neighbouring bubbles land on the same cell; three if there is
+to be visible air between them. Today two sibling teams get exactly one clear
+tile, because a team's tier is 1.
+
+So either bubbles exist only above team level, or the minimum gap moves. Law 4
+says the gap is **one dial on one rule**, so moving it for bubbles moves it
+everywhere — which is precisely the thing that rule exists to prevent becoming a
+table of values by rung. This is Greg's call and it is the one place requirement
+6 collides with a written law.
+
+**Also worth doing whichever way it goes:** `bubble` already means something else
+in the engine — the clear tiles a parent keeps round its own node, in
+`territory.ts`. Greg's new meaning is the drawn boundary. Two meanings for one
+word in one engine will cost somebody an afternoon. `radial.ts` calls its own
+one `clearance`; `territory.ts` has not been renamed.
+
+### ☐ Decision: does the people view's compactness buy its adjacency? — *Claude, 2026-10-16*
+
+On the people view of the largest company, radial is **49× faster** (22ms against
+1,071ms), **a third of the radius** (84 against 252), and has **much shorter
+chains** (longest 18 against 103) — and is **nine points behind on units touching
+their parent** (74.8% against 83.7%) and eight points behind on families in one
+piece. In the teams view it wins on every line with nothing to trade.
+
+Nobody should quietly tune that gap away, because it may not be a fault: a child
+on the next band is *meant* not to be adjacent, and the study's founding premise
+— *"connection lines replaced by adjacency + colour"* — is what adjacency was
+for. If chains carry the relationship instead, and they are now one band long and
+cannot double back, nine points may be the right price. That is a judgement about
+how the map reads, which is Greg's.
+
+### ☐ The master centre sits at the end of a spine, not in the middle — *Claude, 2026-10-16*
+
+Looked at on all three companies with the radial driver, the company's mass lands
+to one side of the root rather than around it, so the thing reads as a tail
+rather than as a target — which is not what *"offset from master-center"* asks
+for. The first band is three to seven units wide on our fixtures, so it is a
+sparse fan rather than a ring, and the heaviest child keeps the centre of its
+parent's arc all the way down.
+
+Not tuned at, deliberately: it may dissolve once the zones are shaded, and it may
+not. Worth measuring before anybody reaches for the arc rule.
 
 ### ☑ The hex map is still sized by circular geometry — *Claude, from Greg 2026-10-15, fixed same day*
 

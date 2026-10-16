@@ -180,8 +180,31 @@ parent's doorstep at a price no bearing can outbid, which is precisely what
 > apply a different one because a hand is involved — except where that would
 > conflict with Laws 1 to 3.**
 
-The rule: **a gap is a share of the size of the thing it separates.** Applied on
-load and on tidy, and nowhere else.
+**The rule, since 2026-10-16: the spacer.** Greg: *"all nodes — human and
+structural — have a one hexagon space around them. That is to say, each side of
+the hexagon representing that human or node gains a connecting hexagon that forms
+its spacer. On load, or using the auto-tidy function, the only things that can
+enter that node or human's spacer hexagons are humans in the same team or humans
+that are direct children of a structural node."*
+
+It is stated as **what may touch what**, and that is why it succeeded where four
+distances failed. A distance has to be measured between two things and both of
+them have an opinion about it, which is how one gap came to be decided by
+whichever unit was owed the least. `mayTouch(a, b)` and `mayTouch(b, a)` are the
+same question, so there is no side to read it from and nothing to reconcile.
+
+Three things fall out of it that nobody had to ask for separately: two structural
+nodes are never adjacent; two humans touch only if they share a team, so a team
+is one crowd with clear ground round it; and a human touches a structural node
+only if it is theirs. It lives in `spacing.ts` as `spacerRule`, and the radial
+driver and `tidy` both read it from there. Measured: **nought breaches on every
+company**, against 0.6%–100% under the atlas, which does not hold to it.
+
+**The older rule — *a gap is a share of the size of the thing it separates* —
+still governs the atlas driver**, and still sets how far a parent holds its
+children (`spacedBy`). The two are not in conflict: one says how far out a rung
+sits, the other says who may stand next to whom. If they ever do conflict, the
+spacer wins, because it is the one a reader can see.
 
 **Tidy is handed the layout's figures, not its own.** `layoutTerritories`
 records what it kept clear round each unit as `spacedBy`; `neaten` honours that
@@ -328,9 +351,9 @@ law forbids.
 
 | question | owner | what everything else becomes |
 | --- | --- | --- |
-| where does a unit go | the atlas (`territory.ts`) | nothing else places anything |
+| where does a unit go | the atlas (`territory.ts`), through one of its two drivers | nothing else places anything |
 | what travels as one body | the atlas | the flat team id is deleted |
-| how far apart | the atlas | the drop path holds no spacing rule |
+| how far apart | `spacing.ts`, read by both drivers | the drop path holds no spacing rule |
 | what happens on a clash | the drop engine | obeys Laws 1 and 2, holds no spacing rule |
 | where a line goes | the router | reads placement, never writes it |
 
@@ -370,7 +393,7 @@ different maps.
 | 1 — one cell, one unit | two-on-a-cell count; unplaced count | on the panel |
 | 2 — a body stays whole | whole families; cells pressing against another division; people next to a stranger | on the panel, counted live |
 | 3 — children sit outward | % of units nearer the centre than their parent | on the panel, counted live |
-| 4 — one measure of distance | not visible on a map: nothing outside the atlas calls a spacing function | code check, by test |
+| 4 — one measure of distance | not visible on a map: nothing outside the atlas calls a spacing function | **structural since 2026-10-16** — the rule lives in `spacing.ts`, both drivers import it, and `radial.test.ts` checks the figures reported are ones that file could produce |
 | 5 — lines follow | tidy produces identical cells with routing switched off | **to build — and the law is currently broken** |
 
 And four standing requirements that are not laws but are not negotiable either:
@@ -415,6 +438,36 @@ And four standing requirements that are not laws but are not negotiable either:
 - **Divisions in one piece is measured, not enforced.** If bodies stay whole and
   nothing curls back, divisions should hold together on their own. We report it
   and watch it.
+
+---
+
+## Two drivers, one owner (2026-10-16)
+
+`territory.ts` now has **two** ways of deciding where a unit goes, and
+`allocateByTerritory` is still the only entry point to either. The `atlas` driver
+packs each territory as the exact shape of its contents and searches for
+somewhere to put it. The `radial` driver gives every unit a band and an arc and
+deletes the search — Greg, 2026-10-16, chose **ragged rings**: each branch stacks
+its own bands outward from its parent rather than sharing one global set of radii.
+
+**This is not a second placer.** The thing Law 4 and the owner table forbid is
+two pieces of code holding their own ideas about spacing and reaching different
+answers, which is what the five-second re-pickup was. Both drivers read the one
+spacing rule from `spacing.ts` and the one fan rule from `compass.ts`, and both
+come back as an ordinary `Allocation` with its stats counted the same way, so
+nothing downstream learns there is a choice.
+
+**Both are kept only until one wins.** That is how the atlas arrived beside the
+archipelago, and the archipelago was deleted on 2026-10-15 when it had lost.
+Measured so far: radial wins the teams view on every line, and trades nine points
+of adjacency for a tenfold reduction in area in the people view. See
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § The radial driver and [TASKS.md](TASKS.md).
+
+**Wide fans are no longer untested.** The note below said no unit in any demo
+company has more than five children and that nothing had been tested against the
+ninety pods a practitioner described. The radial driver has been: with arcs shared
+by subtree weight, an 86-child parent's band offers 85.7 cells for its 86
+children, and every unit is seated. The atlas is still untested against it.
 
 ---
 

@@ -1845,6 +1845,502 @@ from how `HexLab` builds its tree rather than from the default.
 
 ---
 
+## The radial driver — ragged rings (2026-10-16)
+
+Greg: *"We're going to try and implement a radial layout for the hex study…
+concentric toruses comprised of shaded hexagon zones offset from master-center."*
+Six requirements, discussed before any code. The governing choice he made, asked
+to pick between two readings of his own requirements 4 and 5:
+
+> **Ragged rings** — each branch stacks its own bands outward from its parent,
+> concentric where the company is balanced and ragged where it is not.
+
+The alternative, **shared rings**, would have given every branch one global set
+of band radii — a true dartboard, where the fattest branch at each rung sets the
+width for everybody. Requirement 4 (*"offset from master-center"*) pointed at it
+and requirement 5 (*"should tend toward toruses… shouldn't force the thing"*)
+pointed away, which is why it was worth asking rather than guessing.
+
+### What it replaces
+
+Exactly one thing: `placeChild`, the atlas's scored search over candidate
+offsets. That search is 66–68% of layout time and, per
+[MAP-REVIEW-2026-10-15.md](MAP-REVIEW-2026-10-15.md), the common factor behind
+nearly every fault reported since 3 October. Everything else is kept — the two
+passes, the territories, the compass, the spacing rule. A unit's position is now
+two numbers that are never searched for: its **band** (its parent's owed
+clearance plus one) and its **arc** (a slice of its parent's, shared by subtree
+weight). The only question left is which cell of that band falls in that slice.
+
+### A rung is a band, not a ring — counted before anything was written
+
+| | units | rungs | one ring per rung holds |
+| --- | ---: | ---: | ---: |
+| Northwind, teams | 394 | 11 | 397 |
+| Northwind, people | 2,957 | 20 | **1,261** |
+| 1,000-person, people | 1,273 | 16 | **817** |
+
+A hex ring *n* out holds exactly 6*n* cells. The teams view fits a strict
+dartboard by luck and with nothing left over for spacing; the people view misses
+by more than half. So a rung has to be a band with thickness — which is why
+Greg's word was *torus* — and a band grows outward until it has the cells.
+
+### Measured against the atlas, same companies, same renderer
+
+**Teams view — radial wins on every line.**
+
+| Northwind, 394 units | atlas | radial |
+| --- | ---: | ---: |
+| layout | 60ms | **3ms** |
+| nearer the centre than their parent | 23.2% | **0.0%** |
+| touching their parent | 42.7% | **56.0%** |
+| families in one piece | 59/130 | **87/130** |
+| radius | 90 | **60** |
+
+**People view — faster, far more compact, shorter chains; behind on adjacency.**
+
+| Northwind, 2,957 units | atlas | radial |
+| --- | ---: | ---: |
+| layout | 1,071ms | **22ms** |
+| nearer the centre than their parent | 11.0% | **10.8%** |
+| touching their parent | **83.7%** | 74.8% |
+| mean chain | 2.13 | **1.73** |
+| longest chain | 103 | **18** |
+| families in one piece | **1,530/1,686** | 1,388/1,686 |
+| radius | 252 | **84** |
+
+The radius figure is the one to dwell on. The paragraph at the top of this file
+records that the atlas covers *more* ground than the layout it was meant to
+replace — 69,419 × 43,498 against the orbital map's 39,842 × 57,611. Radial is
+the first thing in this study to take that back: a third of the atlas's radius,
+about a tenth of its area, on the same company.
+
+**Wide fans stop being the limit this study found.** With arcs shared by subtree
+weight, a parent's cells arrive in proportion to what it has to hold. On a
+fixture with 80–100-wide spans the hardest parent has 86 children, owns 65% of
+the circle, and its band offers 85.7 cells — it self-balances at the wide end.
+Children no longer need to be *next to* their parent, only on the next band at
+its bearing, so the five-children ceiling (24% adjacency at span 20) does not
+apply. This was the case MAP-REVIEW said to test before committing.
+
+### Four faults found by measuring, and what each cost
+
+Recorded because each one looked like a design problem and was arithmetic.
+
+1. **Reach was accumulated.** A unit's reach was its clearance plus one plus its
+   widest child's — which compounds at every rung, exactly as the orbital
+   engine's descendant envelope did in September, and compounded straight into
+   the spacing rule because a gap is a share of a size. Every clearance pinned to
+   the `MAX_HALO` cap, chains averaging 15 cells, the map three times too wide.
+   Fixed by reading size off the lattice: the smallest radius whose disc holds a
+   subtree's weight. A count of units cannot compound.
+2. **Arcs collapsed.** Shared by weight with no floor — which `headings`' own doc
+   warns about in so many words, and which this driver had to learn again.
+   `ARC` and `FLOOR` are now exported from `compass.ts` and read from there.
+3. **The seating slice was not floored either.** Ring 1 has six cells 60° apart,
+   so a slice narrower than that contains none of them — and the band thickened
+   looking for one, with a free cell sitting right beside it. 40% of units
+   touching their parent, 965 of 1,686 families whole.
+4. **The parent's clear ground was reserved against its own people.** The halo
+   exists to keep other territories out; reserving it against everybody put a
+   team's people outside their own team's air. Law 3's doorstep clause is the
+   authority, and the atlas reads it the same way.
+
+And one that was a misreading of a law rather than a mistake in arithmetic:
+**Law 3 was gated on size rather than on personhood.** *"A team, or anything
+above a team"* may not sit nearer the centre; *"an individual person is pushed
+outward, never forbidden."* Deciding both from the subtree weight reads that as
+*"a small thing may curl inward"*, and a team with no people under it weighs one.
+On the wide-fan fixtures it measured 25–29% curl-back against under 11% on the
+demo shapes. The `people` set is the only thing that knows a person is a person.
+
+### What it does not do yet
+
+**It does not read as concentric rings**, and that is the honest state of it.
+Looked at on all three companies, the placement is sound and the regions are
+cohesive, but the master centre sits at the end of a spine rather than in the
+middle of a target. Two causes, neither tuned at:
+
+- The top rungs are three to seven units wide, so the first band is a sparse
+  fan rather than a ring, and the company's mass lands on one side of it.
+- **The shaded zones and the bubbles are not built at all.** Requirements 4 and 6
+  are half placement and half drawing, and only the placement half exists. A
+  bubble is cheap on a lattice — dilate a group's cells by one ring and hand them
+  to `outline`, which already exists and already has the test that matters — but
+  nothing draws one yet.
+
+**Two decisions are waiting on Greg**, both recorded in [TASKS.md](TASKS.md): what
+a bubble does to the spacing rule, and whether the people view's nine points of
+adjacency are worth the tenfold compaction.
+
+### Where it lives
+
+```
+lib/map/layout/hex/
+  spacing.ts   one measure of distance, read by both drivers      ~165 lines
+  compass.ts   a bearing for every unit, before anything is packed ~165 lines
+  radial.ts    bands and arcs — the driver Greg chose              ~575 lines
+  territory.ts the atlas, and the one entry point for both       ~1,120 lines
+```
+
+`spacing.ts` and `compass.ts` moved out of `territory.ts` unchanged. Both had to:
+two drivers importing one another is a cycle, and two drivers each holding the
+spacing rule is the fault Law 4 was written against. **Law 4 is now structural
+rather than conventional** — there is nowhere else to put a spacing number, and
+a reviewer can tell whether a file holds one by looking at what it imports.
+
+---
+
+## Bubbles, and what they found (2026-10-16)
+
+Greg's requirements 4 and 6, built the same day as the driver. **They read as two
+features and they are one object.**
+
+> *"Concentric toruses comprised of shaded hexagon zones offset from
+> master-center."* (4)
+>
+> *"These regions move with the nodes they pertain to — they form a 'bubble'
+> around a group of teams… A bubble is taken as the shape of the contained node
+> then offset wider by one hexagon spacing."* (6)
+
+A zone is *the ground a branch holds*; a bubble is *that shape, grown by one*.
+Those are the same cells, and the only difference is where the cells happen to be:
+
+- **On a radial load** a branch's cells lie in a band crossed with an arc, so its
+  bubble is an annular sector, and the bubbles of one rung side by side are the
+  torus. **The concentric reading is not drawn, it emerges** — which is why
+  requirement 5's *"shouldn't force the thing"* costs nothing. Where a branch has
+  too few units to reach round, its bubble stops and the torus has a gap in it.
+- **After somebody rearranges the map** the same rule gives the same answer about
+  wherever the cells now are. Requirement 6's *"these regions move with the nodes
+  they pertain to"* needs no code at all, because a bubble is read off live cells
+  every time. There is a test that says so, since "no code" is only trustworthy
+  if something checks it.
+
+So `bubbles.ts` is deliberately the dumbest thing that satisfies both: take the
+cells, grow them by a ring, draw the edge. Nothing is remembered between loads.
+
+**Above team level only**, on Greg's instruction — *"so the spacing rule doesn't
+move"*. A bubble one cell out needs two clear cells between neighbours, and two
+sibling teams have one.
+
+### What drawing them found
+
+**Radial reserves air between a parent and its children and none between
+siblings.** The clearance is a radius; the arcs that hold siblings apart are a
+direction, and a direction is not a distance. Measured on the 1,000-person
+company, sibling bubble pairs whose skirts overlap:
+
+| | overlapping | of | sibling nodes within 2 cells |
+| --- | ---: | ---: | ---: |
+| atlas | 2 | 15 | 0 |
+| **radial** | **14** | 15 | **11** |
+
+It is Greg's oldest complaint about this engine — *"the 5s placement feature
+bunches peer groups together"* — arrived at from a new direction, and the bubbles
+are what made it visible. Two things were tried:
+
+- **Applying the shared spacing rule node-to-node.** Halved the sibling nodes
+  sitting within two cells (11 → 5) and moved the overlap by two (14 → 12),
+  because **a bubble covers a subtree and the gap was measured between nodes**.
+  It also cost twenty whole families on Northwind, 87 → 67. **Reverted**: Law 2
+  outranks Law 4, and a spacing preference is not allowed to break bodies.
+- **Clipping the skirt off other people's nodes.** A bubble may not swallow a
+  node from outside its own branch, so it hugs tight where there is no room and
+  bulges where there is — requirement 5 applied to the offset rather than to the
+  ring. 14 → 10, and **kept**, because it is a drawing rule and moves nothing.
+
+**The real fix is reserving each sibling's whole footprint before placing it**,
+which the atlas does and radial does not. That is a piece of work rather than a
+tweak, and it is in [TASKS.md](TASKS.md).
+
+### Drawing them
+
+131 bubbles over 37,000 cells on the largest company, built in about 30ms — once
+per arrangement, memoised, never in the frame loop. Each becomes one `Path2D`,
+so a region is one fill call rather than tens of thousands.
+
+**A bubble fades in with its size on screen rather than switching on.** Drawn
+flat, every rung's bubble is painted at every zoom — twelve nested on Northwind —
+and the overview becomes a thicket of boundaries with no hierarchy in it, which
+is the confetti fault wearing a new coat. A hard cut-off instead makes regions
+pop in and out as the camera moves, which is worse. Nothing under 48px, full
+strength by 160px: at overview only the divisions carry a line, and the teams
+arrive as you come down to them.
+
+One bug worth not repeating: **a client component is still rendered once on the
+server, where there is no `Path2D`.** The lab 500'd until the memo learnt to skip
+that pass.
+
+---
+
+## Separating siblings — what was tried, and why it did not work (2026-10-16)
+
+Greg, after the bubbles made the fault visible: *"reserve each sibling's whole
+footprint before placing it, probably by widening a child's arc by what its
+subtree will need."*
+
+**Built exactly that. It does not separate them.** This section is the record,
+because the next person to look at this will have the same idea.
+
+### What was built
+
+Arcs are now sized from the **footprint a subtree will occupy** rather than from
+its raw weight, and the band thickens when a rung's regions do not fit. The
+arithmetic is the lattice's and is two cell counts over each other: a ring `R`
+out holds `6R` cells, so one cell of it is `1/6R` of a turn, and a child whose
+subtree packs into a blob of radius `b` with its node on band `R` claims about
+`(b + ½)/(R + b)` either side of its bearing, plus half the clear ground it is
+owed. No circumference, no π.
+
+### The sweep, on Northwind with people as the smallest unit
+
+`thicken` is how many rings a crowded rung may push its regions outward.
+
+| thicken | touching parent | families whole | curl-back | radius | **overlapping sibling bubbles** |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| **0** | 76.0% | 1,405/1,686 | 12.2% | **97** | **27** |
+| 1 | 74.5% | 1,366 | 15.1% | 97 | 37 |
+| 2 | 77.7% | 1,410 | 13.5% | 114 | 35 |
+| 4 | 78.2% | 1,418 | 13.4% | 118 | 32 |
+| 8 | 80.5% | 1,464 | 12.2% | 180 | 48 |
+| 16 | 82.5% | 1,503 | 9.7% | 255 | 56 |
+| 64 | 83.5% | 1,515 | 8.6% | 764 | 52 |
+
+**The overlap gets worse as the rung gets thicker**, which is the opposite of
+what the idea predicts and is the whole finding. Pushing a crowded rung outward
+buys each subtree room to sprawl *sideways* into its neighbour's ground, so
+separation falls while width rises almost in proportion. Two other formulations
+were measured and rejected for the same reason:
+
+- **Holding sibling *nodes* apart** by the shared spacing rule. Halved the
+  sibling nodes sitting within two cells and moved the overlap by two, because
+  what overlaps is bodies and not nodes. Cost twenty whole families; reverted,
+  since Law 2 outranks Law 4.
+- **Thickening until each slice is at least one cell of its ring.** Took the
+  overlap from 10 to 11 on the test fixture. No effect worth the name.
+
+### What was kept, and why
+
+The dial is kept and **set to nought**, because what it actually buys is a real
+trade somebody may want: **cohesion against width**, 76.0% of units touching
+their parent at a radius of 97 against 82.5% at 255. It is a dial on one rule
+rather than a second rule — it only decides which band the one spacing figure is
+applied on.
+
+The footprint arithmetic is kept because it is the right foundation and it pays
+for itself slightly: against the previous version, on the same company, 76.0%
+touching against 74.8%, 1,405 whole against 1,388, 27 overlapping bubbles
+against 32 — at a radius of 97 against 84 and curl-back of 12.2% against 10.8%.
+A wash, honestly, and it is kept for the shape of it rather than for the numbers.
+
+**One flat number did go**, and should have gone earlier: the arc floor was 60°
+at every rung, which is one cell on ring 1 and **ten** on ring 10. It is now one
+cell of the ring the unit is actually standing on. That is what the standing
+requirement in [MAP-LAWS.md](MAP-LAWS.md) means by *"a ring is a ring of cells"*,
+and the flat version is why subtrees spilled over their neighbours at every rung
+but the first.
+
+### A Law 1 bug the sweep found
+
+At a high `thicken` the panel went on reporting healthy ratios while the driver
+placed **21 of 2,957 units**. `BAND_LIMIT` was an absolute ceiling, so a unit
+whose band already began past it searched *no rings at all* and was reported
+unplaced — and every percentage on the panel was a ratio of what was left, which
+says nothing about what is gone. It is now `BAND_REACH`, counted from the
+starting band. It never fired at the settings the map ships with.
+
+**The lesson is the measuring one, not the arithmetic one.** A sweep that moves a
+parameter far past its normal range is worth running precisely because it breaks
+things that look fine in the working range, and *"placed"* belongs next to every
+ratio on the panel for the same reason.
+
+### Still open
+
+Separating sibling bodies in radial is **not solved**. The atlas does it by
+packing an exact shape and reserving the ground, which is the search this driver
+exists to delete, so the answer is not simply to copy it. See [TASKS.md](TASKS.md).
+
+---
+
+## It was a drawing question (2026-10-16)
+
+Greg, after three placement attempts had failed to separate sibling regions:
+*"two regions sharing a border may be what an atlas should look like. Try it in
+how the boundary is drawn."*
+
+**That is the answer, and it makes the problem disappear rather than shrink.**
+
+### Partition the skirt instead of duplicating it
+
+Grown independently, two neighbouring regions both claim the cells between them:
+their washes double into a dark seam and each draws a boundary *through* the
+other's ground. Countries do not do this. They meet at a line that belongs to
+both and is drawn once.
+
+So the one-ring skirt is **partitioned**. A contested cell goes to whichever
+region already surrounds it more — the eye reads a frontier as the place where
+one region stops surrounding you — with ties broken by name so the picture stays
+a pure function of the company. Nesting is not a contest: a child's ground is
+inside its parent's by construction, so an ancestor of the winner keeps the cell
+too. Only unrelated regions compete.
+
+| cells held by two unrelated regions | before | after |
+| --- | ---: | ---: |
+| Digital Tailoring-ish · people | 0 | 0 |
+| 1,000 · people | some | **0** |
+| Northwind · teams | some | **0** |
+| Northwind · people | some | **0** |
+
+Overlapping sibling bubble pairs on the 1,000-person company go from **10 of 15
+to nought** under radial, and 2 to nought under the atlas. Three attempts at
+moving the units never got below about two thirds of pairs.
+
+### A frontier is not a coastline
+
+With the regions tiling, the two outlines that meet along a shared border lie on
+exactly the same edges — one line, drawn twice, in the right place. That is what
+lets each be drawn for what it is:
+
+- a **coastline** says *this is where the company stops*, and is the region's own
+  edge in the region's own hue;
+- a **frontier** says *this is where Sales stops and Delivery starts*, belongs to
+  both sides equally, and is drawn in neutral ink rather than in either one's
+  colour.
+
+Classifying an edge is done by its **midpoint**, which is halfway between the two
+cell centres and needs no knowledge of how corners are ordered. Deliberately:
+`outline`'s corner-to-direction mapping was wrong for all six directions once, in
+a way that survived counting, and the test that caught it derives the answer this
+same second way. Re-deriving the mapping to classify edges would be
+re-introducing the identical risk.
+
+### How much of a boundary is frontier turns out to describe the drivers
+
+Northwind, teams view:
+
+| | frontier edges | coast edges | frontier |
+| --- | ---: | ---: | ---: |
+| atlas | 41 | 11,775 | **0.3%** |
+| radial | 1,211 | 4,305 | **22.0%** |
+
+**The atlas draws islands with sea between them; radial draws a continent of
+countries that meet.** That is not decoration — it is the clearest single
+statement of the difference between the two, and it is an argument for radial
+that none of the cohesion numbers made: an atlas is a thing with borders in it.
+
+### What it cost
+
+Building the bubbles went from about 30ms to 50ms on the largest company under
+radial, and 58ms to 118ms under the atlas — once per arrangement, memoised, never
+in the frame loop. The partition is the extra work and it is worth it.
+
+### What this does *not* mean
+
+**The placement fault is still real and still open.** Sibling regions in radial
+genuinely sit closer together than the atlas's do, and the drawing now handles
+that gracefully rather than fixing it. If the map later wants real air between
+regions — for labels in the gap, say, or for a region to be grabbable by its
+margin — that is still the reserving-the-footprint problem, and the sweep above
+says thickening is not the way to it.
+
+---
+
+## The spacer rule, and the borders coming off (2026-10-16)
+
+Greg, on the first map with bubbles on it: *"this looks like an illustration
+you'd find in Neuromancer."* Two things, and the second is a rewrite.
+
+### The borders came off
+
+*"There are borders around the bubbles — they don't need to be there."* They had
+been there for an afternoon, drawn as an atlas draws them: a coastline in the
+region's own hue and a frontier in neutral ink. The wash alone carries a region,
+and twelve nested outlines carried a thicket. **The measurement survives the
+code**, and it is worth keeping: on Northwind's teams view the atlas driver's
+regions are **0.3% frontier** and radial's are **22%**, which is the difference
+between islands with sea between them and a continent of countries that meet.
+
+### The spacing rule became a touching rule
+
+*"All nodes — human and structural — have a one hexagon space around them. That
+is to say, each side of the hexagon representing that human or node gains a
+connecting hexagon that forms its spacer. On load, or using the auto-tidy
+function, the only things that can enter that node or human's spacer hexagons are
+humans in the same team or humans that are direct children of a structural
+node."*
+
+**This is the fifth attempt at separating regions and the first that works**, and
+the reason is in the grammar rather than in the numbers. The four before it were
+distances — a gap by rung, a gap by size, sibling nodes held apart, footprints
+reserved as arcs — and a distance has two parties with opinions about it, which
+is how one boundary came to be settled by whichever unit was owed the least. A
+touching rule is a property of the pair. `mayTouch(a, b)` and `mayTouch(b, a)`
+are the same question.
+
+Three things fall out of it that nobody asked for separately:
+
+- **Two structural nodes are never adjacent.** Neither is a human, so neither may
+  enter the other's spacer. Divisions, portfolios and teams get their clear
+  hexagon without a number anywhere in the engine.
+- **Two humans touch only if they share a team**, so a team is one connected
+  crowd with clear ground round it — *"teams should have one hexagon of clear
+  space between them"*.
+- **A human touches a structural node only if it is theirs**: their own team, or
+  the node they report to directly. The lead stands at the door, which is Law 3's
+  own clause, and nobody else's people do.
+
+A human's team is their nearest structural ancestor, so the rule needs no new
+data: the `people` set says who is human and the tree says the rest.
+
+### Measured
+
+Spacer breaches — pairs of adjacent units that may not touch — counted from the
+drawn arrangement:
+
+| | atlas | radial |
+| --- | ---: | ---: |
+| Sparrow-ish · people | 1 of 43 | **0 of 35** |
+| Digital Tailoring-ish · people | 2 of 177 | **0 of 174** |
+| 1,000 · people | 16 of 1,961 | **0 of 1,688** |
+| Northwind · teams | 340 of 340 | **0 of 0** |
+| Northwind · people | 25 of 4,336 | **0 of 3,754** |
+
+The atlas breaches it everywhere, which is expected — it does not know the rule
+and never has. On Northwind's people view the panel's own figure went from
+**2,266 of 2,562 people sitting next to somebody from another team to nought**,
+and curl-back to **0.0%** on every company.
+
+**What it costs is width, and less than expected**: Northwind's people view goes
+from a radius of 84 to 100, against the atlas's 252. The teams view goes from 60
+to 52 — it got *smaller*, because a rule that forbids adjacency outright is a
+cheaper thing to satisfy than a search that was trying to achieve it by distance.
+
+**A statistic that now measures the rule.** In the teams view every unit is
+structural, so *"families in one piece"* reads 0/130 — a family cannot be one
+connected patch when the rule forbids its members from touching. The number is
+not a failure, it is the rule, and it is the third time this engine has produced
+a statistic that measures its own instruction. It wants replacing with *"is every
+unit where the rule put it"*, as `spacedBy` was.
+
+### Tidy had to learn it too
+
+*"On load, **or using the auto-tidy function**."* Tidy did not know the rule and
+was measurably a second placer: on a radial load with nought breaches, one tidy
+produced **14** on the 45-person company and **245** on the 1,000-person one.
+
+Both of its phases had to learn it. Teaching only the gather left **94** of the
+245 — all of them turns, because rotation keeps a branch's shape exactly and so
+cannot break the rule internally, but it changes which way the branch faces the
+world, and that is where it meets strangers. With both taught: **0 and 2**. The
+two that survive are where a gather and a turn interact, and they are on the
+record rather than rounded away.
+
+`neaten` takes the `people` set as an optional argument, so tidy under the atlas
+driver behaves exactly as it did before — the atlas does not hold to this rule.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

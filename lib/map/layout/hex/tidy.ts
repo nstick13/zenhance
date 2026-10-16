@@ -41,6 +41,7 @@
  * actually helped rather than assuming it did.
  */
 import type { OrbitalTree } from "@/lib/map/layout/model";
+import { spacerRule } from "@/lib/map/layout/hex/spacing";
 import {
   type Cell,
   type Point,
@@ -223,8 +224,30 @@ export function neaten(
    * else deserved room.
    */
   clearance?: ReadonlyMap<string, number>,
+  /**
+   * **Who is a human**, so tidy can obey the spacer rule.
+   *
+   * Greg, 2026-10-16: the rule applies *"on load, or using the auto-tidy
+   * function."* Tidy had no notion of it and was measurably a second placer:
+   * on a radial load with nought breaches, one tidy produced **14** on the
+   * 45-person company and **245** on the 1,000-person one. Handing it the same
+   * predicate the driver uses is Law 4's *one measure of distance* applied to
+   * the rule that replaced the distances.
+   *
+   * Omit it and tidy behaves exactly as it did before, which is what the atlas
+   * driver wants — it does not hold to this rule and never has.
+   */
+  people?: ReadonlySet<string>,
 ): NeatenResult {
   const placed = new Map(cells);
+  /** The rule, or a rule that forbids nothing when tidy was not told who is a
+   *  human — which is how the atlas driver's tidy behaves, unchanged. */
+  const { mayTouch } = people
+    ? spacerRule(tree, people)
+    : { mayTouch: () => true };
+  /** cell key → who is standing there, kept in step as the gather moves things. */
+  const occupantAt = new Map<string, string>();
+  for (const [id, cell] of placed) occupantAt.set(cellKey(cell), id);
   let gathered = 0;
   let fullySpaced = 0;
   let squeezed = 0;
@@ -370,6 +393,9 @@ export function neaten(
           const box: Bounds = {
             minQ: Infinity, maxQ: -Infinity, minR: Infinity, maxR: -Infinity,
           };
+          /** Where each of the branch's units would stand, so the spacer can be
+           *  checked against whoever is already next to that cell. */
+          const landing: [string, Cell][] = [];
           for (const id of mine) {
             const from = placed.get(id);
             if (!from) continue;
@@ -378,11 +404,35 @@ export function neaten(
               r: from.r - here.r + candidate.r,
             };
             if (taken.has(cellKey(to))) { fits = false; break; }
+            landing.push([id, to]);
             branchCells.add(cellKey(to));
             box.minQ = Math.min(box.minQ, to.q); box.maxQ = Math.max(box.maxQ, to.q);
             box.minR = Math.min(box.minR, to.r); box.maxR = Math.max(box.maxR, to.r);
           }
           if (!fits) continue;
+
+          /**
+           * **Nobody lands in somebody else's spacer.** Checked for the whole
+           * branch at once, because a branch travels as one body — Law 2 — so a
+           * landing that would put one of its people against a stranger is not
+           * a landing, however well the rest of it fits.
+           */
+          if (people) {
+            let breaches = false;
+            for (const [id, at] of landing) {
+              for (const near of neighbours(at)) {
+                const key = cellKey(near);
+                if (branchCells.has(key)) continue;
+                const sitting = occupantAt.get(key);
+                if (sitting !== undefined && !mine.has(sitting) && !mayTouch(id, sitting)) {
+                  breaches = true;
+                  break;
+                }
+              }
+              if (breaches) break;
+            }
+            if (breaches) continue;
+          }
 
           // **Room first, then nearness.** The old rule was nearness alone,
           // and nearness alone is what packs a map solid: every branch takes
@@ -400,7 +450,11 @@ export function neaten(
 
       for (const id of mine) {
         const from = placed.get(id);
-        if (from) placed.set(id, { q: from.q - here.q + target.q, r: from.r - here.r + target.r });
+        if (!from) continue;
+        occupantAt.delete(cellKey(from));
+        const to = { q: from.q - here.q + target.q, r: from.r - here.r + target.r };
+        placed.set(id, to);
+        occupantAt.set(cellKey(to), id);
       }
       gathered++;
     }
@@ -465,6 +519,38 @@ export function neaten(
       }
       if (blocked) continue;
 
+      /**
+       * **A turn that breaches somebody's spacer is not on offer.**
+       *
+       * Rotation keeps a branch's own shape exactly, so nothing inside it can
+       * break the rule — but it changes which way the branch faces the world,
+       * and that is where it meets strangers. Checking the gather alone took one
+       * tidy on the 1,000-person company from 245 breaches to 94; the remaining
+       * 94 were all turns.
+       */
+      if (people) {
+        const landed = new Map<string, string>();
+        for (const id of members) {
+          const from = placed.get(id);
+          if (from) landed.set(cellKey(rotateCell(from, anchor, steps)), id);
+        }
+        let breaches = false;
+        for (const [key, id] of landed) {
+          const [q, r] = key.split(",").map(Number);
+          for (const near of neighbours({ q, r })) {
+            const nearKey = cellKey(near);
+            if (landed.has(nearKey)) continue;
+            const sitting = occupantAt.get(nearKey);
+            if (sitting !== undefined && !mine.has(sitting) && !mayTouch(id, sitting)) {
+              breaches = true;
+              break;
+            }
+          }
+          if (breaches) break;
+        }
+        if (breaches) continue;
+      }
+
       // What this turn would actually cost in clashes. Only the branch's own
       // chains are recounted — the ones between two units outside it cannot
       // move — and its internal chains keep their shape under a rotation, so
@@ -517,7 +603,11 @@ export function neaten(
     if (bestSteps === 0) continue;
     for (const id of members) {
       const from = placed.get(id);
-      if (from) placed.set(id, rotateCell(from, anchor, bestSteps));
+      if (!from) continue;
+      occupantAt.delete(cellKey(from));
+      const to = rotateCell(from, anchor, bestSteps);
+      placed.set(id, to);
+      occupantAt.set(cellKey(to), id);
     }
     allChains = chainsOf(tree, placed, size);
     turned++;

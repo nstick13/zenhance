@@ -33,7 +33,9 @@ import {
   headings,
   relayBranch,
   restBranch,
+  type HexDriver,
 } from "@/lib/map/layout/hex/territory";
+import { bubblesFor } from "@/lib/map/layout/hex/bubbles";
 import {
   branchOf,
   dropOutcome,
@@ -234,6 +236,14 @@ export default function HexLab({
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
   const [density, setDensity] = useState<HexDensity>(initialDensity);
   const [mode, setMode] = useState<"hex" | "orbits">("hex");
+  /**
+   * **Which driver decides where things go** — Greg, 2026-10-16, chose ragged
+   * rings. Both are here because the only way to settle which reads better is to
+   * put them side by side, which is how the atlas arrived beside the
+   * archipelago. The atlas is still the default, so nothing anybody has looked
+   * at so far changes until this is pressed.
+   */
+  const [driver, setDriver] = useState<HexDriver>("atlas");
   const [hover, setHover] = useState<string | null>(null);
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -244,7 +254,20 @@ export default function HexLab({
   const [pinned, setPinned] = useState<Set<string>>(() => new Set());
   /** 0 = as arranged, 1 = neatened. A second press compresses. */
   const [tidyStage, setTidyStage] = useState(0);
-  const [loaded, setLoaded] = useState(false);
+  /**
+   * **Which key the arrangement in state was read from** — not merely *whether*
+   * one has been read.
+   *
+   * A boolean was enough while there was one key per company. With a key per
+   * driver it is not: on the render where the driver changes, the saving effect
+   * still closes over the previous render's `moves`, because the reading
+   * effect's `setMoves` has only been *scheduled*. It would write the atlas's
+   * arrangement into radial's key before React re-rendered — silently, and onto
+   * cells that mean something different. Comparing the key the data came from
+   * with the key in hand makes that unrepresentable rather than merely unlikely.
+   */
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loaded = loadedFor !== null;
   const [pending, setPending] = useState<Pending | null>(null);
 
   const baseTree = useMemo(
@@ -264,15 +287,22 @@ export default function HexLab({
   // window or blocked site data throws rather than returning nothing, and an
   // arrangement is not worth a blank page.
   /**
-   * **The `.atlas` suffix stays, though there is nothing to tell it apart from
-   * any more.** It is there because arrangements saved before 2026-10-15 carry
-   * it, and Greg has one on Northwind that is the only specimen anybody has of
-   * a hand-built arrangement at that scale. Changing the key would orphan it.
+   * **The suffix is the driver, and `.atlas` keeps its exact old spelling.**
+   *
+   * It was a dead suffix from the archipelago days until 2026-10-16, when a
+   * second driver arrived and made it load-bearing again: an arrangement is a
+   * set of *cells*, and the two drivers do not put a company on the same cells
+   * at all. Sharing one key would have applied an atlas arrangement to radial
+   * ground — every placement landing on whatever unit happened to be at that
+   * coordinate, which is worse than losing it, because it looks like it worked.
+   *
+   * The atlas's own spelling is unchanged so that arrangements saved before
+   * today still load. Greg has one on Northwind that is the only specimen
+   * anybody has of a hand-built arrangement at that scale.
    */
-  const storeKey = `zenhance.lab.hex.${companyKey}.atlas`;
+  const storeKey = `zenhance.lab.hex.${companyKey}.${driver}`;
 
   useEffect(() => {
-    setLoaded(false);
     try {
       const raw = window.localStorage.getItem(storeKey);
       const saved = raw ? (JSON.parse(raw) as {
@@ -295,11 +325,13 @@ export default function HexLab({
       setPinned(new Set());
     }
     setTidyStage(0);
-    setLoaded(true);
+    setLoadedFor(storeKey);
   }, [storeKey, baseTree]);
 
   useEffect(() => {
-    if (!loaded) return; // never write back before the first read
+    // Never write back before the first read, and never write one key's
+    // arrangement under another's.
+    if (loadedFor !== storeKey) return;
     try {
       if (!moves.size && !reparents.size) window.localStorage.removeItem(storeKey);
       else window.localStorage.setItem(storeKey, JSON.stringify({
@@ -308,7 +340,7 @@ export default function HexLab({
     } catch {
       // A browser that will not keep it is not a reason to stop working.
     }
-  }, [storeKey, loaded, moves, reparents, pinned]);
+  }, [storeKey, loadedFor, moves, reparents, pinned]);
 
   /**
    * Who is a person rather than a structural node. Greg, 2026-10-03: *"at the
@@ -333,8 +365,8 @@ export default function HexLab({
 
 
   const baseAllocation = useMemo(
-    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds }),
-    [baseTree, leadIds, peopleIds],
+    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds, driver }),
+    [baseTree, leadIds, peopleIds, driver],
   );
 
   /**
@@ -534,6 +566,48 @@ export default function HexLab({
       segments: outline(cells, hexScene.hex.size),
     }));
   }, [groups, hexScene]);
+  /**
+   * **The bubbles** (Greg, 2026-10-16, requirements 4 and 6).
+   *
+   * Built from the *live* cells, so a bubble follows a hand that moved half a
+   * division across the map and there is nothing to keep in step. Memoised on
+   * the arrangement rather than computed in the paint loop: on the largest
+   * company this is 131 bubbles over 37,000 cells and about 30ms, which is fine
+   * once and hopeless sixty times a second.
+   *
+   * Each one is turned into a `Path2D` here too, for the same reason. Filling a
+   * region cell by cell is tens of thousands of calls a frame; one path per
+   * bubble is 131, and the browser unions the hexagons itself.
+   */
+  const bubbles = useMemo(() => {
+    if (!hexScene || !allocation.tier) return [];
+    // A client component is still rendered once on the server, where there is no
+    // canvas and so no `Path2D`. It recomputes on the client at hydration, which
+    // is the only pass whose answer is ever drawn.
+    if (typeof Path2D === "undefined") return [];
+    const size = hexScene.hex.size;
+    return bubblesFor({
+      tree, cells: allocation.cells, tier: allocation.tier, size,
+      occupants: allocation.occupants,
+    }).map((bubble) => {
+      const fill = new Path2D();
+      for (const cell of bubble.cells) {
+        const pts = corners(cell, size);
+        fill.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 6; i++) fill.lineTo(pts[i].x, pts[i].y);
+        fill.closePath();
+      }
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const seg of bubble.edge) {
+        minX = Math.min(minX, seg.from.x, seg.to.x);
+        maxX = Math.max(maxX, seg.from.x, seg.to.x);
+        minY = Math.min(minY, seg.from.y, seg.to.y);
+        maxY = Math.max(maxY, seg.from.y, seg.to.y);
+      }
+      return { ...bubble, fill, box: { minX, maxX, minY, maxY } };
+    });
+  }, [hexScene, allocation, tree]);
+
   const regionOrder = useMemo(() => {
     const weight = new Map<string, number>();
     for (const u of scene.units) {
@@ -564,11 +638,13 @@ export default function HexLab({
    */
   const fittedFor = useRef("");
   useEffect(() => {
-    const signature = `${companyKey}|${density}|${mode}|${size.width}x${size.height}`;
+    // The driver belongs in here: swapping it re-lays the whole company, so the
+    // camera has to refit or the new arrangement opens off screen.
+    const signature = `${companyKey}|${density}|${mode}|${driver}|${size.width}x${size.height}`;
     if (fittedFor.current === signature || !scene.bounds) return;
     fittedFor.current = signature;
     setCamera(fitCamera(scene.bounds, size, { min: floor }));
-  }, [companyKey, density, mode, size, scene, floor]);
+  }, [companyKey, density, mode, driver, size, scene, floor]);
 
   useEffect(() => {
     const onResize = () => setSize({ width: window.innerWidth, height: window.innerHeight });
@@ -706,6 +782,67 @@ export default function HexLab({
       for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath();
     };
+
+    // 1. The bubbles. Greg, 2026-10-16: *"concentric toruses comprised of shaded
+    //    hexagon zones offset from master-center"*, and *"a bubble is taken as
+    //    the shape of the contained node then offset wider by one hexagon
+    //    spacing."*
+    //
+    //    Under everything, because a bubble is the ground a group stands on
+    //    rather than a thing in its own right — Greg: *"bubbles are visually
+    //    meaningful but currently do not connote any other functional
+    //    significance."*
+    //
+    //    Outermost first, so a division's wash goes down before the teams nested
+    //    inside it and the small ones stay legible. The fill is deliberately
+    //    nearly nothing: on an eleven-rung company a leaf cell sits inside ten
+    //    bubbles, and anything you can comfortably see once is a black smudge
+    //    ten times over. It is the *edges* that carry the reading, and they are
+    //    drawn at a weight that grows with the tier, so the eye gets the size of
+    //    a region from the weight of its line before it can read a label.
+    if (bubbles.length > 0) {
+      for (const bubble of bubbles) {
+        const { box } = bubble;
+        if (box.maxX < view.minX || box.minX > view.maxX) continue;
+        if (box.maxY < view.minY || box.minY > view.maxY) continue;
+        /**
+         * **A bubble fades in with its size on screen rather than switching on.**
+         *
+         * Drawn flat, every rung's bubble is painted at every zoom — twelve of
+         * them nested on the largest company — and the overview turns into a
+         * thicket of boundaries with no hierarchy in it, which is the confetti
+         * fault wearing a new coat. A hard cut-off instead makes regions pop in
+         * and out as the camera moves, which is worse.
+         *
+         * So the weight follows how big the thing actually is in front of you:
+         * nothing under 48px, full strength by 160px. At overview only the
+         * divisions carry a line, and the teams arrive as you come down to them.
+         * It is the same idea as the territory wash below, which fades out as
+         * the nodes take over.
+         */
+        const onScreen = Math.max(box.maxX - box.minX, box.maxY - box.minY) * scale;
+        const weight = Math.min(1, (onScreen - 48) / 112);
+        if (weight <= 0) continue;
+
+        const hue = hueFor(bubble.unitId);
+        ctx.fillStyle = css(hue, bubble.depth, maxDepth, 0.05 * weight);
+        ctx.fill(bubble.fill);
+
+        /**
+         * **No line round a region** (Greg, 2026-10-16): *"there are borders
+         * around the bubbles — they don't need to be there."*
+         *
+         * They were there for one afternoon, drawn as an atlas draws them: a
+         * coastline in the region's own hue and a frontier between two regions
+         * in neutral ink. The measurement that came out of it is worth keeping
+         * even though the lines are not — on Northwind's teams view the atlas
+         * driver is **0.3%** frontier and radial is **22%**, which says the
+         * atlas draws islands with sea between them and radial draws a continent
+         * of countries that meet. The wash alone carries the region, and twelve
+         * nested outlines carried a thicket.
+         */
+      }
+    }
 
     // 1a. The territory, as a faint wash over the whole cell. It is what makes
     //     a division read as one place from far away, where the nodes are only
@@ -1065,7 +1202,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, peopleIds, leadIds, hueById]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, bubbles, peopleIds, leadIds, hueById]);
 
   // --- input ---------------------------------------------------------------
 
@@ -1329,11 +1466,15 @@ export default function HexLab({
     const result = neaten(
       tree, allocation.cells, pinned, hexScene.hex.size,
       allocation.spacedBy,
+      // The spacer rule applies to tidy too — Greg, 2026-10-16: *"on load, or
+      // using the auto-tidy function"*. Handed only when the driver that laid
+      // the map holds to it; the atlas does not and never has.
+      driver === "radial" ? peopleIds : undefined,
     );
     setMoves(new Map(result.cells));
     setTidyReport(result);
     setTidyStage(1);
-  }, [hexScene, tidyStage, tree, allocation, pinned]);
+  }, [driver, peopleIds, hexScene, tidyStage, tree, allocation, pinned]);
 
   /**
    * Two units on one cell would make one of them impossible to point at, since
@@ -1614,6 +1755,11 @@ export default function HexLab({
           <span style={{ color: "#6b7280" }}>layout</span>
           <Btn small onClick={() => setMode("hex")} active={mode === "hex"}>hex</Btn>
           <Btn small onClick={() => setMode("orbits")} active={mode === "orbits"}>orbits (today)</Btn>
+        </Row>
+        <Row>
+          <span style={{ color: "#6b7280" }}>place</span>
+          <Btn small onClick={() => setDriver("atlas")} active={mode === "hex" && driver === "atlas"} disabled={mode !== "hex"}>atlas</Btn>
+          <Btn small onClick={() => setDriver("radial")} active={mode === "hex" && driver === "radial"} disabled={mode !== "hex"}>radial</Btn>
         </Row>
         <Row>
           <span style={{ color: "#6b7280" }}>cell</span>
