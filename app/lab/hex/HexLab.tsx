@@ -1268,6 +1268,9 @@ export default function HexLab({
               ? { q: homeCell.q - grabbedAt.q, r: homeCell.r - grabbedAt.r }
               : null,
             leads: leadIds, people: peopleIds, compass,
+            // The branch comes back laid out the way the map it is on was laid
+            // out — and under radial that brings the spacer rule with it.
+            driver,
           })
         : null;
       /**

@@ -2341,6 +2341,92 @@ driver behaves exactly as it did before — the atlas does not hold to this rule
 
 ---
 
+## Likeness, and the re-pickup catching up (2026-10-16, later)
+
+Greg added four rules and asked whether they contravened the laws. Three fitted;
+two needed a decision from him, and he made both.
+
+### What he decided
+
+- **A plain drop does not re-lay the branch it is holding.** Asked whether
+  dropping should lay a branch out properly the way the five-second re-pickup
+  does, he chose *"only on consent"*. So Law 0 stands as written — *"a person's
+  placement is never improved on the engine's own initiative"* — and re-laying
+  stays behind the re-pickup and the tidy button, where aiming at it is the
+  consent. The cost is that a dropped branch can interlock with its new
+  neighbours until somebody tidies.
+- **Alike means closeness on the tree, for now**, moving to real fields later.
+
+### The five-second re-pickup was still the atlas's
+
+Which made the decision above matter more than it looked. `relayBranch` called
+`layoutTerritories` whatever the map had been laid out with, so a branch picked
+up on a radial map came back packed the atlas's way — and therefore **without
+the spacer rule**, because that rule lives in the radial driver. Measured inside
+the re-laid branch: 2 breaches on the 45-person company and 16 on the
+1,000-person one, against nought on a clean load. It now takes the driver, and
+both go to nought.
+
+**Its remaining limit, stated rather than fixed:** a branch is re-laid in its own
+frame with its own empty ground, so the rule is guaranteed *inside* the branch
+and not along the boundary where it meets the rest of the map. Tidy is what
+settles that boundary.
+
+### Likeness: the property holds, and the inversions have no lever
+
+*"The more alike a team or node is, the closer in space they should fall."*
+
+**On average it already holds.** Mean distance in cells rises with every step of
+tree distance, under both drivers — it falls out of the nesting rather than being
+aimed at, because a subtree owns an arc.
+
+| tree distance | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cells apart, 1,000-person, radial | 2 | 6 | 9 | 12 | 14 | 17 | 20 | 21 |
+| cells apart, 1,000-person, atlas | 1 | 10 | 13 | 16 | 23 | 31 | 36 | 41 |
+
+**Pair by pair it does not**: 22–35% of individual pairs invert, meaning a
+tree-closer pair sitting further apart than a tree-farther one. Two levers were
+tried against that and **both made it worse**:
+
+| | medium | 1,000-person | Northwind teams |
+| --- | ---: | ---: | ---: |
+| as it stands | 22.2% | **34.7%** | **28.0%** |
+| siblings clustered into the arc they need | 22.1% | 38.8% | 30.3% |
+| heaviest child on its parent's own bearing | 24.1% | 38.4% | 30.4% |
+
+Clustering siblings is the literal reading of *"peer teams should preferentially
+place next to each other"*, and it backfires because the spacer already sets a
+floor on how close two teams may be: narrowing their arc does not bring them
+closer, it pushes them outward to find room. On Northwind's teams view it made
+sibling pairs *further* apart, 6 cells to 7.
+
+Putting the heaviest child on its parent's bearing is the atlas's own documented
+grammar — *"the heaviest child continues its parent's street"* — and it broke
+monotonicity at the first step: parent-to-child went to 7 cells while
+sibling-to-sibling stayed at 6.
+
+**Why neither works.** The inversions are dominated by **radial stretch**: within
+a branch, distance grows with depth, while across an arc boundary two unrelated
+units at the same radius can be neighbours. No sibling ordering touches that, and
+the thing that would — packing branches tighter — is the spacer, which exists to
+do the opposite. **The spacer rule and aggressive likeness pull against each
+other**, and the spacer wins because Greg ranked it there.
+
+That leaves the honest position: the property is held as a preference, asserted
+on average by a test, and the pair-by-pair figure is on the record with no lever
+behind it. Real fields are the next thing that would move it.
+
+### Growing the space on a clash was already there
+
+*"If the mapping produces a clash, grow the space so that the clash can be
+resolved."* This is what `seat` does when every cell on a band would breach a
+spacer: it walks outward a ring and asks again, which is the same mechanism as
+the torus thickening. Measured at nought breaches on every company, so the growth
+is always finding the room.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

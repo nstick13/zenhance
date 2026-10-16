@@ -200,6 +200,22 @@ only if it is theirs. It lives in `spacing.ts` as `spacerRule`, and the radial
 driver and `tidy` both read it from there. Measured: **nought breaches on every
 company**, against 0.6%–100% under the atlas, which does not hold to it.
 
+**Where the spacer sits in the order, decided 2026-10-16.** Greg: *"that spacer
+rule trumps everything except our 0th law — nothing outweighs the hand."* It is
+written in directly **below Law 1** rather than above it, and the difference
+never comes up: Law 1 has no exception clause and a unit must always get a cell,
+while Greg's own fourth rule — *"if the mapping produces a clash, grow the space
+so that the clash can be resolved"* — means a spacer that cannot be honoured
+makes the map bigger instead of forcing a choice. Measured: nought breaches on
+every company, so the two have not yet had to compete.
+
+**And the hand still outranks it**, which is Law 0 unchanged. Greg chose, the
+same day, that a plain drop does **not** re-lay the branch it is holding: a
+dropped branch keeps its own spacing and takes whatever boundary it lands on,
+and re-laying stays behind the five-second re-pickup and the tidy button, where
+aiming at it is the consent. So *"a person's placement is never improved on the
+engine's own initiative"* stands as written.
+
 **The older rule — *a gap is a share of the size of the thing it separates* —
 still governs the atlas driver**, and still sets how far a parent holds its
 children (`spacedBy`). The two are not in conflict: one says how far out a rung
@@ -344,6 +360,19 @@ law forbids.
 - shorter chains, tighter packing
 - a map that looks neat
 - how fast the layout runs
+- **likeness: the closer two things are on the tree, the closer they should sit**
+  (Greg, 2026-10-16). It is a preference and not a law, which is the only way it
+  can coexist with Law 4 — the spacer decides which cells are legal and likeness
+  chooses among them. *Laws gate, preferences choose.* So "aggressively biased"
+  has a ceiling: likeness may never outbid the spacer or Law 3.
+
+  **It already holds on average and nobody has a lever on the rest.** Mean
+  distance in cells rises with every step of tree distance, under both drivers,
+  and roughly a third of individual pairs still invert. Two attempts at the
+  inversions — clustering siblings into the arc they need, and putting the
+  heaviest child on its parent's own bearing — both made them *worse*, because
+  what dominates is radial stretch and the spacer is what causes it. See
+  HEX-LAYOUT.md § Likeness.
 
 ---
 
@@ -477,6 +506,13 @@ children, and every unit is seated. The atlas is still untested against it.
   side. Disciplines exist per *person* in the database; units carry no such
   field. Today the order is lead first, then headcount descending, then name.
   Theme is new build.
+
+  **Narrowed 2026-10-16.** Greg defined *alike* as closeness on the tree, which
+  needs no new field — and that turned out to settle less than it looks, because
+  every pair of siblings is the same distance on the tree, so it cannot order
+  them at all. He has said the real answer is real fields, *"eventually"*. Until
+  then the nesting delivers tree-distance-to-proximity on average and nothing
+  orders peers but size and name.
 - **How a last-resort exclave is drawn** when Law 2's exception fires.
 - **Wide fans.** No unit in any demo company has more than five children. A
   practitioner we spoke to ran ninety pods. Nothing here has been tested against

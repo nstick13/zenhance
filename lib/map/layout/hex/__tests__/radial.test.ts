@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import { layoutRadial } from "@/lib/map/layout/hex/radial";
-import { allocateByTerritory } from "@/lib/map/layout/hex/territory";
+import { allocateByTerritory, relayBranch } from "@/lib/map/layout/hex/territory";
 import { leastGapFor, spacerRule, spacingFor } from "@/lib/map/layout/hex/spacing";
 import { cellKey, hexDistance, neighbours, type Cell } from "@/lib/map/layout/hex/coords";
 import { neaten } from "@/lib/map/layout/hex/tidy";
@@ -442,5 +442,119 @@ describe("the spacer rule", () => {
     const without = neaten(tree, laid.cells, new Set(), 100, laid.spacedBy);
     expect(without.cells.size).toBeGreaterThanOrEqual(0);
     expect(withRule.cells.size).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("likeness and proximity", () => {
+  /**
+   * Greg, 2026-10-16: *"the more alike a team or node is, the closer in space
+   * they should fall. 'Alike' is closeness on the tree."*
+   *
+   * **The property already holds on average**, and that is what is asserted
+   * here: mean distance in cells rises with every step of distance on the tree.
+   * It falls out of the nesting rather than being aimed at — a subtree owns an
+   * arc, so everything in it is nearer to everything else in it than to anything
+   * outside.
+   *
+   * What does *not* hold is the pair-by-pair version: about a third of
+   * individual pairs invert, and two attempts to improve that both made it
+   * worse. See HEX-LAYOUT.md § Likeness. They are not asserted against, because
+   * asserting a number nobody has a lever for is asserting the weather.
+   */
+  const treeDistance = (tree: OrbitalTree, a: string, b: string): number => {
+    const up = (id: string) => {
+      const out: string[] = [];
+      let at: string | null = id;
+      while (at) { out.push(at); at = tree.units.get(at)?.parentId ?? null; }
+      return out;
+    };
+    const pa = up(a);
+    const pb = new Map(up(b).map((id, i) => [id, i] as const));
+    for (let i = 0; i < pa.length; i++) {
+      const j = pb.get(pa[i]);
+      if (j !== undefined) return i + j;
+    }
+    return Infinity;
+  };
+
+  it("puts things that are closer on the tree closer on the map", () => {
+    const tree = treeOf(1000, 8);
+    const laid = layoutRadial(tree);
+    const ids = [...laid.cells.keys()];
+    const step = Math.max(1, Math.floor(ids.length / 200));
+
+    const by = new Map<number, number[]>();
+    for (let i = 0; i < ids.length; i += step) {
+      for (let j = i + step; j < ids.length; j += step) {
+        const dt = treeDistance(tree, ids[i], ids[j]);
+        if (!Number.isFinite(dt)) continue;
+        const ds = hexDistance(laid.cells.get(ids[i])!, laid.cells.get(ids[j])!);
+        by.set(dt, [...(by.get(dt) ?? []), ds]);
+      }
+    }
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const rungs = [...by.entries()]
+      .filter(([, xs]) => xs.length >= 5)
+      .sort((a, b) => a[0] - b[0]);
+    expect(rungs.length).toBeGreaterThan(4);
+    for (let i = 1; i < rungs.length; i++) {
+      expect(mean(rungs[i][1])).toBeGreaterThanOrEqual(mean(rungs[i - 1][1]));
+    }
+  });
+});
+
+describe("the five-second re-pickup", () => {
+  /**
+   * Greg chose *"only on consent"* for a plain drop: dropping a branch puts it
+   * down as it is, and re-laying stays behind this gesture and the tidy button,
+   * where aiming at it is the consent. So Law 0 is unchanged — and this is the
+   * path that has to carry the spacer rule.
+   *
+   * It did not until 2026-10-16. `relayBranch` called the atlas whatever the map
+   * had been laid out with, so a branch picked up on a radial map came back
+   * packed the atlas's way and without the rule: measured, 2 breaches inside the
+   * branch on the 45-person company and 16 on the 1,000-person one.
+   */
+  it("re-lays a branch through the driver the map was laid out with", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const anchor = [...tree.units.values()]
+      .filter((u) => u.parentId && u.childIds.length > 1)
+      .sort((a, b) => b.totalSeats - a.totalSeats)[0];
+
+    const viaRadial = relayBranch({ tree, anchorId: anchor.id, homeward: null, people, driver: "radial" })!;
+    const viaAtlas = relayBranch({ tree, anchorId: anchor.id, homeward: null, people, driver: "atlas" })!;
+    expect(viaRadial).toBeTruthy();
+    expect(viaAtlas).toBeTruthy();
+    // Different drivers, different answers — if these matched, the option would
+    // be doing nothing and this test would be proving nothing.
+    expect([...viaRadial.cells]).not.toEqual([...viaAtlas.cells]);
+  });
+
+  it("brings the spacer rule back with the branch", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const anchor = [...tree.units.values()]
+      .filter((u) => u.parentId && u.childIds.length > 1)
+      .sort((a, b) => b.totalSeats - a.totalSeats)[0];
+
+    const relaid = relayBranch({ tree, anchorId: anchor.id, homeward: null, people, driver: "radial" })!;
+    const { mayTouch } = spacerRule(tree, people);
+    const at = new Map<string, string>();
+    for (const [id, cell] of relaid.cells) at.set(cellKey(cell), id);
+    for (const [id, cell] of relaid.cells) {
+      for (const near of neighbours(cell)) {
+        const other = at.get(cellKey(near));
+        if (other !== undefined && other !== id) expect(mayTouch(id, other)).toBe(true);
+      }
+    }
+  });
+
+  it("defaults to the atlas, so nothing changes for a caller that does not ask", () => {
+    const tree = treeOf(45, 4);
+    const anchor = [...tree.units.values()].find((u) => u.parentId && u.childIds.length > 1)!;
+    const plain = relayBranch({ tree, anchorId: anchor.id, homeward: null })!;
+    const atlas = relayBranch({ tree, anchorId: anchor.id, homeward: null, driver: "atlas" })!;
+    expect([...plain.cells]).toEqual([...atlas.cells]);
   });
 });

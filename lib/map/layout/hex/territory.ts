@@ -915,11 +915,23 @@ export function relayBranch(options: {
   leads?: ReadonlySet<string>;
   people?: ReadonlySet<string>;
   maxGap?: number;
+  /**
+   * **Which driver re-lays the branch.** Defaults to the atlas, as it always
+   * has.
+   *
+   * It did not take one until 2026-10-16, and so called `layoutTerritories`
+   * whatever the map had been laid out with — a branch picked up on a radial
+   * map came back packed the atlas's way, and without the spacer rule, because
+   * that rule lives in the radial driver. Greg's own words about this gesture
+   * are *"on load, or using the auto-tidy function"*, and the five-second
+   * re-pickup is the auto-tidy aimed at one branch.
+   */
+  driver?: HexDriver;
   /** The whole company's bearings. Hand them in so the branch keeps facing the
    *  way it always faced — see `compass` on `layoutTerritories`. */
   compass?: ReadonlyMap<string, number>;
 }): { cells: Map<string, Cell>; radius: number } | null {
-  const { tree, anchorId, homeward, leads, people, maxGap, compass } = options;
+  const { tree, anchorId, homeward, leads, people, maxGap, compass, driver } = options;
   if (!tree.units.get(anchorId)) return null;
 
   /**
@@ -929,7 +941,8 @@ export function relayBranch(options: {
    * so handing it the same units with a different root lays out exactly this
    * branch and nothing else. No copy of the tree is needed.
    */
-  const laid = layoutTerritories(
+  const lay = (driver ?? "atlas") === "radial" ? layoutRadial : layoutTerritories;
+  const laid = lay(
     { ...tree, rootId: anchorId },
     {
       leads, people, maxGap, compass,
