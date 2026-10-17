@@ -2595,6 +2595,167 @@ now counts team-and-above, which is who the law holds, and reads 0%.
 
 ---
 
+## Why a branch scatters, found properly (2026-10-17, evening)
+
+Greg: *"there are 'landlocked' areas of one or two teams that are from one
+branch, then another is on the other side of the map… the preferential-closeness
+rule we've put in is not working as expected. I also do not see additional
+spacing around family/branches."*
+
+**He was right about both, including the part I had to correct twice:** there was
+no preferential-closeness rule and no family spacing. Two likeness levers were
+tried on 16 Oct, both measured worse, both reverted; the breathing room was
+deferred. So nothing was mis-tuned — there was nothing there.
+
+### What is built now
+
+- **Siblings cluster.** Children take the arc they need, centred on their
+  parent's bearing, and the slack is left empty. It used to be shared out in
+  proportion to weight, which fanned a parent's branches across its whole sweep:
+  the closest pair on the tree put as far apart as the arc allowed. Measured on
+  Northwind, the worst sibling-branch separation at the top rung went **21 → 13**
+  cells and at rung 2 **7 → 4**.
+- **A `kin` gap**, default 3 tiles, between one branch and the next. Held as an
+  angle, because `n` tiles at radius `R` is `n/6R` of a turn — so the family's
+  footprint never has to be packed to know how much room to leave beside it.
+- **`strayed`** on the panel: units seated outside the slice their family set
+  aside. Every other figure is an average, and an average cannot show you the one
+  team flung to the far side of the map.
+
+Together: regions go from 500 pieces to 480, teams in one piece 327 → 332.
+Modest, and they do not touch the thing Greg is pointing at.
+
+### The thing Greg is pointing at
+
+`strayed` reads **nought**. Every unit *is* inside its own slice. So the scatter
+is not units being thrown — it is units **climbing**, and here is the worst case
+on Northwind:
+
+```
+parent  Union Business Unit   depth 4   47 rings from the centre
+  Aurora Team 217      24 rings from parent,  48 from the centre
+  Meridian Function    25 rings from parent,  48 from the centre
+  Willow Team 216      27 rings from parent,  48 from the centre
+```
+
+Three sibling teams, all one ring further out than their parent, and all
+twenty-odd rings *around* the ring from it and from each other.
+
+**The cause is that bearings are relative while Law 3 is absolute.** A child is
+seated on a ring around its *parent*, in a slice measured as a bearing *from the
+parent* — and since 17 Oct it must also be strictly further from the **master
+centre**. When a parent's own bearing does not point away from the centre, its
+children's slices point sideways, and a cell thirteen rings away in a sideways
+direction is no further from the centre than the parent is. So it is refused, and
+the unit climbs — twenty rings, until its sideways slice finally clears the
+parent's radius.
+
+The two rules are individually right and mutually frustrating, and no weighting
+reconciles them because it is a geometric contradiction rather than a trade.
+
+### Reserving the ground was tried and does not fix it
+
+Greg: *"reserve each branch's wedge when its parent is placed, so later siblings
+can't eat it."* Built: every child seated and its ground claimed before any
+sibling is recursed into, the claim being an arc crossed with a range of rings,
+sized by the annulus arithmetic rather than by a disc — a first cut used
+`ringsFor(weight)`, which is the radius of a *disc* holding the subtree and
+badly undersized for a long thin wedge: Meridian's 166 cells span 27 rings where
+a disc would want 7, and an undersized claim is worse than none, because the
+branch overflows it and then finds its siblings' claims in the way.
+
+Properly sized it did help the symptom — coloured regions went from 480 pieces to
+**387** — and it **halved team integrity, 332 of 395 teams in one piece down to
+151**, because a sibling's claim covers ground a team's own people need. Law 2
+outranks the lot, so it is reverted. The code is on the record here rather than
+in the tree.
+
+### What would actually fix it
+
+**Anchor the arcs to the master centre instead of to the parent.** A unit's slice
+should be its share of the *root's* circle — a bearing measured from the origin,
+not from wherever its parent happened to land. Then "move outward" and "stay in
+my arc" stop fighting: inside an absolute wedge, going outward always increases
+the distance from the centre, so the climb disappears and a branch is a wedge of
+the map by construction.
+
+That is what `headings` has computed since 2026-10-14 and what this driver has
+never used — it subdivides arcs itself, relative to each parent. The note in
+`radial.ts` saying the relative bearing is a wart rather than a virtue was
+written on 17 Oct and this is the bill for it.
+
+It is a rewrite of `seat`, from *"a ring around the parent, bearing from the
+parent"* to *"a bearing from the origin, a distance from the origin"* — the
+honest polar placer this driver has been approximating. Not attempted here.
+
+---
+
+## Absolute arcs: the zoning fix, proved and not landed (2026-10-17, night)
+
+Greg's three requirements — like groupings sticking together, more room every
+few rungs above team level, and master-centre being *unappealing* rather than
+forbidden — all point at the same change: **place in absolute terms from the
+master centre** rather than relative to each parent. One rewrite serves all
+three, and it was built far enough to prove the first.
+
+### It fixes the zoning, and that is not in doubt
+
+Granite Division's three children, measured as the angular spread of each
+branch's whole subtree as seen from Granite:
+
+| | span of each branch | overlap between them |
+| --- | ---: | ---: |
+| relative arcs (what ships) | 171°, 184°, 219° | **171°, 171°, 177°** |
+| absolute arcs | 31°, 49°, 31° | **1°, 19°, 30°** |
+
+Three clouds sharing one space became three wedges. That is Greg's *"prevented
+from spacing out radially to take their own zoning"*, answered.
+
+### It is not landed, and the honest reason is that I lost track of it
+
+Two laws regressed badly on the first cut — the spacer to 1,249 breaches and
+teams in one piece from 332 of 395 down to 48 — because a place could be seated
+with nowhere for its own crowd to stand. Requiring room for the crowd and ranking
+the fallback fixed both: **0 breaches, 309 teams**, at **23 seconds** on the
+largest company.
+
+Making it fast meant not asking the spacer about cells far outside a branch's
+arc. That took it to 1.2 seconds and put the breaches back. Bounding the skip
+rather than removing it did not restore them, and **with the skip effectively
+disabled the breaches still did not return to nought** — 851 rather than the 0
+measured twenty minutes earlier on what should have been the same code path.
+
+That last fact is the reason this is written up rather than committed: the
+measurements stopped reconciling, which means the thing was no longer understood.
+Reverted whole.
+
+### What a second attempt should know
+
+- **The seater has to be rebuilt, not patched.** It currently searches rings
+  around the *parent* with bearings measured from the parent. The absolute
+  version searches rings around the *origin* with bearings from the origin, and
+  the two cannot both be true of one function.
+- **Checking the spacer is the cost.** A ring 120 out holds 720 cells and asking
+  each one is a spiral apiece. Any viable version must narrow to the arc *before*
+  it asks, and must do so without changing which cells are eligible — which is
+  exactly where this attempt came apart.
+- **A place must not be seated where its own people cannot stand.** Law 2, and
+  the single most expensive thing to get wrong here: it cost 260 of 395 teams.
+- **The ring schedule works and is cheap.** A floor per depth, each rung clearing
+  the one inside it by its own ring plus a cell, is what makes the centre
+  unappealing without forbidding anything — and it removes the sideways climb,
+  because a unit beyond its floor may move freely at its own radius.
+
+### What is kept from the attempt
+
+`gapFor` and `leastApart` in `spacing.ts` — the spacer widened by rung, one more
+hexagon every `RUNGS_PER_HEX` rungs above team level, which is Greg's second
+requirement. They are written and unused: nothing reads them until a placer can
+honour them, and wiring them into the current relative placer would widen gaps
+the arcs cannot pay for.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

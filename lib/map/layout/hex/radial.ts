@@ -134,6 +134,9 @@ import type { Region, TerritoryLayout } from "@/lib/map/layout/hex/territory";
  */
 const BAND_REACH = 64;
 
+/** Clear tiles between one branch and the next. See `kin` in `RadialOptions`. */
+const DEFAULT_KIN = 3;
+
 /**
  * **Every rung climbs.** See `sideways` in `RadialOptions` for the measurements
  * and for what the older setting was.
@@ -234,6 +237,26 @@ export type RadialOptions = {
    * door whatever this is set to.
    */
   sideways?: "allow" | "forbid";
+  /**
+   * **Clear tiles between one branch and the next** — Greg, 2026-10-17: *"give
+   * family groupings breathing room of, say, 3–5 spacing tiles around the total
+   * area of the family unit, much in the same way we have with teams."*
+   *
+   * It is kept as an angle rather than a distance, which is what makes it
+   * affordable: a gap of `n` tiles at a radius of `R` is `n / 6R` of a turn,
+   * because a ring `R` out holds `6R` cells. So the whole family's footprint
+   * never has to be packed to know how much room to leave beside it — the two
+   * cell counts give it directly, and the branch that grows into that arc
+   * inherits the room without anybody measuring it again.
+   *
+   * It pairs with leaving the slack **unspread**. Children used to share out
+   * whatever arc their parent had going spare, in proportion to weight, which
+   * fanned a parent's branches across its entire sweep: two sibling branches are
+   * the closest thing there is on the tree and they ended up a third of a turn
+   * apart. Now each takes the arc it needs, they sit side by side centred on
+   * their parent's bearing, and this is the air between them.
+   */
+  kin?: number;
   /** Which way this tree's root faces, and how wide its children fan. */
   bearing?: number;
   arc?: number;
@@ -263,6 +286,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const people = options.people ?? new Set<string>();
   const thicken = options.thicken ?? DEFAULT_THICKEN;
   const sideways = options.sideways ?? DEFAULT_SIDEWAYS;
+  const kin = options.kin ?? DEFAULT_KIN;
 
   /**
    * **The spacer rule** (Greg, 2026-10-16).
@@ -305,12 +329,14 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const facing = new Map<string, number>();
   const tiers = new Map<string, number>();
   const unplaced: string[] = [];
+  /** Units seated outside the slice their family set aside for them. */
+  const strayed: string[] = [];
 
   const root = tree.units.get(tree.rootId);
   if (!root) {
     return {
       cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius: 0,
-      stats: { placed: 0, touchingParent: 0, depth: 0, tooClose: 0, unplaced: 0 },
+      stats: { placed: 0, touchingParent: 0, depth: 0, tooClose: 0, unplaced: 0, strayed: 0 },
     };
   }
 
@@ -426,7 +452,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
      * straight through.
      */
     allow?: ReadonlySet<string>,
-  ): Cell | null => {
+  ): { cell: Cell; strayed: boolean } | null => {
     const fromOut = hexDistance(from, ORIGIN);
     /** The best cell anywhere, kept only as a last resort. Law 1 says no unit
      *  may be left without a cell, so a unit leaves its slice — and, if it must,
@@ -507,9 +533,9 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
        */
       // `fallback` already holds the best cell seen on any band, ranked, so
       // there is nothing to carry forward here — only a reason to stop.
-      if (best && best.rank < 2) return best.cell;
+      if (best && best.rank < 2) return { cell: best.cell, strayed: false };
     }
-    return fallback?.cell ?? null;
+    return fallback ? { cell: fallback.cell, strayed: fallback.rank >= 2 } : null;
   };
 
   /**
@@ -691,19 +717,42 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
     while (placeBand < demand.clearance + 1 + thicken && !placesFit(placeBand)) placeBand++;
 
     const want = footprint.map((k) => claim(k, k.isPlace ? placeBand : 1));
-    const asked = want.reduce((a, b) => a + b, 0);
+    /**
+     * **The breathing room, as an angle.** A gap of `kin` tiles at radius `R` is
+     * `kin / 6R` of a turn. Only between *places*: a team's own people belong
+     * pressed against it, and charging this between two of them would be the
+     * 0%-touching bug of 2026-10-03 all over again.
+     */
+    const places = footprint.filter((k) => k.isPlace).length;
+    const gapAngle = places > 1
+      ? (kin / Math.max(1, 6 * placeBand)) * FULL_TURN
+      : 0;
+    const gaps = Math.max(0, places - 1) * gapAngle;
+    const asked = want.reduce((a, b) => a + b, 0) + gaps;
     /**
      * Slack is shared out in proportion to what hangs beneath each child, so a
      * rung with room to spare spreads rather than huddling on one side — which
      * is what keeps the ring reading as a ring.
      */
-    const total = footprint.reduce((n, k) => n + k.kd.weight, 0);
-    const slack = Math.max(0, half * 2 - asked);
     const squeeze = asked > half * 2 && asked > 0 ? (half * 2) / asked : 1;
 
-    let edge = centre - half;
+    /**
+     * **The slack is left empty, and the family is centred in what it needs.**
+     *
+     * Spreading it fanned sibling branches across the parent's whole sweep,
+     * which is the measured cause of Greg's *"landlocked areas of one or two
+     * teams that are from one branch, then another is on the other side of the
+     * map"*: the closest pair on the tree put as far apart as the arc allowed.
+     */
+    const used = asked * squeeze;
+    let edge = centre - used / 2;
+    let seen = 0;
     footprint.forEach((k, i) => {
-      const span = want[i] * squeeze + slack * (k.kd.weight / Math.max(1, total));
+      // The air sits between places, so it is added before every place but the
+      // first rather than after each one, which would push the family off centre.
+      if (k.isPlace && seen > 0) edge += gapAngle * squeeze;
+      if (k.isPlace) seen++;
+      const span = want[i] * squeeze;
       const mid = edge + span / 2;
       edge += span;
 
@@ -725,8 +774,19 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
        */
       const perCell = FULL_TURN / Math.max(1, ring(at, band).length);
       const seatHalf = Math.max(span, perCell) / 2;
-      const cell = seat(at, band, mid, seatHalf, k.kid.id, !k.isPerson, reserved);
-      if (!cell) { unplaced.push(k.kid.id); return; }
+      const seated = seat(at, band, mid, seatHalf, k.kid.id, !k.isPerson, reserved);
+      if (!seated) { unplaced.push(k.kid.id); return; }
+      const cell = seated.cell;
+      /**
+       * **A unit that could not be seated anywhere its laws and its slice
+       * allowed**, and took the least-bad cell instead.
+       *
+       * This is the number that explains a scattered branch. Everything else on
+       * the panel is an average, and an average cannot show you the one team
+       * that was flung to the far side of the map — which is exactly what Greg
+       * was pointing at and no figure here could account for.
+       */
+      if (seated.strayed) strayed.push(k.kid.id);
       // Taken for good now, so the rest of the family cannot have it, and no
       // longer merely reserved — a cell somebody stands on is not clear ground.
       reserved.delete(cellKey(cell));
@@ -772,7 +832,10 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
 
   return {
     cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius,
-    stats: { placed: cells.size, touchingParent, depth, tooClose, unplaced: unplaced.length },
+    stats: {
+      placed: cells.size, touchingParent, depth, tooClose,
+      unplaced: unplaced.length, strayed: strayed.length,
+    },
   };
 }
 

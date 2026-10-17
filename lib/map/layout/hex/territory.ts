@@ -127,6 +127,9 @@ export type Allocation = {
     wholeFamilies: number;
     families: number;
     worstReach: number;
+    /** Radial only: units seated outside the slice their family set aside, and
+     *  so potentially a long way from their kin. The atlas reports nothing. */
+    strayed?: number;
   };
 };
 
@@ -172,6 +175,9 @@ export type TerritoryLayout = {
     tooClose: number;
     /** Units the packer could not seat at all. Should always be nought. */
     unplaced: number;
+    /** Radial only: units seated outside the slice their family set aside, and
+     *  so potentially a long way from their kin. The atlas reports nought. */
+    strayed?: number;
   };
 };
 
@@ -1143,6 +1149,7 @@ export function allocateByTerritory(
     spacedBy: laid.spacedBy,
     tier: laid.tier,
     stats: {
+      strayed: laid.stats.strayed,
       placed: laid.stats.placed,
       connected,
       islands: 0,

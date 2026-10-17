@@ -227,3 +227,50 @@ export function spacerRule(
 
   return { teamFor, mayTouch };
 }
+
+
+/**
+ * **How many clear hexagons a thing of this tier keeps round it.**
+ *
+ * Greg, 2026-10-17: *"a bit more space to be added around, say, every n rungs up
+ * from team level. This pushes extra geographical distance as they get
+ * progressively more dissimilar. 'Space' in this case is another outline of one
+ * complete hexagon space — just like teams get."*
+ *
+ * So it is the same device as the spacer, repeated: a team keeps one hexagon,
+ * and every `rungs` steps above team level adds another. Nought is a team, so
+ * `gapFor(0)` is the one hexagon everything already had and nothing below team
+ * level changes.
+ *
+ * It is written as a count of hexagons rather than as a share of anything,
+ * because that is what Greg asked for and because it is the one spacing idea in
+ * this engine that has survived contact: *who may enter the ring round me*,
+ * with the ring now a little wider the higher up you are.
+ */
+export function gapFor(tier: number, rungs = RUNGS_PER_HEX): number {
+  return 1 + Math.floor(Math.max(0, tier) / Math.max(1, rungs));
+}
+
+/**
+ * Rungs above team level per extra hexagon of clearance. Greg left the number
+ * open — *"number TBC"* — and this is the first one measured; see
+ * HEX-LAYOUT.md § Room by rung for the sweep behind it.
+ */
+export const RUNGS_PER_HEX = 2;
+
+/**
+ * **The least two units may be apart**, in cells, centre to centre.
+ *
+ * One when they are allowed to touch. Otherwise one more than the wider of the
+ * two rings they keep — read from both sides, as Law 4 requires, because a gap
+ * belongs to the pair and not to whichever of them asks least.
+ */
+export function leastApart(
+  a: string,
+  b: string,
+  mayTouch: (x: string, y: string) => boolean,
+  tierOf: (id: string) => number,
+): number {
+  if (mayTouch(a, b)) return 1;
+  return 1 + Math.max(gapFor(tierOf(a)), gapFor(tierOf(b)));
+}
