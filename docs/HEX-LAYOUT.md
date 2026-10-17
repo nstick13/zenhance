@@ -2520,6 +2520,81 @@ company, not Law 3, and forbidding sideways does not move it.
 
 ---
 
+## How the stranded islands form (2026-10-17, later)
+
+Greg, on the map after the Law 3 change: *"there are still archipelagos on load
+and on auto-tidy, where there should not really be isolated members of the same
+genealogy."*
+
+**First, a correction to the premise.** There is no likeness weighting in the
+engine. It was measured on 2026-10-16, two levers were tried — clustering
+siblings, and the heaviest child on its parent's bearing — and **both made the
+pair-by-pair figure worse and were reverted**. What exists is likeness holding
+*on average* as a side effect of nesting. So the islands are not a mis-tuned
+weighting; nothing is tuned.
+
+### Three different things were being seen at once
+
+Measured on Northwind with people as the smallest unit, counting connected
+components of each coloured region exactly as the lab groups them:
+
+| | pieces per region | teams in one piece |
+| --- | ---: | ---: |
+| atlas | 18.0 | **395 / 395** |
+| radial, sideways allowed | 23.7 | 326 / 395 |
+| radial, strictly out *(the default, 16 Oct)* | **35.6** | **207 / 395** |
+
+**1. Most of it is the spacer rule, working.** A region's raw cells *must* come
+apart, because two structural nodes may not touch and two humans may not touch
+across teams — so every team is its own island by construction. Grow a region by
+one ring, which is what its bubble does, and 35.6 pieces becomes **2.9**. The
+continent is there; the per-cell wash just does not draw it.
+
+**2. The rest was a bug I introduced**, and it is the one that matters. Making
+rungs strictly outward was meant to hold *places* to Law 3 — *"a team, or
+anything above a team"* — but the term reached the **ranking** as well as the
+gate, so it pushed people too. Law 3 is explicit that an individual is *"pushed
+outward, never forbidden"*, and pushing them that hard tore teams apart:
+**188 of 395 teams in pieces, against 69 before.** A person who would have stood
+beside their team on the level side was shoved to a further band, away from the
+rest of their own crowd.
+
+**Law 2 outranks Law 3**, so a Law 3 preference does not get to break a body.
+The term is now gated to places. Measured:
+
+| Northwind · people | before the fix | after |
+| --- | ---: | ---: |
+| teams in one piece | 207 / 395 | **327 / 395** |
+| pieces per region | 35.6 | **23.8** |
+| children touching their family | 75% | **81%** |
+| families in one piece | 1,185 | **1,380** |
+| radius | 125 | **106** |
+| rungs (team and above) going round the centre | 0% | **0%** |
+
+So the law is still kept exactly, and the cost it appeared to carry was mostly
+this bug rather than the law.
+
+**3. A panel figure that had flipped the other way.** *"N% of rungs go round the
+centre"* counted people as well as places, and once people were correctly allowed
+to stand level again it read **38%** on a map where every place was obeying. It
+now counts team-and-above, which is who the law holds, and reads 0%.
+
+### On the two constraints offered
+
+- **"Remove any max length on connection lines."** There is nothing to remove —
+  the engine has no maximum chain length. `BAND_REACH` is a search guard counted
+  from a unit's own starting band, not a cap on how far a chain may run, and
+  chains of 30-plus cells occur.
+- **"Give family groupings breathing room of 3–5 spacing tiles."** This separates
+  families from each other; it does not gather a family's own scattered pieces,
+  which is what the complaint was about. Measured, growing a region by 3 rings
+  takes it to 1.5 pieces — so it would help the *reading* — but it would also
+  require reserving each family's whole footprint before placing it, which was
+  tried on 2026-10-16 as footprint-as-arc and made things worse. Worth doing only
+  if the fix above leaves the map still looking like an archipelago.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

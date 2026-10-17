@@ -1629,8 +1629,9 @@ export default function HexLab({
      * itself."*
      */
     let curled = 0, curlWorst = 0;
-    /** Rungs that take you no closer to the centre — sideways counts. */
-    let level = 0;
+    /** Rungs that take you no closer to the centre — sideways counts. Places
+     *  only, because Law 3 holds only places to it. */
+    let level = 0, levelOf = 0;
     const centre = cells.get(tree.rootId);
     for (const unit of tree.units.values()) {
       const own = cells.get(unit.id);
@@ -1657,13 +1658,24 @@ export default function HexLab({
           // Equal distance is allowed by the law; nearer is not.
           if (out < parentOut) { curled++; curlWorst = Math.max(curlWorst, parentOut - out); }
           /**
-           * **The number that was missing.** Curl-back counts only a rung that
-           * goes *inward*, and on a clean load that is nought — which is why the
-           * panel said the map had no loopbacks in it while Greg could see that
-           * it did. A rung that goes neither in nor out still takes you round
-           * the centre rather than away from it, and six of those is a circle.
+           * **The number that was missing** — and it counts *places*, because
+           * that is who Law 3 holds to it.
+           *
+           * Curl-back counts only a rung that goes inward, and on a clean load
+           * that is nought, which is why the panel said the map had no loopbacks
+           * while Greg could see that it did. A rung that goes neither in nor
+           * out still takes you round the centre, and six of those is a circle.
+           *
+           * Counting people in it is the same mistake wearing the other coat:
+           * Law 3 says an individual is *"pushed outward, never forbidden from
+           * the near side"*, so a person standing level with their manager is
+           * the law working rather than failing, and including them read 38%
+           * on a map where every place was obeying.
            */
-          if (out <= parentOut) level++;
+          if (!peopleIds.has(unit.id)) {
+            levelOf++;
+            if (out <= parentOut) level++;
+          }
         }
       }
       if (unit.childIds.length === 0) continue;
@@ -1687,9 +1699,9 @@ export default function HexLab({
     return {
       children, touchingFamily, touchingParent,
       exclaves: children - touchingFamily, families, wholeFamilies,
-      curled, curlWorst, level,
+      curled, curlWorst, level, levelOf,
     };
-  }, [allocation, tree]);
+  }, [peopleIds, allocation, tree]);
 
   const stats = hexScene?.hex.stats ?? null;
   const b = scene.bounds ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
@@ -1852,8 +1864,8 @@ export default function HexLab({
                 clean load while chains still wind round the centre. */}
             <Small suppressHydrationWarning>
               <b style={{ color: live.level === 0 ? "#166534" : "#b45309" }}>
-                {((100 * live.level) / Math.max(1, live.children)).toFixed(0)}%
-              </b>{" "}of rungs go round the centre rather than away from it
+                {((100 * live.level) / Math.max(1, live.levelOf)).toFixed(0)}%
+              </b>{" "}of team-and-above rungs go round the centre, not away from it
             </Small>
           </>
         ) : (

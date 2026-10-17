@@ -612,49 +612,78 @@ describe("sideways steps, and the loopbacks they cause", () => {
   });
 
   /**
-   * Law 3: *"an individual person is pushed outward, never forbidden from the
-   * near side."* So this setting may **push** a person harder — it feeds the
-   * ranking as well as the gate — but it may never become a wall for one.
+   * **Law 3 is about places, so this setting must not touch a person at all.**
    *
-   * The first cut of this test asserted that a company of nothing but people
-   * came out identical under both settings, on the reasoning that the gate is
-   * applied to places only. That was wrong, and usefully so: `inward` is also a
-   * term in the ranking, so under `forbid` a person prefers an outward cell more
-   * strongly while still being allowed the near one. Pushed harder, not walled —
-   * which is the law, said properly.
+   * *"The engine may not place a team, or anything above a team, anywhere that
+   * is not strictly further from the centre than its own parent. An individual
+   * person is pushed outward, never forbidden from the near side."*
+   *
+   * This test has been wrong twice and the history is worth keeping. It first
+   * asserted that a company of nothing but people came out identical under both
+   * settings — which was right in principle and false in fact, because the
+   * strictly-outward term was reaching the *ranking* as well as the gate. The
+   * assertion was then weakened to match the code, which was the wrong way
+   * round: the code was breaking Law 2.
+   *
+   * Pushing people that hard tore teams apart — 188 of 395 teams on Northwind
+   * ended up in pieces, against 69 before — and **Law 2 outranks Law 3**, so a
+   * Law 3 preference does not get to break a body. The term is now gated to
+   * places, teams come back together, and the original assertion is true.
    */
-  it("pushes a person outward without ever forbidding them the near side", () => {
+  it("does not touch a person, because Law 3 holds only places to it", () => {
     const tree = treeOf(1000, 8);
     const everyone = new Set(tree.units.keys());
     const allow = layoutRadial(tree, { people: everyone, sideways: "allow" });
     const forbid = layoutRadial(tree, { people: everyone, sideways: "forbid" });
-
     expect(forbid.stats.unplaced).toBe(0);
-    expect(forbid.stats.placed).toBe(tree.units.size);
+    expect([...forbid.cells]).toEqual([...allow.cells]);
+  });
 
-    const level = (laid: typeof allow) => {
-      let n = 0;
-      for (const unit of tree.units.values()) {
-        const own = laid.cells.get(unit.id);
-        const parent = unit.parentId ? laid.cells.get(unit.parentId) : null;
-        if (!own || !parent) continue;
-        if (hexDistance(own, ORIGIN_CELL) <= hexDistance(parent, ORIGIN_CELL)) n++;
+  /**
+   * And the point of gating it there: a team stays one crowd. Measured on the
+   * 1,000-person company, teams in one piece went 152 → 89 when the push
+   * reached people, and back to 139 when it stopped.
+   */
+  it("keeps teams in one piece, which is Law 2 outranking Law 3", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+
+    const wholeTeams = (laid: ReturnType<typeof layoutRadial>) => {
+      const teams = new Map<string, Cell[]>();
+      for (const id of people) {
+        const parentId = tree.units.get(id)?.parentId;
+        const cell = laid.cells.get(id);
+        if (!parentId || !cell) continue;
+        teams.set(parentId, [...(teams.get(parentId) ?? []), cell]);
       }
-      return n;
+      let whole = 0;
+      for (const [teamId, members] of teams) {
+        const own = laid.cells.get(teamId);
+        const cells = own ? [own, ...members] : members;
+        const keys = new Set(cells.map(cellKey));
+        const seen = new Set([cellKey(cells[0])]);
+        const stack = [cells[0]];
+        while (stack.length) {
+          const at = stack.pop()!;
+          for (const near of neighbours(at)) {
+            const key = cellKey(near);
+            if (keys.has(key) && !seen.has(key)) { seen.add(key); stack.push(near); }
+          }
+        }
+        if (seen.size === keys.size) whole++;
+      }
+      return whole;
     };
-    // Pushed: fewer people sit level with or inside their parent.
-    expect(level(forbid)).toBeLessThan(level(allow));
+
     /**
-     * **Not walled, shown by nobody going unplaced rather than by somebody
-     * taking the near side.**
-     *
-     * On these companies `level(forbid)` is nought — an outward cell is always
-     * available, so the near side is never *needed*, and a test asserting that
-     * somebody still takes it would be asserting the shape of the fixture. What
-     * the law actually promises is that a person is never refused, and a refusal
-     * would show up here as an unplaced unit, which is asserted above.
+     * Compared against the permissive setting rather than asserted as a ratio,
+     * because what matters is that holding places to the law does not tear
+     * *bodies* — and because any fixed ratio here would be a statement about the
+     * fixture's shape rather than about the engine.
      */
-    expect(level(forbid)).toBe(0);
+    const strict = wholeTeams(layoutRadial(tree, { people, sideways: "forbid" }));
+    const loose = wholeTeams(layoutRadial(tree, { people, sideways: "allow" }));
+    expect(strict).toBeGreaterThan(loose * 0.85);
   });
 
   /**

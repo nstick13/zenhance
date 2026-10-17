@@ -442,7 +442,9 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
         if (taken.has(key) && !allow?.has(key)) continue;
         const off = apart(worldAngle(from, cell, 1), centre);
         const out = hexDistance(cell, ORIGIN);
-        const inward = sideways === "forbid" ? out <= fromOut : out < fromOut;
+        // Strictly-outward is Law 3's wording for a place. A person is "pushed
+        // outward, never forbidden", and pushing them this hard breaks teams.
+        const inward = sideways === "forbid" && gateInward ? out <= fromOut : out < fromOut;
         /**
          * **The spacer, read from both sides.** A cell is barred if anybody
          * already standing next to it may not share a boundary with this unit —
