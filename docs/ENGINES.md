@@ -51,7 +51,8 @@ lib/map/
             position · envelope · size · model · snap        3,414 lines · 155 tests
     hex/    coords · territory (the atlas) · radial (ragged
             rings) · spacing · compass · bubbles · arrange
-            tidy · route · people · scene                    ~5,500 lines · 217 tests
+            defer (the hand) · chart (the orderly end)
+            tidy · route · people · scene                    ~5,900 lines · 262 tests
   camera/   viewport · focusStack · focus · lod · detail        741 lines ·  90 tests
   runtime/  motion · visibility · avatar                        346 lines ·  15 tests
   growth/   drop · insertion · relationship                     876 lines ·  57 tests

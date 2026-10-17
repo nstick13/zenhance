@@ -274,7 +274,6 @@ export type IslandLanding =
   | { kind: "reshaped"; cells: Map<string, Cell>; anchor: Cell }
   /** The second pick-up: the branch has been treed outward from its way home.
    *  Asked for by the gesture, so no dialog. */
-  | { kind: "radiated"; cells: Map<string, Cell>; anchor: Cell }
   /** Translated as-is, except for the groups that would have landed on
    *  somebody; those moved aside, each to the nearest space that fits it
    *  whole. No dialog — nothing anyone built was lost. */
@@ -517,6 +516,14 @@ function firstClearCell(
  * In order: the shape where the hand is; the shape a cell or two aside; and
  * only then a reflow. A branch already in pieces skips straight to the reflow,
  * because its silhouette is not a shape anybody chose.
+ *
+ * **The five-second tidy no longer comes through here** (2026-10-17). It used to
+ * have a `radiateFrom` path that re-flowed the branch outward from its parent,
+ * and that path had already been unreachable for a day — the lab re-lays an
+ * armed branch and returns before it reaches this function. It is now
+ * `deferBranch`, which lays the branch in the map's own frame and defers to the
+ * master centre by distance. So this answers the plain drop and nothing else:
+ * carry a body, keep its shape, step the clashes aside.
  */
 export function placeIsland(
   occupancy: Occupancy,
@@ -527,31 +534,9 @@ export function placeIsland(
    *  against its own parent; without it the layout can only guess from the
    *  shape, and guessing is what grew the crab arms. */
   childrenOf?: (unitId: string) => readonly string[],
-  /**
-   * Tree the branch outward from this cell — where its own parent sits.
-   *
-   * **Only set when the gesture asked for it.** Greg, 2026-10-02: *"When a user
-   * first moves the group of nodes, the rearrange shouldn't happen — the block
-   * should move as-is, since this is predictable. If a user then picks up the
-   * governing node of that block within, say, 30s, and moves it within the
-   * nearest 4x4 grid of hexagons, then the rearrange function should kick in."*
-   *
-   * So the first drop keeps the shape, always; the second pick-up is the
-   * sentence "now tree yourself", and nothing is ever rearranged behind a
-   * hand that did not ask. The clock and the short distance live in the lab —
-   * see `RADIATE_WINDOW_MS` and `RADIATE_RINGS` — because this file has no
-   * clock and does not know where the hand has been.
-   */
-  radiateFrom?: Cell | null,
   /** What travels as one body when something has to move aside. A team,
    *  normally. Without it a clash is all-or-nothing, as it used to be. */
   groupOf?: (unitId: string) => string,
-  /**
-   * The atlas's own spacing, applied **only** when the gesture asks for a tidy —
-   * which is what `radiateFrom` means. A plain drop is never spaced: Law 0, the
-   * hand outranks the engine.
-   */
-  tidySpacing?: TidySpacing,
 ): IslandLanding {
   const anchor = members.get(anchorId);
   if (!anchor) return { kind: "no-room" };
@@ -574,20 +559,6 @@ export function placeIsland(
   };
 
   const wasWhole = isOnePatch(members.values());
-
-  // The gesture asked for a tree, so skip straight past "keep the silhouette".
-  if (radiateFrom) {
-    const seat = free(target)
-      ? target
-      : nearestFreeCell(occupancy, target, { ignore: moving });
-    if (seat) {
-      const treed = reflow(
-        occupancy, members, anchorId, seat, moving, childrenOf, radiateFrom,
-        tidySpacing,
-      );
-      if (treed) return { kind: "radiated", cells: treed, anchor: seat };
-    }
-  }
 
   /**
    * **Always try to move it as it is, whatever shape it is in.**

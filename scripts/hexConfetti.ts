@@ -116,7 +116,7 @@ for (const [label, target] of scenarios) {
     for (const m of branch) { const c = cells.get(m); if (c) members.set(m, c); }
     const landing = placeIsland(
       occupants, members, EVEREST, target,
-      (id) => tree.units.get(id)?.childIds ?? [], null,
+      (id) => tree.units.get(id)?.childIds ?? [],
       mode === "neither" ? undefined : groupOf,
     );
     const tag = `${label} · ${mode}`;

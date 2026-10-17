@@ -2868,6 +2868,137 @@ as a fault.
 
 ---
 
+## The hand and the centre (2026-10-17, later)
+
+Greg, having seen the absolute arcs land: *"master-centre should be the only node
+that drives the radial distance behaviour. Once a node is picked up and moved, it
+should not become its own master-centre in the same way. But there should be a
+relationship of sorts."*
+
+### What was in the way
+
+Three mechanisms decided where a dragged branch's children went, and one of them
+was already dead:
+
+1. **`relayBranch` laid the branch as a company of its own** — anchor at the
+   origin, its own arcs, its own ring floors, then translated under the hand.
+   Measured: picking up Everest Region re-laid its three business units
+   overlapping each other by **152°**, where the same branch laid in the map's
+   own frame overlaps by **nought**. That is the model Greg retired.
+2. **`placeIsland`'s `radiateFrom` path** re-flowed a branch outward from its
+   parent — and had been unreachable since the armed gesture started returning
+   early on its own shape. A whole third placer, deleted.
+3. **Tidy's phase two** turned each branch to face away from *where its chain
+   arrives*, by rigid rotation. See below.
+
+And one thing that made the fix possible at all: **the engine never saw the
+hand.** Hand placements are pasted over the layout afterwards, which is why the
+re-lay had to be a separate function with a model of its own.
+
+### The rule
+
+One number, from figures the engine already had:
+
+```
+deference δ = floors[depth of the node] / distance(hand, master centre)   capped at 1
+t(k)        = δ · min(1, k / taper)      k = rungs below the node in the hand
+```
+
+`floors` is Law 3's schedule, so there is no new constant and nothing to tune,
+and it scales from Sparrow Jam to Northwind untouched. `t(0) = 0` is Law 0. The
+two ends of the blend are both the engine's own: **the master centre's picture**
+is the calculated layout, and **the orderly chart** is `chart.ts`.
+
+**It settles at δ rather than climbing to 1, and that was a bug first.** The
+first version read `min(1, k · δ)`, so deference accumulated with depth and
+anything eight rungs down was fully back under the master centre however far the
+branch had been dragged — a test asking whether a far-dragged branch had become
+a chart found **2.5%** of it on the far side of the hand. Greg's three cases vary
+with distance, not with depth.
+
+### The chart is square, which a honeycomb is not supposed to allow
+
+Lattice directions are 60° apart, so the chart was going to be sheared. It need
+not be: on flat-top hexes `(+2, −1)` moves **purely sideways** in world space and
+`(0, +1)` **purely up and down**, so the two are at right angles and the chart is
+a proper right-angled chart. `rotateCell` turns it onto real cells with no
+rounding, so it always grows away from the master centre.
+
+**It charts places, not people.** A tidy tree's width grows with its leaves, so
+charting Northwind's biggest branch person by person would be some 2,000 cells
+across — twenty times the width of the whole company. People stay the crowd
+around their own node, which is Law 3's clause anyway. Even so **the chart of a
+1,258-unit branch is 863 cells wide against a map of radius 109**, and that is
+the honest objection to dragging a division to the edge. It is on the panel.
+
+### Measured, on every company, at seven settings
+
+`npm run hex:zoning` prints it. Northwind, picking up Everest Region (1,258
+units, rung 3, its floor 22, sitting 22 out on load; the clean load is 0 spacer
+breaches, 395/395 teams, 85% touching their family):
+
+| dropped | deference | teams in one piece | spacer | two on a cell | re-lay |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 11 out | 1.00 | 394/395 | 0 | 0 | 10ms |
+| 22 out | 1.00 | **395/395** | 0 | 0 | 8ms |
+| 33 out | 0.67 | 368/395 | 0 | 0 | 9ms |
+| 44 out | 0.50 | 382/395 | 0 | 0 | 7ms |
+| 66 out | 0.33 | 393/395 | 0 | 0 | 5ms |
+| 176 out | 0.13 | 394/395 | 0 | 0 | 4ms |
+| 440 out | 0.05 | 394/395 | 0 | 0 | 4ms |
+
+**Both ends are clean and the middle is where it costs something** — up to 27 of
+395 teams at δ ≈ 0.67, where every body is aimed between its chart place and its
+home one and bodies from opposite ends of the branch meet in the same ground.
+Aiming tidy at the branch puts them back. The same shape holds on the 1,000-person
+company (48/48 at both ends, 41/48 at the worst), on Digital Tailoring and on
+Sparrow Jam.
+
+**Law 0 above Law 4, visibly.** The node keeps the hand's cell even when that
+breaches a stranger's spacer — two or three breaches in the Aurora Team cases
+above — because where a hand puts something is not the engine's business to
+improve. The one thing that overrides the hand is Law 1: if somebody who is not
+moving is standing there, the node takes the nearest free cell and the caller is
+told (`held: false`).
+
+**Speed.** 10ms for the largest branch on the largest company, so the shape is
+re-laid as the hand moves rather than frozen when the gesture arms — which it has
+to be, because the whole point is that the answer depends on where you put it.
+Getting there took one wrong guess worth recording: the first version took 56ms,
+I assumed the string cell keys and changed them, and it measured 59ms. The cost
+was `spiral` building all 1,801 cells for each of 1,258 placements; walking ring
+by ring with an early return took it to 6.7ms. The integer key is worth a further
+1.1ms and stays, but it was not the fault.
+
+### Tidy's turn is retired where the master centre decides which way is out
+
+Phase two rotated each branch to face away from its own parent. With absolute
+arcs and deference both answering that question from the centre, it is a second
+opinion and the weaker one. Measured on Northwind, one tidy on a clean load:
+
+| | turning | not turning |
+| --- | ---: | ---: |
+| tidy takes | 6,855ms | **1,177ms** |
+| spacer breaches | 4 | **0** |
+| teams in one piece | 389/395 | **392/395** |
+| chain crossings | 149 → **124** | 149 → 138 |
+
+It buys 14 crossings of 149 and costs four breaches of Law 4, three bodies under
+Law 2 and **5.8× the time**. Law 5 is ranked last for this kind of trade. The
+atlas keeps it, unchanged — it has no floors and nothing to defer to.
+
+### What was not done, and why
+
+**The descendants are still stored as placements.** The plan was to commit only
+the anchor and let the layout re-derive the rest, which is what Law 0's tier
+table implies. It turns out not to matter: `deferBranch` is always handed the
+**calculated** layout rather than the arrangement pasted over it, so a second
+pick-up derives the answer afresh whatever is in the store. Routing on-load
+rendering through the driver — giving the engine the hand as an input — is a real
+improvement and a separate change.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

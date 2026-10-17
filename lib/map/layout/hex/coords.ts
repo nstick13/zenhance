@@ -221,6 +221,25 @@ export function ringArc(
   return out;
 }
 
+/** Rotate a cell `steps` sixths of a turn about `centre`.
+ *
+ *  In cube coordinates a sixth of a turn is a rotation of the three axes onto
+ *  each other, which in axial is `(q, r) → (-r, q + r)`. Doing it `steps` times
+ *  covers the whole hexagonal symmetry group, and every result is a real cell —
+ *  no rounding, no drift. */
+export function rotateCell(cell: Cell, centre: Cell, steps: number): Cell {
+  let q = cell.q - centre.q;
+  let r = cell.r - centre.r;
+  const turns = ((steps % 6) + 6) % 6;
+  for (let i = 0; i < turns; i++) {
+    const nq = -r;
+    const nr = q + r;
+    q = nq;
+    r = nr;
+  }
+  return { q: q + centre.q, r: r + centre.r };
+}
+
 /** Every cell within `radius` steps, innermost first. */
 export function spiral(centre: Cell, radius: number): Cell[] {
   const out: Cell[] = [{ ...centre }];

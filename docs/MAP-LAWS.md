@@ -84,6 +84,28 @@ placements are released and spacing is restored. Pins are not touched. The unit
 you aimed at keeps its cell — that is where your hand let go — and everything
 beneath it re-trees around it.
 
+**"Around it" is not "centred on it"** (2026-10-17). For a year the sentence
+above was implemented by laying the branch as *a company of its own*: the node
+in your hand became a second master centre, with its own arcs and its own ring
+floors, and the finished shape was carried under the hand. Greg: *"master-centre
+should be the only node that drives the radial distance behaviour. Once a node
+is picked up and moved, it should not become its own master-centre."*
+
+So a moved branch now **defers** to the one centre there is, in proportion to how
+far the hand took it from where its own rung belongs:
+
+> **deference = the ring floor of the node's own rung ÷ how far from the centre
+> the hand put it**, capped at 1.
+
+Put a node back inside its rung's floor and its branch goes back to the picture
+the master centre drew, with the hand's own cell kept — a wedge with its tip at
+your hand. Take it far out and the master centre stops being relevant: the
+branch becomes an orderly chart, growing away from the centre. Everything in
+between is in between. The law itself does not change: Law 0 still says the unit
+you aimed at keeps its cell, and it is the only cell in the branch the engine may
+not choose. The mechanism is `deferBranch` in `lib/map/layout/hex/defer.ts`, and
+the write-up is in [HEX-LAYOUT.md](HEX-LAYOUT.md) § The hand and the centre.
+
 This is what makes the laws survivable in use. A blanket "never touch a hand
 placement" would retire the tidy button after a dozen drags, which was Greg's
 own objection to the first draft: *"If we blanket state that we can't overwrite a

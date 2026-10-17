@@ -6,8 +6,6 @@
  */
 import { describe, expect, it } from "vitest";
 import { buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
-import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
-import { layoutTerritories } from "@/lib/map/layout/hex/territory";
 import {
   branchOf,
   dropOutcome,
@@ -343,21 +341,6 @@ describe("moving a whole island", () => {
     }
   });
 
-  /** The gesture that *does* gather is the second pick-up, and it still does. */
-  it("gathers a scattered family when the tidy-up gesture asks", () => {
-    const scattered = new Map([
-      ["sales", at(30, 0)], ["north", at(38, -4)], ["south", at(30, 6)],
-    ]);
-    const landing = placeIsland(
-      new Map(), scattered, "sales", at(50, 0),
-      (id) => (id === "sales" ? ["north", "south"] : []),
-      at(45, 0),
-    );
-    expect(landing.kind).toBe("radiated");
-    if (landing.kind === "no-room") return;
-    expect(isOnePatch(landing.cells.values())).toBe(true);
-  });
-
   it("seats a reflowed branch against its own parents, not in a crab", () => {
     // Greg, 2026-10-01: "it drew crab-like shapes as I moved it." A member used
     // to attach to whatever was already placed, however distant a relation.
@@ -381,72 +364,6 @@ describe("moving a whole island", () => {
       const who = occupancy.get(cellKey(cell));
       expect(who === undefined || !staying.has(who)).toBe(true);
     }
-  });
-});
-
-/**
- * Greg's "radiating" rule, 2026-10-02.
- *
- * *"if I drag a family group away from a shared parent, the highest-ranking
- * node in the dragged group should position itself closest to its parent,
- * regardless of how far that is. This should mean the connection line flows
- * freely from that node to the parent uninterrupted — like a leaf on a
- * branch."*
- *
- * The gesture that asks for it lives in the lab, because it is a clock and a
- * short hop and this file has neither. What is testable here is the shape the
- * request produces.
- */
-describe("treeing a branch away from its parent", () => {
-  const island = new Map([
-    ["sales", at(1, 0)],
-    ["north", at(2, 0)],
-    ["south", at(2, -1)],
-  ]);
-  const kids = (id: string) => tree.units.get(id)?.childIds ?? [];
-  /** The branch dropped far to the east; home is the company at the origin. */
-  const treed = placeIsland(new Map(), island, "sales", at(9, 0), kids, at(0, 0));
-
-  it("is a landing of its own, not a reshape, because the hand asked for it", () => {
-    expect(treed.kind).toBe("radiated");
-  });
-
-  it("puts the governing node nearest its parent, and nobody in front of it", () => {
-    if (treed.kind === "no-room") throw new Error("no landing");
-    const home = at(0, 0);
-    const anchor = treed.cells.get("sales")!;
-    const reach = hexDistance(anchor, home);
-    for (const [id, cell] of treed.cells) {
-      if (id === "sales") continue;
-      expect(hexDistance(cell, home)).toBeGreaterThan(reach);
-    }
-  });
-
-  it("leaves the way home open, so the chain can run straight", () => {
-    if (treed.kind === "no-room") throw new Error("no landing");
-    // Every cell on the straight line from the anchor back to the parent is
-    // free of the branch itself — which is the whole point of the rule.
-    const anchor = treed.cells.get("sales")!;
-    const occupied = new Set([...treed.cells.values()].map(cellKey));
-    const steps = hexDistance(anchor, at(0, 0));
-    for (let i = 1; i < steps; i++) {
-      const t = i / steps;
-      const q = Math.round(anchor.q + (0 - anchor.q) * t);
-      const r = Math.round(anchor.r + (0 - anchor.r) * t);
-      expect(occupied.has(cellKey({ q, r }))).toBe(false);
-    }
-  });
-
-  it("still seats everyone, and still seats them against their own parent", () => {
-    if (treed.kind === "no-room") throw new Error("no landing");
-    expect(treed.cells.size).toBe(3);
-    expect(hexDistance(treed.cells.get("north")!, treed.cells.get("sales")!)).toBe(1);
-    expect(hexDistance(treed.cells.get("south")!, treed.cells.get("sales")!)).toBe(1);
-  });
-
-  it("does nothing of the sort unless asked — a plain drop keeps its shape", () => {
-    const plain = placeIsland(new Map(), island, "sales", at(9, 0), kids);
-    expect(plain.kind).toBe("fits");
   });
 });
 
@@ -513,7 +430,7 @@ describe("moving a branch that is already an archipelago", () => {
     occupied.delete(cellKey(at(10, 0)));
     occupied.delete(cellKey(at(11, 0)));
     const landing = placeIsland(
-      occupied, island, "sales", at(10, 0), () => [], null, groupOf,
+      occupied, island, "sales", at(10, 0), () => [], groupOf,
     );
     expect(landing.kind).toBe("parted");
     if (landing.kind !== "parted") return;
@@ -578,155 +495,16 @@ describe("a clash steps one group aside and leaves the rest alone", () => {
   });
 });
 
-describe("Law 4 — the gap is one measure, read from both sides", () => {
-  /**
-   * Greg, 2026-10-14: *"the 5s placement feature bunches peer groups together —
-   * it does not observe any spacing rules."*
-   *
-   * It observed half of one. A unit checked that its *own* owed gap was clear
-   * and never that it was standing in somebody else's, so the unit owed the
-   * least decided every boundary it took part in — and a person is owed
-   * nothing. Measured on the 1,000-person company, one re-pickup of a big
-   * branch left 198 units squeezed against a clean load's 85; reading the gap
-   * from both sides brought that to 109.
-   */
-  const kids = (id: string) => (id === "sales" ? ["pip"] : []);
-
-  /** A division owed five clear tiles, parked on the branch's way out. */
-  const neighbour = new Map([[cellKey(at(14, 0)), "division"]]);
-  const owed = (id: string) => (id === "division" ? 5 : 0);
-  /** Nobody here is anybody's ancestor, so everyone is a stranger. */
-  const strangers = (a: string, b: string) => a === b;
-
-  const island = new Map([["sales", at(0, 0)], ["pip", at(1, 0)]]);
-  const landing = placeIsland(
-    neighbour, island, "sales", at(10, 0), kids, at(0, 0),
-    undefined, { clearFor: owed, isKin: strangers },
-  );
-
-  it("keeps a unit owed nothing out of a division's clear ground", () => {
-    if (landing.kind === "no-room") throw new Error("no landing");
-    // `pip` is owed nothing of its own. The division is owed five, and that
-    // is the measure between them.
-    expect(hexDistance(landing.cells.get("pip")!, at(14, 0))).toBeGreaterThan(5);
-  });
-
-  it("still seats the branch, rather than refusing when the gap is wide", () => {
-    expect(landing.kind).toBe("radiated");
-    if (landing.kind === "no-room") throw new Error("no landing");
-    expect(landing.cells.size).toBe(2);
-  });
-
-  it("without the layout's figures it only avoids overlapping, as a plain drop does", () => {
-    const plain = placeIsland(neighbour, island, "sales", at(10, 0), kids, at(0, 0));
-    if (plain.kind === "no-room") throw new Error("no landing");
-    // Law 0: where a hand puts something is not the engine's business to
-    // improve, so a drop with no tidy asked for is spaced by nothing.
-    expect(hexDistance(plain.cells.get("pip")!, at(14, 0))).toBeLessThanOrEqual(5);
-  });
-});
-
-describe("Law 2 — nobody is left stranded by a tidy", () => {
-  /**
-   * Greg, 2026-10-14: *"when moving a medium cluster, occasionally one node
-   * will get flung out, or we'll end up with something that looks like digital
-   * spaghetti in the connection lines."*
-   *
-   * **Lost is not the same as not touching**, and the distinction is the whole
-   * test. A unit owed clear ground is *meant* to sit out at that distance, so
-   * counting units that do not touch their family counts correct spacing as a
-   * fault — that mistake cost most of an evening, and every attempt to fix the
-   * search against it traded Greg's flung node for the bunching he reported the
-   * same morning. What is actually wrong is a unit sitting further out than its
-   * **own** clear ground explains, and `reflow` now fetches exactly those back.
-   *
-   * It runs on a real company because a hand-built fixture does not reproduce
-   * it: the first version of this test passed just as happily with the repair
-   * switched off, which is the only way to find out that a test is decorative.
-   */
-  const tree = buildOrbitalTree(buildDeepOrg("stranded", { people: 400, maxDepth: 6, seed: 5 }));
-  const laid = layoutTerritories(tree);
-  const owed = (id: string) => laid.spacedBy.get(id) ?? 0;
-  const depth = (id: string) => tree.units.get(id)?.depth ?? 0;
-  const isKin = (a: string, b: string): boolean => {
-    if (a === b) return true;
-    const hi = depth(a) > depth(b) ? b : a;
-    let lo = depth(a) > depth(b) ? a : b;
-    while (depth(lo) > depth(hi)) {
-      const up = tree.units.get(lo)?.parentId;
-      if (!up) return false;
-      lo = up;
-    }
-    return lo === hi;
-  };
-  const occupancy = new Map<string, string>();
-  for (const [id, c] of laid.cells) occupancy.set(cellKey(c), id);
-
-  /** The biggest branch that is not the whole company — what a hand grabs. */
-  const grabbed = [...tree.units.values()]
-    .filter((u) => u.parentId && u.parentId !== tree.rootId)
-    .map((u) => ({ u, size: branchOf(tree, u.id).size }))
-    .filter((c) => c.size >= 20 && c.size <= 200)
-    .sort((a, b) => b.size - a.size)[0];
-
-  /** The five-second gesture: put it down, pick it straight back up. */
-  const members = new Map<string, Cell>();
-  for (const id of branchOf(tree, grabbed.u.id)) {
-    const c = laid.cells.get(id);
-    if (c) members.set(id, c);
-  }
-  const landing = placeIsland(
-    occupancy, members, grabbed.u.id, laid.cells.get(grabbed.u.id)!,
-    (id) => tree.units.get(id)?.childIds ?? [],
-    laid.cells.get(grabbed.u.parentId!)!,
-    undefined, { clearFor: owed, isKin },
-  );
-
-  const strayed = () => {
-    if (landing.kind === "no-room") throw new Error("no landing");
-    const out: { id: string; away: number; owed: number }[] = [];
-    for (const [id, cell] of landing.cells) {
-      if (id === grabbed.u.id) continue; // the anchor is where the hand let go
-      const up = tree.units.get(id)?.parentId;
-      if (!up) continue;
-      const kin: Cell[] = [];
-      const pc = landing.cells.get(up) ?? laid.cells.get(up);
-      if (pc) kin.push(pc);
-      for (const sib of tree.units.get(up)?.childIds ?? []) {
-        if (sib === id) continue;
-        const c = landing.cells.get(sib) ?? laid.cells.get(sib);
-        if (c) kin.push(c);
-      }
-      if (!kin.length) continue;
-      const away = Math.min(...kin.map((k) => hexDistance(cell, k)));
-      if (away > owed(id) + 2) out.push({ id, away, owed: owed(id) });
-    }
-    return out;
-  };
-
-  it("has a branch worth testing", () => {
-    expect(grabbed.size).toBeGreaterThan(20);
-    expect(landing.kind).toBe("radiated");
-  });
-
-  it("leaves nobody further from their family than their own gap explains", () => {
-    const lost = strayed();
-    const names = lost.slice(0, 5)
-      .map((l) => `${tree.units.get(l.id)?.name}: ${l.away} away, owed ${l.owed}`).join("; ");
-    expect(lost.length, names).toBe(0);
-  });
-
-  it("still puts everybody somewhere, one to a cell", () => {
-    if (landing.kind === "no-room") throw new Error("no landing");
-    expect(landing.cells.size).toBe(members.size);
-    const seen = new Set<string>();
-    for (const [id, cell] of landing.cells) {
-      const key = cellKey(cell);
-      expect(seen.has(key), `two units on ${key}`).toBe(false);
-      seen.add(key);
-      const sitting = occupancy.get(key);
-      // Never on top of somebody outside the branch — Law 1.
-      expect(!sitting || members.has(sitting), `${id} landed on ${sitting}`).toBe(true);
-    }
-  });
-});
+/**
+ * **The five-second tidy's own tests have moved to `defer.test.ts`** (2026-10-17).
+ *
+ * Four blocks lived here and all four were about the gesture rather than about
+ * the plain drop: Greg's *"radiating"* rule of 2026-10-02, Law 4 read from both
+ * sides of a hand-placed branch, and Law 2 on a real company after a tidy. The
+ * mechanism they tested — `placeIsland`'s `radiateFrom` path, which re-flowed a
+ * branch outward from its parent — is gone, because a picked-up branch is now
+ * laid in the map's own frame by `deferBranch` and defers to the master centre
+ * by distance. The **properties** did not go anywhere: every one of them is
+ * asserted against the new mechanism, on the deep company rather than on a
+ * hand-built map of three cells, which is a stronger test than what was here.
+ */

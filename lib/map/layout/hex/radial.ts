@@ -352,6 +352,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   if (!root) {
     return {
       cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius: 0,
+      floors: [0],
       stats: { placed: 0, touchingParent: 0, depth: 0, tooClose: 0, unplaced: 0, strayed: 0 },
     };
   }
@@ -972,6 +973,16 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
 
   return {
     cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius,
+    /**
+     * **Where each rung belongs**, published because a hand needs it.
+     *
+     * It was private while the only thing that read it was the seater. A node
+     * the hand has moved has to know how far it has been taken from where its
+     * own rung belongs — that ratio is the whole of `deferBranch` — and the
+     * answer is this schedule, so it is part of what a layout says about a
+     * company rather than a local of the function that wrote it.
+     */
+    floors,
     stats: {
       placed: cells.size, touchingParent, depth, tooClose,
       unplaced: unplaced.length, strayed: strayed.length,

@@ -113,6 +113,9 @@ export type Allocation = {
   /** unit id → rungs of places beneath it. Nought for a team. What decides
    *  whether a unit is drawn a bubble. */
   tier?: ReadonlyMap<string, number>;
+  /** How near the master centre each rung may come, by depth — Law 3's floor
+   *  schedule. Empty under the atlas, which has no such thing. */
+  floors?: readonly number[];
   stats: {
     placed: number;
     /** Touching the parent or a sibling — the promise this layout makes. */
@@ -152,6 +155,18 @@ export type TerritoryLayout = {
   spacedBy: Map<string, number>;
   /** unit id → which of the six directions its subtree grows along. */
   facing: Map<string, number>;
+  /**
+   * **How near the master centre each rung may come**, indexed by depth.
+   *
+   * Law 3 since 2026-10-17: a unit at depth `d` may not come within `floors[d]`.
+   * The radial driver computes it from `leastApart` and nothing else; the atlas
+   * has no such schedule and returns an empty one.
+   *
+   * Published because the hand needs it — see `deferBranch`, where a moved
+   * node's deference to the master centre is its own rung's floor over the
+   * distance the hand took it.
+   */
+  floors: readonly number[];
   /**
    * unit id → how many rungs of *places* sit under it. Nought for a team, whose
    * children are people rather than regions; one for whatever holds teams.
@@ -625,6 +640,7 @@ export function layoutTerritories(
   if (!root) {
     return {
       cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius: 0,
+      floors: [],
       stats: { placed: 0, touchingParent: 0, depth: 0, tooClose: 0, unplaced: 0 },
     };
   }
@@ -876,6 +892,9 @@ export function layoutTerritories(
 
   return {
     cells, occupants, regions, steps, branchOf, spacedBy, facing, tier: tiers, radius,
+    /** The atlas packs each territory as the shape of its contents and has no
+     *  schedule of radii at all, so there is nothing honest to put here. */
+    floors: [],
     stats: { placed: cells.size, touchingParent, depth, tooClose, unplaced: unplaced.length },
   };
 }
@@ -1153,6 +1172,7 @@ export function allocateByTerritory(
     radius: laid.radius,
     spacedBy: laid.spacedBy,
     tier: laid.tier,
+    floors: laid.floors,
     stats: {
       strayed: laid.stats.strayed,
       placed: laid.stats.placed,

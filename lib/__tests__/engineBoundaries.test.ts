@@ -71,6 +71,11 @@ const ENGINE_OF: Record<string, Engine> = {
   "lib/map/layout/hex/compass.ts": "layout",
   "lib/map/layout/hex/radial.ts": "layout",
   "lib/map/layout/hex/bubbles.ts": "layout",
+  // The hand and the master centre: how much a branch somebody moved still
+  // answers to the company's own centre, and the orderly chart it becomes when
+  // it stops. See docs/MAP-LAWS.md Law 0 and Law 3.
+  "lib/map/layout/hex/defer.ts": "layout",
+  "lib/map/layout/hex/chart.ts": "layout",
 
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
   "lib/map/camera/focus.ts": "camera",

@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
+import { TAPER_RUNGS, deferBranch } from "@/lib/map/layout/hex/defer";
 import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
@@ -402,28 +403,16 @@ export default function HexLab({
    */
   const compass = useMemo(() => headings(tree), [tree]);
 
-  const tidySpacing = useMemo(() => {
-    const spacedBy = baseAllocation.spacedBy;
-    if (!spacedBy) return undefined;
-    const depthOf = (id: string) => tree.units.get(id)?.depth ?? 0;
-    return {
-      clearFor: (id: string) => spacedBy.get(id) ?? 0,
-      // Kin is a unit's own line of ancestors and its own descendants — the gap
-      // separates bodies, and a body sits inside its parent's ground. Walking
-      // up from the deeper of the two costs at most the depth of the company.
-      isKin: (a: string, b: string) => {
-        if (a === b) return true;
-        const hi = depthOf(a) > depthOf(b) ? b : a;
-        let lo = depthOf(a) > depthOf(b) ? a : b;
-        while (depthOf(lo) > depthOf(hi)) {
-          const up = tree.units.get(lo)?.parentId;
-          if (!up) return false;
-          lo = up;
-        }
-        return lo === hi;
-      },
-    };
-  }, [baseAllocation, tree]);
+  /**
+   * **How many rungs the deference takes to arrive**, when a node is put back
+   * where its own rung belongs. One makes the wedge as pointy as it can be —
+   * the node in your hand, then its children already back where the master
+   * centre had them. Larger carries the hand's influence further down the
+   * branch. A dial because the only way to settle how abrupt it should look is
+   * to look at it; see `TAPER_RUNGS`.
+   */
+  const [taper, setTaper] = useState(TAPER_RUNGS);
+
 
   /** The allocation with every hand placement applied on top. Reparenting does
    *  **not** re-allocate: Greg's rule is that a reparented tile stays exactly
@@ -685,17 +674,20 @@ export default function HexLab({
      *  straight back up inside the window. */
     armedAt: Cell | null;
     /**
-     * **The branch's own shape, worked out once when the gesture armed.**
+     * **How much the branch is answering to the master centre, where it is now.**
      *
-     * The atlas re-lays the branch — measure every family, reserve its ground,
-     * then place — which is the only way a team survives the journey. That
-     * costs about a third of a second on a thousand people and this runs on
-     * every movement of the pointer, so it is done **once**: a branch's shape
-     * does not change as the hand moves, only where it lands. Carrying it after
-     * that is a translation, measured at 1ms against `reflow`'s 256ms *per
-     * move*. Offsets from the anchor; null when the gesture is not armed.
+     * This was the branch's own shape, worked out **once** when the gesture
+     * armed — which it had to be, because re-laying it cost a third of a second
+     * and this runs as the pointer moves. A shape that can be computed once is
+     * also a shape that cannot depend on where you put it, and that is exactly
+     * what Greg asked for on 2026-10-17: *"the further away from master-centre
+     * the user moves it, the less it observes the layout behaviour defined by
+     * master-centre."* So it is re-laid as the hand moves, which `deferBranch`
+     * costs 7ms for the largest branch on the largest company, and what is kept
+     * here is the one number that came out of it — for the panel, and so the
+     * drawing can say which of the three it is showing.
      */
-    shape: Map<string, Cell> | null;
+    deference: number | null;
     heldOver: string | null;
     holdSince: number;
   };
@@ -739,6 +731,58 @@ export default function HexLab({
     }
     setTidyStage(0); // a hand has been in it again
   }, []);
+
+  /**
+   * **One place decides where a picked-up branch's children go.**
+   *
+   * There were three. The atlas re-laid the branch as a company of its own and
+   * `restBranch` translated the finished body under the hand; `placeIsland` had
+   * a `radiateFrom` path that re-flowed the branch itself and was already
+   * unreachable from this gesture; and the radial driver had inherited the
+   * first of those, which is what made a picked-up node *its own master centre*
+   * — the behaviour Greg retired on 2026-10-17.
+   *
+   * Under the radial driver it is now `deferBranch`: the branch is laid in the
+   * **map's own frame**, the node stays exactly where the hand let go, and how
+   * much its descendants answer to the master centre falls off with how far the
+   * hand has taken it from where its rung belongs. The atlas keeps the old path
+   * unchanged — it has no ring floors and so nothing to defer to.
+   */
+  const reLay = useCallback(
+    (unitId: string, at: Cell): { cells: Map<string, Cell>; deference: number | null } | null => {
+      if (driver === "radial") {
+        const laid = deferBranch({
+          tree, anchorId: unitId, hand: at,
+          // The master centre's own answer, never the arrangement pasted over
+          // it: deference is measured against what the engine would do, so a
+          // second pick-up of the same node is derived afresh rather than from
+          // the last drop.
+          calculated: baseAllocation.cells,
+          occupants: allocation.occupants,
+          floors: baseAllocation.floors ?? [],
+          tier: baseAllocation.tier,
+          people: peopleIds,
+          taper,
+        });
+        return { cells: laid.cells, deference: laid.deference };
+      }
+      const home = tree.units.get(unitId)?.parentId ?? null;
+      const homeCell = home ? hexScene?.hex.cells.get(home) ?? null : null;
+      const grabbed = hexScene?.hex.cells.get(unitId);
+      const shape = relayBranch({
+        tree, anchorId: unitId,
+        homeward: homeCell && grabbed
+          ? { q: homeCell.q - grabbed.q, r: homeCell.r - grabbed.r }
+          : null,
+        leads: leadIds, people: peopleIds, compass,
+      });
+      if (!shape) return null;
+      const moving = new Set(branchOf(tree, unitId));
+      const rested = restBranch(shape.cells, at, allocation.occupants, moving);
+      return rested ? { cells: rested.cells, deference: null } : null;
+    },
+    [driver, tree, baseAllocation, allocation, peopleIds, leadIds, compass, hexScene, taper],
+  );
 
   // --- drawing -------------------------------------------------------------
 
@@ -1268,21 +1312,8 @@ export default function HexLab({
        * person exactly one tile from their node. The company's own compass goes
        * with it so the branch keeps facing the way it always faced.
        */
-      const parentOfHit = tree.units.get(hit)?.parentId ?? null;
-      const homeCell = parentOfHit ? hexScene.hex.cells.get(parentOfHit) ?? null : null;
       const grabbedAt = hexScene.hex.cells.get(hit)!;
-      const relaid = armed
-        ? relayBranch({
-            tree, anchorId: hit,
-            homeward: homeCell
-              ? { q: homeCell.q - grabbedAt.q, r: homeCell.r - grabbedAt.r }
-              : null,
-            leads: leadIds, people: peopleIds, compass,
-            // The branch comes back laid out the way the map it is on was laid
-            // out — and under radial that brings the spacer rule with it.
-            driver, sideways,
-          })
-        : null;
+      const relaid = armed ? reLay(hit, grabbedAt) : null;
       /**
        * **An armed pick-up shows its answer immediately.**
        *
@@ -1294,17 +1325,14 @@ export default function HexLab({
        * landing and refused the drop — *"there is nowhere free nearby"* — on a
        * map that was nearly empty.
        */
-      const restedNow = relaid
-        ? restBranch(relaid.cells, grabbedAt, allocation.occupants, new Set(members.keys()))
-        : null;
       setDrag({
         unitId: hit, members, grabbed: grabbedAt,
         from: world, world, target: grabbedAt,
-        landing: restedNow?.cells ?? null,
-        anchor: restedNow?.anchor ?? null,
-        reshaped: false, radiated: Boolean(restedNow),
+        landing: relaid?.cells ?? null,
+        anchor: relaid?.cells.get(hit) ?? null,
+        reshaped: false, radiated: Boolean(relaid),
         armedAt: armed,
-        shape: relaid?.cells ?? null,
+        deference: relaid?.deference ?? null,
         heldOver: null, holdAt: world, holdSince: performance.now(),
       });
       return;
@@ -1339,10 +1367,6 @@ export default function HexLab({
       //
       // The gesture only counts while the branch is still near where it was —
       // carry it across the map and it is a move again, not a request to tree.
-      const parentId = tree.units.get(drag.unitId)?.parentId ?? null;
-      const parentCell = parentId ? hexScene.hex.cells.get(parentId) ?? null : null;
-      const treeIt = drag.armedAt && parentCell ? parentCell : null;
-
       /**
        * **The armed gesture carries a shape; a plain drag carries a silhouette.**
        *
@@ -1354,14 +1378,15 @@ export default function HexLab({
        * before convenience, and the opposite of what the old path did, which
        * was to take the branch apart one unit at a time until the pieces fitted.
        */
-      if (drag.shape) {
-        const rested = restBranch(drag.shape, target, allocation.occupants, new Set(drag.members.keys()));
+      if (drag.armedAt) {
+        const relaid = reLay(drag.unitId, target);
         setDrag({
           ...drag, world, target,
-          landing: rested?.cells ?? null,
-          anchor: rested?.anchor ?? null,
+          landing: relaid?.cells ?? null,
+          anchor: relaid?.cells.get(drag.unitId) ?? null,
           reshaped: false,
-          radiated: Boolean(rested),
+          radiated: Boolean(relaid),
+          deference: relaid?.deference ?? null,
           heldOver: null,
           holdAt: world, holdSince: performance.now(),
         });
@@ -1371,7 +1396,6 @@ export default function HexLab({
       const landing = placeIsland(
         allocation.occupants, drag.members, drag.unitId, target,
         (id) => tree.units.get(id)?.childIds ?? [],
-        treeIt,
         // **`groupOf` stays; `gapBetween` goes.** Law 4: the layout owns
         // spacing and the drop path holds no rule of its own. `gapBetween` was
         // the drop path's second, tighter rule — kinship rungs capped at
@@ -1386,8 +1410,6 @@ export default function HexLab({
         // from 224/248 to about 80 — the confetti itself. A draft rule set
         // proposed deleting both; see `app/lab/hex/confetti.test.ts`.
         groupOf,
-        // Only consulted when the gesture asked for a tree — `treeIt` above.
-        tidySpacing,
       );
       const over = allocation.occupants.get(cellKey(target)) ?? null;
       const stillOver = over && over === drag.heldOver;
@@ -1399,7 +1421,7 @@ export default function HexLab({
         // A tree the hand asked for is not one of those, and nor is a landing
         // that kept every group's shape and only stepped the clashes aside.
         reshaped: landing.kind === "reshaped",
-        radiated: landing.kind === "radiated" || landing.kind === "parted",
+        radiated: landing.kind === "parted",
         heldOver: over && !drag.members.has(over) ? over : null,
         holdAt: stillOver && stillHolding ? drag.holdAt : world,
         holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
@@ -1802,6 +1824,23 @@ export default function HexLab({
           <Btn small onClick={() => setSideways("forbid")} active={mode === "hex" && driver === "radial" && sideways === "forbid"} disabled={mode !== "hex" || driver !== "radial"}>strictly out</Btn>
         </Row>
         <Row>
+          {/* **How quickly a moved branch hands itself back to the master
+              centre.** One rung is the pointiest wedge there is: the node where
+              your hand left it, its children already back where the centre had
+              them. Two and three carry the hand's influence further down. The
+              deference itself is not a setting — it is how far you drop it. */}
+          <span style={{ color: "#6b7280" }}>wedge</span>
+          {[1, 2, 3].map((n) => (
+            <Btn
+              key={n} small onClick={() => setTaper(n)}
+              active={mode === "hex" && driver === "radial" && taper === n}
+              disabled={mode !== "hex" || driver !== "radial"}
+            >
+              {n} rung{n > 1 ? "s" : ""}
+            </Btn>
+          ))}
+        </Row>
+        <Row>
           <span style={{ color: "#6b7280" }}>cell</span>
           {(["roomy", "tight"] as HexDensity[]).map((d) => (
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
@@ -1875,6 +1914,27 @@ export default function HexLab({
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
         <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {/**
+          * **What the branch in your hand is answering to**, while you hold it.
+          *
+          * The whole of the gesture is one number and there is no way to guess
+          * it from the screen, so it is on the panel: at 1.00 the branch is
+          * going back to the picture the master centre drew, and at nought it is
+          * an orderly chart pointing away from the centre. The chart's size is
+          * there too, because a chart of a large branch is *wide* — far wider
+          * than the radial picture it replaces — and that is the honest
+          * objection to dragging a division out to the edge.
+          */}
+        {drag?.deference !== null && drag?.deference !== undefined && (
+          <Small suppressHydrationWarning style={{ color: "#0f766e" }}>
+            deference <b>{drag.deference.toFixed(2)}</b> —{" "}
+            {drag.deference > 0.9
+              ? "going back to where the master centre had it"
+              : drag.deference > 0.4
+                ? "part way between the centre's picture and a chart"
+                : "an orderly chart, pointing away from the centre"}
+          </Small>
+        )}
         {scatter && (
           <>
             <Small suppressHydrationWarning>

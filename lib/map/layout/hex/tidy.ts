@@ -51,26 +51,17 @@ import {
   hexDistance,
   neighbours,
   ring,
+  rotateCell,
 } from "@/lib/map/layout/hex/coords";
 
-/** Rotate a cell `steps` sixths of a turn about `centre`.
- *
- *  In cube coordinates a sixth of a turn is a rotation of the three axes onto
- *  each other, which in axial is `(q, r) → (-r, q + r)`. Doing it `steps` times
- *  covers the whole hexagonal symmetry group, and every result is a real cell —
- *  no rounding, no drift. */
-export function rotateCell(cell: Cell, centre: Cell, steps: number): Cell {
-  let q = cell.q - centre.q;
-  let r = cell.r - centre.r;
-  const turns = ((steps % 6) + 6) % 6;
-  for (let i = 0; i < turns; i++) {
-    const nq = -r;
-    const nr = q + r;
-    q = nq;
-    r = nr;
-  }
-  return { q: q + centre.q, r: r + centre.r };
-}
+/**
+ * **Moved to `coords.ts` on 2026-10-17**, where the rest of the lattice's own
+ * geometry lives: the orderly chart a dragged branch turns into needs it too,
+ * and a second engine importing it out of tidy would say that turning a shape
+ * is tidy's business. Re-exported here because this is where it has been read
+ * from since 2026-09-30.
+ */
+export { rotateCell } from "@/lib/map/layout/hex/coords";
 
 const EPS = 1e-9;
 const near = (a: Point, b: Point) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
@@ -497,7 +488,39 @@ export function neaten(
   //
   // Top-down: a parent settles which way it faces before its children do, so a
   // child is turning against ground that has stopped moving.
-  const order = [...tree.units.values()]
+  /**
+   * **Retired where the master centre decides which way is out** (2026-10-17).
+   *
+   * This phase turns each branch to face away from *where its own chain
+   * arrives* — a rigid rotation about the branch's anchor, by sixths of a turn.
+   * It was the best available answer while a branch's shape was its own
+   * business. It is not any more: since the absolute arcs landed, which way a
+   * unit faces is its share of the master centre's circle, and a picked-up
+   * branch defers to the master centre by distance (`defer.ts`). A rigid turn
+   * applied on top of either is a second opinion about the same question, and
+   * it is the weaker one — it cannot see the centre at all.
+   *
+   * Measured on Northwind with people as the smallest unit, one tidy on a clean
+   * radial load:
+   *
+   * | | turning | not turning |
+   * | --- | ---: | ---: |
+   * | tidy takes | 6,855ms | **1,177ms** |
+   * | branches turned | 401 | 0 |
+   * | spacer breaches | 4 | **0** |
+   * | teams in one piece | 389/395 | **392/395** |
+   * | chain crossings | 149 → **124** | 149 → 138 |
+   *
+   * So it buys 14 crossings of the 149 and costs four breaches of Law 4, three
+   * bodies under Law 2 and **5.8× the time**. Law 5 is ranked last for exactly
+   * this kind of trade: *lines follow, they never lead.*
+   *
+   * **The atlas keeps it**, unchanged. It has no ring floors, no absolute arcs
+   * and nothing to defer to, so for that driver this phase is still the only
+   * thing that points a branch anywhere — and `people` being handed in is
+   * precisely the signal that the radial driver laid this map.
+   */
+  const order = people ? [] : [...tree.units.values()]
     .filter((u) => u.childIds.length > 0 && u.parentId)
     .sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id));
 

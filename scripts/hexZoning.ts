@@ -11,6 +11,8 @@ import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import { allocateByTerritory } from "@/lib/map/layout/hex/territory";
 import { spacerRule } from "@/lib/map/layout/hex/spacing";
 import { cellKey, hexDistance, neighbours, worldAngle, type Cell } from "@/lib/map/layout/hex/coords";
+import { deferBranch } from "@/lib/map/layout/hex/defer";
+import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory";
 
 const ORIGIN: Cell = { q: 0, r: 0 };
 const DEG = 180 / Math.PI;
@@ -25,6 +27,78 @@ export type Laid = {
   unplaced: number;
   strayed: number;
 };
+
+/**
+ * **What a dragged branch costs, across the dial.**
+ *
+ * Greg, 2026-10-17: a node the hand moves should answer to the master centre in
+ * proportion to how near it is put to it, and become an orderly chart when it is
+ * taken far away. There is no way to see from a screenshot whether that broke a
+ * law, so the same four figures are counted after a drop as on a clean load:
+ * Law 1 (two units on a cell), Law 4 (the spacer), Law 2 (teams in one piece)
+ * and how many units still touch their family.
+ */
+export function drag(key: CompanyKey, strata: Strata, branchName?: string) {
+  const { org, groups, leads } = buildLabCompany(key, strata);
+  const tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
+  const people = new Set(groups.map(([id]) => id));
+  const laid = allocate(tree, {
+    leads: new Set(leads), people, driver: "radial", sideways: "forbid",
+  });
+  const anchor = branchName
+    ? [...tree.units.values()].find((u) => u.name === branchName)
+    : [...tree.units.values()]
+      .filter((u) => u.parentId && u.childIds.length > 1 && laid.cells.has(u.id))
+      .sort((a, b) => b.totalSeats - a.totalSeats)[0];
+  if (!anchor) return;
+  const floors = laid.floors ?? [];
+  const belongs = floors[Math.min(anchor.depth, floors.length - 1)] ?? 1;
+  const home = laid.cells.get(anchor.id)!;
+  const clean: Laid = {
+    tree, people, cells: laid.cells, ms: 0, radius: laid.radius,
+    placed: laid.stats.placed, unplaced: 0, strayed: 0,
+  };
+  const was = teamsWhole(clean);
+  console.log(
+    `\n${COMPANIES[key].label} · ${strata} — picking up ${anchor.name}`
+    + ` (rung ${anchor.depth}, its floor ${belongs}, on load ${hexDistance(home, ORIGIN)} out)`
+    + `\n  on load: spacer ${breaches(clean)}, teams ${was.whole}/${was.teams},`
+    + ` family ${pct(touchingFamily(clean).touching, touchingFamily(clean).children)}`,
+  );
+  for (const factor of [0.5, 1, 1.5, 2, 3, 8, 20]) {
+    const out = Math.max(1, Math.round(belongs * factor));
+    const k = out / Math.max(1, hexDistance(home, ORIGIN));
+    const hand: Cell = { q: Math.round(home.q * k), r: Math.round(home.r * k) };
+    const t0 = performance.now();
+    const moved = deferBranch({
+      tree, anchorId: anchor.id, hand, calculated: laid.cells,
+      occupants: laid.occupants, floors, tier: laid.tier, people,
+    });
+    const ms = performance.now() - t0;
+    const after = new Map(laid.cells);
+    for (const [id, cell] of moved.cells) after.set(id, cell);
+    const now: Laid = { ...clean, cells: after };
+    const t = teamsWhole(now);
+    const f = touchingFamily(now);
+    let doubled = 0;
+    const seen = new Set<string>();
+    for (const cell of after.values()) {
+      const key = cellKey(cell);
+      if (seen.has(key)) doubled++; else seen.add(key);
+    }
+    console.log(
+      `  dropped ${String(hexDistance(hand, ORIGIN)).padStart(4)} out`
+      + `  deference ${moved.deference.toFixed(2)}`
+      + `  ${ms.toFixed(0)}ms`.padEnd(8)
+      + `  hand kept ${moved.held ? "yes" : "no "}`
+      + `  chart ${String(moved.chart.width).padStart(4)}×${moved.chart.rows}`
+      + `  two-on-a-cell ${doubled}`
+      + `  spacer ${String(breaches(now)).padStart(2)}`
+      + `  teams ${t.whole}/${t.teams}`.padEnd(14)
+      + `  family ${pct(f.touching, f.children)}`,
+    );
+  }
+}
 
 export function lay(key: CompanyKey, strata: Strata, opts: Record<string, unknown> = {}): Laid {
   const { org, groups, leads } = buildLabCompany(key, strata);
@@ -248,4 +322,9 @@ if (process.argv[1]?.endsWith("hexZoning.ts")) {
   }
   console.log("");
   granite();
+  console.log("\n--- the hand: what a dragged branch answers to ---");
+  drag("northwind", "people", "Everest Region");
+  drag("northwind", "people", "Aurora Team 241");
+  drag("medium", "people");
+  drag("small", "people");
 }

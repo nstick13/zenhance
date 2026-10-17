@@ -127,11 +127,7 @@ describe("a dragged branch landing on occupied ground", () => {
     const landing: IslandLanding = placeIsland(
       new Map(base.occupants), members, anchorId, target,
       (id) => tree.units.get(id)?.childIds ?? [],
-      null,
       opts.withGroups ? groupOf : undefined,
-      // `gapBetween` is deliberately never passed — the drop path's own second
-      // spacing rule, and removing it measures as a small improvement.
-      undefined,
     );
     const cells = new Map(base.cells);
     if (landing.kind !== "no-room") for (const [id, c] of landing.cells) cells.set(id, c);
