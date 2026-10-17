@@ -133,14 +133,44 @@ whatever rung you grabbed. Not a flat team id.
 
 ## Law 3 — Children sit outward
 
-> **The engine may not place a team, or anything above a team, anywhere that is
-> not strictly further from the centre than its own parent — except where that
-> would conflict with Laws 1 or 2.**
+> **The engine may not place a team, or anything above a team, within the ring
+> floor its own rung is owed — and beyond that floor it may sit anywhere its arc
+> allows. Nearer the centre than its own parent is a cost, not a wall.**
 >
 > **An individual person is pushed outward, never forbidden from the near side.**
 
 The split is deliberate: a team lead belongs at their team's door, on the home
 side, so for a person this is a cost and not a wall.
+
+**Changed 2026-10-17 (evening), from "strictly further from the centre than its
+own parent".** Greg: *"rather than prevent loopbacks, make the space occupied by
+master-centre particularly unappealing the further away a descendant is…
+immediate children of master-centre won't have any problem being close to it;
+grandchildren will want to be a little more distant, and so on."*
+
+So the wall moved from *the parent* to *the centre*. A unit at depth `d` may not
+come within `floors[d]`, and the schedule is not a number anybody chose: each
+rung clears the one inside it by `leastApart` — Law 4's own figure, read from
+both sides — so it widens by itself as the spacer widens with the rung.
+
+**Why this is not a weakening.** The old rule and the arcs were measured from
+different places, and that was the fault: a unit whose slice pointed sideways had
+to climb twenty rings *round* the centre before any cell in its slice was further
+out than its parent. With the arcs absolute (below), outward is always available
+inside a unit's own wedge, so the parent-relative reading survives as a **ranked
+cost** that nothing has to pay: measured on all five fixtures and both demo
+companies, **nought places sit level with or nearer the centre than their own
+parent**, the same as under the wall. The floor is what removes the climb; the
+cost is what keeps the number at nought.
+
+**And the arcs are absolute, which is the other half of this law.** A unit's
+bearing and its *width* are both its share of the master centre's circle, cut
+from its parent's share before a single cell is placed — never read back off
+where a unit landed. Measured on Northwind, Granite Division's three children
+each spread over 171–219° as seen from Granite and overlapped one another by
+171–177°; now they overlap by **nought**. See
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § Absolute arcs, which also records what the tail
+of the connection lines pays for it.
 
 **Changed 2026-10-17, from "equal distance is allowed; nearer is not".** Greg had
 been saying the map did not look radial and that chains looped back, while the
@@ -227,6 +257,34 @@ is one crowd with clear ground round it; and a human touches a structural node
 only if it is theirs. It lives in `spacing.ts` as `spacerRule`, and the radial
 driver and `tidy` both read it from there. Measured: **nought breaches on every
 company**, against 0.6%–100% under the atlas, which does not hold to it.
+
+**The ring widens with the rung, since 2026-10-17.** Greg: *"a bit more space to
+be added around, say, every n rungs up from team level. This pushes extra
+geographical distance as they get progressively more dissimilar. 'Space' in this
+case is another outline of one complete hexagon space — just like teams get."*
+
+Same device, repeated: a team keeps its one hexagon, and every `RUNGS_PER_HEX`
+rungs above team level adds another. `gapFor(tier)` is the ring, `leastApart(a,
+b)` is how far apart two things must sit — one more than the wider of the two
+rings they keep, read from both sides, because a gap belongs to the pair. Nothing
+below team level changes.
+
+He left the number open — *"number TBC"* — and **2 is what the sweep says**, on
+Northwind with people as the smallest unit:
+
+| rungs per hexagon | radius | spacer breaches | teams in one piece |
+| --- | ---: | ---: | ---: |
+| 1 | 132 | 0 | 391/395 |
+| **2** | **109** | **0** | **395/395** |
+| 3 | 104 | 0 | 391/395 |
+| 4 | 94 | **2** | 393/395 |
+| off | 122 | 0 | 393/395 |
+
+Wider is not simply more spacious: at 4 the ground runs out and the spacer is
+breached twice, and with the widening **off** the map is *wider* than at 2, not
+narrower, because teams with no clear ring crowd each other and their people are
+pushed outward to find room. The full table, both strata and all four companies,
+is in [HEX-LAYOUT.md](HEX-LAYOUT.md) § Room by rung.
 
 **Where the spacer sits in the order, decided 2026-10-16.** Greg: *"that spacer
 rule trumps everything except our 0th law — nothing outweighs the hand."* It is

@@ -1,6 +1,6 @@
 {
   "name": "zenhance",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -18,7 +18,8 @@
     "db:companies": "tsx lib/db/companies.ts",
     "db:northwind": "tsx lib/db/northwind.ts",
     "test": "vitest run",
-    "hex:confetti": "tsx scripts/hexConfetti.ts"
+    "hex:confetti": "tsx scripts/hexConfetti.ts",
+    "hex:zoning": "tsx scripts/hexZoning.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.2",

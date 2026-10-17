@@ -37,10 +37,14 @@ import {
   inradius,
   neighbours,
   ring,
+  ringArc,
+  ringCell,
   spiral,
   spiralSize,
   worldToCell,
+  worldAngle,
   axialRoute,
+  type Cell,
 } from "@/lib/map/layout/hex/coords";
 import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory";
 import {
@@ -131,6 +135,99 @@ describe("the lattice", () => {
     const pts = corners({ q: 2, r: -1 }, size);
     expect(pts).toHaveLength(6);
     for (const p of pts) expect(Math.hypot(p.x - centre.x, p.y - centre.y)).toBeCloseTo(size, 6);
+  });
+});
+
+/**
+ * **Finding a way into a ring instead of sweeping it.**
+ *
+ * `ringArc` is what makes the radial driver's absolute placement affordable: a
+ * ring 120 out holds 720 cells, every spacer question is a spiral of its own,
+ * and the placer only ever wants the handful of cells lying in one direction.
+ *
+ * These are not tidiness tests. **A narrowing that quietly changes which cells
+ * are eligible is what defeated the first attempt at absolute arcs**
+ * (HEX-LAYOUT.md, 2026-10-17): it bought a twentyfold speedup and put 1,249
+ * spacer breaches back, and it took a day to connect the two. So the fast answer
+ * is held to the slow one here, exhaustively, rather than spot-checked.
+ */
+describe("the cells of a ring that lie in one direction", () => {
+  const ORIGIN: Cell = { q: 0, r: 0 };
+  const TURN = 2 * Math.PI;
+  const off = (a: number, b: number) => {
+    const d = Math.abs(a - b) % TURN;
+    return d > Math.PI ? TURN - d : d;
+  };
+
+  it("hands back the same cells as walking the ring, one at a time", () => {
+    for (let radius = 0; radius <= 40; radius++) {
+      const walked = ring(ORIGIN, radius);
+      for (let i = 0; i < walked.length; i++) {
+        expect(ringCell(ORIGIN, radius, i)).toEqual(walked[i]);
+      }
+    }
+  });
+
+  it("is monotone round the ring, which is the fact the bisection rests on", () => {
+    // Measured as how far round from the first cell, not as the bearing itself:
+    // the last cell of every ring is due west, which `atan2` reports as +π
+    // rather than −π, so the raw bearing has exactly one seam and the turn from
+    // the first cell has none.
+    for (let radius = 1; radius <= 120; radius++) {
+      const first = worldAngle(ORIGIN, ringCell(ORIGIN, radius, 0), 1);
+      const round = (i: number) => {
+        const a = worldAngle(ORIGIN, ringCell(ORIGIN, radius, i), 1);
+        return (((first - a) % TURN) + TURN) % TURN;
+      };
+      for (let i = 1; i < 6 * radius; i++) expect(round(i)).toBeGreaterThan(round(i - 1));
+    }
+  });
+
+  it("returns exactly the cells the brute-force filter would, over 11,520 arcs", () => {
+    let checks = 0;
+    for (let radius = 1; radius <= 60; radius++) {
+      for (let b = 0; b < 24; b++) {
+        // Offset off the lattice's own angles on purpose: a bearing that lands
+        // exactly on a cell is the easy case.
+        const bearing = -Math.PI + (b / 24) * TURN + 0.013;
+        for (const half of [0.001, 0.02, 0.1, 0.4, 1, 2, 3, Math.PI]) {
+          checks++;
+          const want = ring(ORIGIN, radius)
+            .filter((c) => off(worldAngle(ORIGIN, c, 1), bearing) <= half)
+            .map(cellKey)
+            .sort();
+          const got = ringArc(ORIGIN, radius, bearing, half)
+            .filter((g) => g.inside)
+            .map((g) => cellKey(g.cell))
+            .sort();
+          expect(got).toEqual(want);
+        }
+      }
+    }
+    expect(checks).toBe(11520);
+  });
+
+  it("gives them nearest the centre line first, so a caller can stop early", () => {
+    for (let radius = 1; radius <= 30; radius += 3) {
+      const got = ringArc(ORIGIN, radius, 0.37, 1.1);
+      for (let i = 1; i < got.length; i++) {
+        expect(got[i].off).toBeGreaterThanOrEqual(got[i - 1].off);
+      }
+    }
+  });
+
+  it("hands back the single nearest cell, flagged, when the arc holds none", () => {
+    // An arc narrower than the gap between two cells contains neither of them.
+    // The caller has to be able to tell that from an arc that is simply empty,
+    // because a unit with a sliver of arc still has to be seated somewhere.
+    for (let radius = 1; radius <= 30; radius++) {
+      const got = ringArc(ORIGIN, radius, 0.37, 1e-6);
+      expect(got).toHaveLength(1);
+      expect(got[0].inside).toBe(false);
+      expect(hexDistance(ORIGIN, got[0].cell)).toBe(radius);
+      const best = Math.min(...ring(ORIGIN, radius).map((c) => off(worldAngle(ORIGIN, c, 1), 0.37)));
+      expect(got[0].off).toBeCloseTo(best, 9);
+    }
   });
 });
 

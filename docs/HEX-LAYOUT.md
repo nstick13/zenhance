@@ -2756,6 +2756,118 @@ the arcs cannot pay for.
 
 ---
 
+## Absolute arcs, landed (2026-10-17, night)
+
+The second attempt at the rewrite above. **It holds, and the numbers account for
+themselves.** `npx tsx scripts/hexZoning.ts` prints every figure here.
+
+### The headline: three clouds became three wedges
+
+Granite Division's three children, measured as the angular spread of each
+branch's whole subtree as seen from Granite, and how much of that spread they
+share:
+
+| | span of each branch | overlap between them |
+| --- | ---: | ---: |
+| relative arcs (what shipped) | 171°, 184°, 219° | **171°, 171°, 177°** |
+| absolute arcs | 186°, 77°, 67° | **0°, 0°, 0°** |
+
+That is Greg's *"prevented from spacing out radially to take their own zoning"*,
+answered. Everest's own span stays wide because Everest **is** 43% of the company
+and Granite sits inside its sector; what matters is that no two of them share
+any ground at all.
+
+### Everything else, Northwind with people as the smallest unit
+
+| | relative (was) | absolute (now) |
+| --- | ---: | ---: |
+| spacer breaches, every company, both strata | 0 | **0** |
+| teams in one piece | 332/395 | **395/395** |
+| rungs at team level and above going round the centre | 0/394 | **0/394** |
+| units touching their family | 81.0% | **84.7%** |
+| units seated outside their own arc (`strayed`) | 0 | **0** |
+| layout | 77ms | **52ms** |
+| radius | 101 | 109 |
+| median step home | 1 | 1 |
+| mean step home | 2.35 | **2.28** |
+| 99th percentile step home | 18 | 24 |
+| longest step home | 32 | **51** |
+
+Teams in one piece is the one to read twice: **every team on the company is now a
+single crowd**, where 63 were in pieces before. And it is faster than what it
+replaces, not slower — the honest reason being that a unit hugging its own family
+inside its wedge walks fewer rings than one aiming at a wedge's centre line.
+
+**The tail of the connection lines is what it costs**, and it is the only figure
+that went the wrong way. Where a company is top-heavy — Northwind's root has one
+child holding 2,955 of 2,957 units, whose own child holds 2,811 — a dominant
+branch is handed almost the whole circle, so its two or three children fan right
+round it and one of them can end up on the far side of the master centre. The
+median and the mean are unchanged or better; the longest line went 32 cells to
+51. Law 5 ranks lines last and this is what that ranking is for.
+
+### What was built
+
+1. **Absolute arcs.** The root owns the circle; every unit cuts **its own**
+   interval among its place children in proportion to subtree weight, with the
+   `kin` gap between them; a child keeps that interval and hands sub-intervals
+   down. Computed in a pass of its own **before any cell is chosen**, which is
+   the proof rather than the tidiness: a function of the tree cannot depend on
+   where anything landed. The biggest child is laid in the middle of its
+   parent's arc and the rest alternate outward, so the longest line belongs to
+   the smallest branch — that alone took teams in one piece from 391 to 395.
+2. **A ring floor by depth**, replacing "strictly further out than your parent",
+   with the parent-relative rule kept as a ranked cost. See MAP-LAWS Law 3.
+3. **`gapFor` and `leastApart` wired up** — the spacer widened by rung, and the
+   same `leastApart` used for the gap between two cells, for the step between
+   two rungs, and for the room a crowd needs. Law 4 is now one function with
+   three callers rather than three numbers.
+
+### The four things the first attempt learnt, and what each cost here
+
+- **A place must never be seated where its own people cannot stand.** Room is
+  asked as a **flood fill** over ground that is both empty and legal for a
+  member of the crowd, bounded by the crowd's size. Counting free cells in a
+  disc instead — the obvious version — reads healthy on ground split by a
+  stranger's territory, and left teams in one piece at 196 of 395.
+- **Asking the spacer is the entire cost.** `ringArc` in `coords.ts` enters a
+  ring by bisection instead of sweeping it, which is exact rather than
+  approximate: a ring is convex about its centre, so the cells inside an arc are
+  one contiguous run of indices. It is held to the brute-force filter over
+  **11,520 arcs** in `hex.test.ts`, because the first attempt's narrowing
+  silently changed which cells were eligible and put 1,249 breaches back.
+- **People stay seated relative to their team.** Two seaters, deliberately: the
+  doorstep one did not change at all.
+- **Both drivers still work.** The atlas is untouched; `sideways`, `kin` and
+  `thicken` all still do what they did.
+
+### The mistake that cost the afternoon, and is worth not repeating
+
+With the arcs absolute, a unit's cell no longer depends on where its parent
+landed, so the walk was rewritten **rung by rung** — which is true, and not the
+point. It seats every node of a rung cheek by jowl and *then* sends each one's
+crowd looking for ground that has already gone: 53% of people ended up off their
+own parent's doorstep, teams in one piece fell to 202 of 395, **and every single
+node was legally placed with the spacer count still reading nought.** Laying each
+branch whole, crowd first, took it to 391 with nothing else changed. Order is a
+placement rule like any other.
+
+### Room by rung — the sweep behind `RUNGS_PER_HEX = 2`
+
+Greg left the number open. Every setting holds the spacer at nought except 4,
+where the ground runs out on the largest company; the table is in MAP-LAWS Law 4
+and the sweep is `rungs` on `RadialOptions`, so he can be shown any of them.
+
+### Not verified
+
+**Not looked at in a browser.** The figures above are from the engines, which are
+pure, and they are all `scripts/hexZoning.ts` reports; nobody has yet opened
+`/lab/hex` on the three demo companies and looked at this. That is the next
+thing, and it is the thing that decides whether the longer connection lines read
+as a fault.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

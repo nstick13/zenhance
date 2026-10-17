@@ -270,7 +270,11 @@ export function leastApart(
   b: string,
   mayTouch: (x: string, y: string) => boolean,
   tierOf: (id: string) => number,
+  /** Rungs per extra hexagon, so a caller sweeping `RUNGS_PER_HEX` asks one
+   *  question rather than two. Greg left the number open; the sweep is in
+   *  HEX-LAYOUT.md § Room by rung. */
+  rungs = RUNGS_PER_HEX,
 ): number {
   if (mayTouch(a, b)) return 1;
-  return 1 + Math.max(gapFor(tierOf(a)), gapFor(tierOf(b)));
+  return 1 + Math.max(gapFor(tierOf(a), rungs), gapFor(tierOf(b), rungs));
 }

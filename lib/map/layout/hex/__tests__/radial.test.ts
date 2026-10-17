@@ -279,12 +279,47 @@ describe("what it trades against the atlas", () => {
     expect(radial.radius).toBeLessThan(atlas.radius);
   });
 
-  it("keeps the way home short, which is what a band is for", () => {
+  /**
+   * **The typical way home, and the longest one — which went the other way on
+   * 2026-10-17 and is the cost of absolute arcs.**
+   *
+   * This asserted the *longest* step home and radial won it, 13 cells against
+   * the atlas's 19, because every child was seated in a band around its own
+   * parent and so could not be far from it. Absolute arcs give that up: a unit
+   * takes its share of the master centre's circle, and where a company is
+   * top-heavy — this fixture's root has one child holding 1,271 of 1,273 units
+   * — the share handed to a dominant branch is almost the whole circle, so its
+   * own two or three children fan right round it. Measured on this fixture, the
+   * longest step home is 32 cells against the atlas's 19; on Northwind with
+   * people it is 51 against the relative driver's 32.
+   *
+   * What it buys, on the same two fixtures: the *median* step home is unchanged
+   * at 2 cells, the mean is shorter (3.6 against the relative driver's 4.8), the
+   * map is **half the width** (radius 35 against 72), and sibling branches stop
+   * sharing one space — 171° of overlap down to nought. So the trade is a longer
+   * tail on the lines against zoning that works, and the laws rank the lines
+   * last: *lines follow, they never lead.*
+   *
+   * Asserted as the median plus a bound on the tail, which is what is actually
+   * true, rather than as a comparison this driver no longer wins.
+   */
+  it("keeps the typical way home as short as the atlas's, and says what the tail costs", () => {
     const tree = treeOf(1000, 8);
     const radial = allocateByTerritory(tree, { driver: "radial" });
     const atlas = allocateByTerritory(tree, { driver: "atlas" });
-    const worst = (steps: ReadonlyMap<string, number>) => Math.max(...steps.values());
-    expect(worst(radial.steps)).toBeLessThan(worst(atlas.steps));
+    const median = (steps: ReadonlyMap<string, number>) => {
+      const xs = [...steps.values()].sort((a, b) => a - b);
+      return xs[Math.floor(xs.length / 2)];
+    };
+    const mean = (steps: ReadonlyMap<string, number>) => {
+      const xs = [...steps.values()];
+      return xs.reduce((a, b) => a + b, 0) / xs.length;
+    };
+    expect(median(radial.steps)).toBeLessThanOrEqual(median(atlas.steps));
+    expect(mean(radial.steps)).toBeLessThan(mean(atlas.steps) * 2);
+    // The tail is the cost, and it is bounded rather than ignored: a step home
+    // longer than the map's own radius would mean a line across the company.
+    expect(Math.max(...radial.steps.values())).toBeLessThanOrEqual(radial.radius);
   });
 
   it("is reached through the same one entry point, whichever driver runs", () => {
@@ -497,9 +532,24 @@ describe("likeness and proximity", () => {
       .filter(([, xs]) => xs.length >= 5)
       .sort((a, b) => a[0] - b[0]);
     expect(rungs.length).toBeGreaterThan(4);
+    /**
+     * **Rising, with one dip allowed at the saturated end.**
+     *
+     * Measured on this fixture: 3.6 cells apart at one step on the tree, rising
+     * cleanly to 50.7 at eleven, then 49.1 at twelve — the most distant cousins
+     * there are, 344 pairs of 13,000, on a map whose whole diameter is about 70.
+     * Once a pair is as far apart as the map allows, one more rung of tree
+     * distance has nowhere to put them, so the last two rungs sit within 3% of
+     * each other and their order is noise. Asserted with one inversion allowed
+     * for the same reason the ragged-rings test allows one, and the figures are
+     * here so a real regression is not mistaken for this.
+     */
+    let back = 0;
     for (let i = 1; i < rungs.length; i++) {
-      expect(mean(rungs[i][1])).toBeGreaterThanOrEqual(mean(rungs[i - 1][1]));
+      if (mean(rungs[i][1]) < mean(rungs[i - 1][1])) back++;
     }
+    expect(back).toBeLessThanOrEqual(1);
+    expect(mean(rungs.at(-1)![1])).toBeGreaterThan(mean(rungs[0][1]) * 5);
   });
 });
 

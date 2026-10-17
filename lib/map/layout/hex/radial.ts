@@ -99,15 +99,18 @@ import type { OrbitalTree, UnitNode } from "@/lib/map/layout/model";
 import {
   type Cell,
   cellKey,
-  neighbours,
   hexDistance,
+  neighbours,
   ring,
-  spiral,
+  ringArc,
   worldAngle,
 } from "@/lib/map/layout/hex/coords";
 import {
   MAX_HALO,
   PLACE_SIZE,
+  RUNGS_PER_HEX,
+  gapFor,
+  leastApart,
   leastGapFor,
   spacerRule,
   spacingFor,
@@ -270,6 +273,18 @@ export type RadialOptions = {
    * the default is in HEX-LAYOUT.md § Separating siblings.
    */
   thicken?: number;
+  /**
+   * **Rungs above team level per extra hexagon of clearance** — `RUNGS_PER_HEX`
+   * in `spacing.ts`, which is the default and the one this is read from.
+   *
+   * Greg, 2026-10-17, asked for the spacer to widen with the rung and left the
+   * number open: *"a bit more space to be added around, say, every n rungs up
+   * from team level… number TBC."* It is an option here so the sweep behind the
+   * default can be run without editing the engine, and so he can be shown what
+   * each setting looks like. Large enough and it is off: every rung keeps the one
+   * hexagon it always had.
+   */
+  rungs?: number;
 };
 
 /**
@@ -287,6 +302,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const thicken = options.thicken ?? DEFAULT_THICKEN;
   const sideways = options.sideways ?? DEFAULT_SIDEWAYS;
   const kin = options.kin ?? DEFAULT_KIN;
+  const rungs = options.rungs ?? RUNGS_PER_HEX;
 
   /**
    * **The spacer rule** (Greg, 2026-10-16).
@@ -318,7 +334,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
    * A human's team is their nearest structural ancestor, which needs no new data:
    * the `people` set already says who is a human, and the tree says the rest.
    */
-  const { mayTouch } = spacerRule(tree, people);
+  const { mayTouch, teamFor } = spacerRule(tree, people);
 
   const cells = new Map<string, Cell>();
   const occupants = new Map<string, string>();
@@ -402,117 +418,424 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   };
   measure(root);
 
-  // --- pass two: place, from the root down ---------------------------------
+  const ORIGIN: Cell = { q: 0, r: 0 };
+
+  /**
+   * **What counts as a place**, which decides who gets a wedge of the map and a
+   * ring floor, and who sits at their family's doorstep.
+   *
+   * A person is never a place however many people report to them, and neither is
+   * a structural node holding fewer than `place` units: a clear hexagon round
+   * something that small buys nothing visual, and a wedge of the map even less.
+   * Both sit tight against their family instead, which is `PLACE_SIZE`'s own
+   * reasoning in `spacing.ts`.
+   */
+  const isPlace = (unit: UnitNode): boolean =>
+    !people.has(unit.id) && (demands.get(unit.id)?.weight ?? 1) >= place;
+  const tierOf = (id: string): number => demands.get(id)?.tier ?? 0;
+  /** Law 4, the only way this file is allowed to ask how far apart two things
+   *  sit. `rungs` is threaded through so the lab can sweep it. */
+  const apartOf = (a: string, b: string): number => leastApart(a, b, mayTouch, tierOf, rungs);
+
+  // --- pass two: the ring floors, one schedule for the whole company -------
+
+  /**
+   * **How near the master centre a rung may come** (Greg, 2026-10-17).
+   *
+   * *"Rather than prevent loopbacks, make the space occupied by master-centre
+   * particularly unappealing the further away a descendant is… immediate
+   * children of master-centre won't have any problem being close to it;
+   * grandchildren will want to be a little more distant, and so on."*
+   *
+   * So Law 3 is no longer *"strictly further out than your own parent"*. A unit
+   * at depth `d` may not come within `floors[d]` of the centre, and beyond that
+   * it may sit anywhere its arc allows. That is the difference between a wall
+   * and a cost, and it is what removes the **sideways climb**: under the old
+   * rule a unit whose slice pointed sideways had to walk twenty rings round the
+   * centre before any cell in it was further out than its parent, because the
+   * slice and the law were measured from different places. A unit past its floor
+   * can move freely at its own radius without breaking anything.
+   *
+   * **Each rung clears the one inside it, and the figure is `spacing.ts`'s.**
+   * `leastApart` is the one rule for how far apart two things sit, read from both
+   * sides; asked of a unit on this rung and a unit on the one inside it, it gives
+   * the step between their radii. So the schedule is not a number chosen here —
+   * it is Law 4 applied radially, which is why it widens by itself as `gapFor`
+   * widens with the rung.
+   */
+  const deepestPlace = (() => {
+    let d = 0;
+    for (const unit of tree.units.values()) {
+      if (isPlace(unit)) d = Math.max(d, unit.depth);
+    }
+    return d;
+  })();
+  /** The widest-ringed place on each rung, which is the one the next rung out
+   *  has to clear. A rung with no places of its own borrows the one inside it. */
+  const widestOnRung: string[] = [];
+  for (let d = 0; d <= deepestPlace; d++) {
+    let pick: string | null = null;
+    for (const unit of tree.units.values()) {
+      if (unit.depth !== d || !isPlace(unit)) continue;
+      if (!pick || gapFor(tierOf(unit.id), rungs) > gapFor(tierOf(pick), rungs)) pick = unit.id;
+    }
+    widestOnRung.push(pick ?? widestOnRung[d - 1] ?? root.id);
+  }
+  const floors: number[] = [0];
+  for (let d = 1; d <= deepestPlace; d++) {
+    floors.push(floors[d - 1] + apartOf(widestOnRung[d - 1], widestOnRung[d]));
+  }
+  const floorAt = (d: number): number => floors[Math.min(Math.max(0, d), floors.length - 1)] ?? 0;
+
+  // --- pass three: the arcs, absolute, before a single cell is chosen ------
+
+  /**
+   * **A unit's arc is its share of the root's circle, not a bearing read off
+   * where its parent happened to land.**
+   *
+   * This is the whole of the 2026-10-17 rewrite. The driver used to hand a child
+   * `worldAngle(parent, child)` — the direction it *actually* went — as the
+   * centre of its own arc, so every rung re-based on wherever the last one fell
+   * and over six rungs a branch wrapped right round its parent. Measured on
+   * Northwind, Granite Division's three children each spread over 171–219° as
+   * seen from Granite and overlapped each other by 171–177°: three clouds
+   * occupying one space rather than three wedges, which is Greg's *"landlocked
+   * areas of one or two teams that are from one branch, then another is on the
+   * other side of the map"*.
+   *
+   * The fix is the compass's own idea — *an arc is an absolute bearing, so it
+   * cannot accumulate* — applied to **width** as well as to direction. The root
+   * owns the circle; every unit cuts **its own** interval among its children in
+   * proportion to how much of the company hangs beneath each, with the `kin` gap
+   * between places; a child keeps that interval and hands sub-intervals of it
+   * down. Nothing is ever derived from a placement, so there is nothing to
+   * accumulate and a branch is a wedge of the map by construction.
+   *
+   * It is computed here, in a pass of its own, **before any cell is chosen** —
+   * which is not tidiness but the proof: a function of the tree alone cannot
+   * depend on where anything landed.
+   */
+  type Wedge = {
+    /** The bearing from the master centre this unit's share is centred on. */
+    centre: number;
+    /** How far either side of it the unit and its descendants may spread. */
+    half: number;
+    /** The ring its children start from: their floor, plus any `thicken`. */
+    ring: number;
+  };
+  const wedges = new Map<string, Wedge>();
+  const rootBearing = options.bearing ?? 0;
+  const rootHalf = (options.arc ?? FULL_TURN) / 2;
+
+  const fan = (unit: UnitNode) => {
+    const own = wedges.get(unit.id)!;
+    const kids = inGrammarOrder(unit).filter(isPlace);
+    if (!kids.length) return;
+    const demand = demands.get(unit.id)!;
+
+    /**
+     * **When the children do not fit, the band gets thicker.**
+     *
+     * Which is what Greg's *torus* is, and the right place for the pressure to
+     * go: the same angle buys more cells further out, so moving a crowded rung
+     * one ring out is how it finds room without anybody leaving their family or
+     * their bearing. Only the places are asked, because they are the only
+     * children whose ring this moves — a person stands at the door whatever
+     * happens, which is Law 3. The sweep behind the default of nought is in
+     * HEX-LAYOUT.md § Separating siblings.
+     */
+    let ring = Math.max(1, floorAt(unit.depth + 1));
+    const fits = (R: number) =>
+      kids.reduce((sum, kid) => {
+        const kd = demands.get(kid.id)!;
+        const blob = ringsFor(kd.weight);
+        const owed = Math.min(maxGap, Math.max(leastGapFor(demand.tier), spacingFor(blob)));
+        return sum + Math.min(ARC, 2 * (blob + owed / 2 + 0.5) / Math.max(1, R + blob));
+      }, 0) <= own.half * 2;
+    while (ring < floorAt(unit.depth + 1) + thicken && !fits(ring)) ring++;
+
+    /**
+     * **The breathing room between one branch and the next, as an angle.**
+     * Greg, 2026-10-17: *"give family groupings breathing room of, say, 3–5
+     * spacing tiles around the total area of the family unit."* A gap of `kin`
+     * tiles at radius `R` is `kin / 6R` of a turn, because a ring `R` out holds
+     * `6R` cells — so the family's footprint never has to be packed to know how
+     * much room to leave beside it. Scaled back if the air would eat more than
+     * half the arc, because the children come first.
+     */
+    let gap = kids.length > 1 ? (kin / Math.max(1, 6 * ring)) * FULL_TURN : 0;
+    const width = own.half * 2;
+    if (gap * (kids.length - 1) > width / 2) {
+      gap = width / 2 / Math.max(1, kids.length - 1);
+    }
+    const share = width - gap * (kids.length - 1);
+    let total = 0;
+    for (const kid of kids) total += demands.get(kid.id)!.weight;
+
+    /**
+     * **The biggest branch continues in its parent's own direction.**
+     *
+     * The shares are the shares whatever order they are laid in, so this costs
+     * nothing and is not a second rule — it is which end of the arc each child
+     * is given. Laid plainly in grammar order the *largest* branch ends up
+     * against one edge of its parent's arc and its parent against the other,
+     * which is the longest line on the map attached to the heaviest thing on it.
+     * Alternating outward from the middle puts the heaviest child on its
+     * parent's own bearing and sends the small ones to the edges, so what is far
+     * from its parent is what there is least of.
+     */
+    const spread: UnitNode[] = [];
+    kids.forEach((kid, i) => { if (i % 2 === 1) spread.unshift(kid); else spread.push(kid); });
+    let edge = own.centre - own.half;
+    for (const kid of spread) {
+      const span = share * (demands.get(kid.id)!.weight / Math.max(1, total));
+      wedges.set(kid.id, { centre: edge + span / 2, half: span / 2, ring });
+      edge += span + gap;
+    }
+    // Recursed in grammar order rather than in the order they sit, so the
+    // picture does not depend on which way round a rung was laid out.
+    for (const kid of kids) fan(kid);
+  };
+  wedges.set(root.id, { centre: rootBearing, half: rootHalf, ring: 0 });
+  fan(root);
+
+  // --- pass four: place, rung by rung from the centre out ------------------
 
   let radius = 0;
   let touchingParent = 0;
   let depth = 0;
-  /** Every cell anybody stands on or has had reserved, so Law 1 is a lookup. */
+  /** Every cell anybody stands on, so Law 1 is a lookup. */
   const taken = new Set<string>();
+  /**
+   * **Who keeps a clear ring over this cell**, for the cells more than one step
+   * from their owner.
+   *
+   * The spacer used to be one hexagon for everybody, so asking *may anyone next
+   * to this cell object* meant looking at six neighbours. Now it widens by rung
+   * — `gapFor` — and a tier-5 division keeps three hexagons, which would mean
+   * sweeping a spiral of 36 cells round every candidate for every unit. Stamping
+   * the wide rings once, when their owner is seated, turns the question back into
+   * a lookup: a candidate consults its own ring (cheap, because almost every
+   * unit is a person who keeps one hexagon) and then this map for anybody whose
+   * ring reaches further than its own.
+   */
+  const halo = new Map<string, string[]>();
 
   /**
-   * **Which cell of this band falls in this slice.**
+   * **Is this cell too close to somebody who may not have it?**
    *
-   * Walk the band's rings outward from the parent's node. On each ring keep the
-   * free cells whose bearing from the parent lies inside the slice, and take the
-   * one nearest the slice's centre line. Nothing on this ring in this slice means
-   * the band thickens by one and the question is asked again — which is the whole
-   * of "a rung is a band, not a ring", and the only search in the file.
-   *
-   * **Why a free-cell check and not disjoint slices alone.** Sibling slices do
-   * not overlap, so siblings cannot collide. Cousins can: a slice is measured
-   * from its own parent's node, and a wedge grown from a child's centre can lean
-   * outside the slice its parent was given. Enforcing Law 1 with one occupancy
-   * set costs a hash lookup and makes the law impossible to break, which is what
-   * "no exception clause" has to mean in code. Whether bodies stay whole (Law 2)
-   * is then *measured* rather than asserted — the house rule, after a statistic
-   * that measured the rule rather than the map.
+   * One predicate, `leastApart` from `spacing.ts`, asked in two directions: over
+   * the rings this unit keeps, and over the rings anybody else keeps that reach
+   * this cell. Both readings are needed because a gap belongs to the *pair* —
+   * which is the whole reason Law 4 states the spacer as what may touch what
+   * rather than as a distance one side can ask for.
    */
-  const ORIGIN: Cell = { q: 0, r: 0 };
+  const barred = (cell: Cell, who: string): boolean => {
+    const mine = gapFor(tierOf(who), rungs);
+    for (let k = 1; k <= mine; k++) {
+      for (const near of ring(cell, k)) {
+        const sitting = occupants.get(cellKey(near));
+        if (sitting !== undefined && sitting !== who && k < apartOf(who, sitting)) return true;
+      }
+    }
+    for (const id of halo.get(cellKey(cell)) ?? []) {
+      if (id === who) continue;
+      const at = cells.get(id);
+      if (at && hexDistance(cell, at) < apartOf(who, id)) return true;
+    }
+    return false;
+  };
 
-  const seat = (
+  /**
+   * **Could this place's own people stand here?** Law 2, and the single most
+   * expensive thing to get wrong in this rewrite: the first attempt seated
+   * places on the best cell for the *node* and cost 260 of 395 teams their
+   * integrity, because a node can be perfectly placed in ground that has no room
+   * for the crowd that belongs to it. So the crowd is counted before the cell is
+   * accepted — free cells within the rings a body that size needs, which is the
+   * same `ringsFor` the rest of the file measures bodies with.
+   */
+  const crowd = new Map<string, string[]>();
+  for (const id of people) {
+    const team = teamFor(id);
+    if (!team) continue;
+    const had = crowd.get(team);
+    if (had) had.push(id); else crowd.set(team, [id]);
+  }
+  /**
+   * **Room is connected free ground, not a count of free cells.**
+   *
+   * The first version counted how many cells inside `ringsFor(crowd)` rings were
+   * untaken, which is the wrong question twice over: cells scattered either side
+   * of a stranger's territory are not somewhere a crowd can stand, and a cell a
+   * teammate may not legally enter is not free to them at all. It read healthy
+   * on ground that broke the team, and teams in one piece sat at 196 of 395.
+   *
+   * So the question is asked the way Law 2 is *measured*: flood out from the
+   * candidate over ground that is both empty and legal for a member of this
+   * crowd, and stop as soon as there is enough of it. Any member will do as the
+   * one to ask — the spacer treats a crowd identically, since every one of them
+   * has this node as their team — and the fill is bounded by the crowd's own
+   * size, so it costs about as much as seating them will.
+   */
+  const roomFor = (cell: Cell, who: string): boolean => {
+    const members = crowd.get(who);
+    if (!members || members.length === 0) return true;
+    const need = members.length;
+    const any = members[0];
+    const seen = new Set<string>([cellKey(cell)]);
+    const stack: Cell[] = [cell];
+    let free = 0;
+    while (stack.length) {
+      const at = stack.pop()!;
+      for (const near of neighbours(at)) {
+        const key = cellKey(near);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (taken.has(key)) continue;
+        if (barred(near, any)) continue;
+        free++;
+        if (free >= need) return true;
+        stack.push(near);
+      }
+    }
+    return false;
+  };
+
+  /**
+   * **A bearing from the master centre, a distance from the master centre** —
+   * the honest polar placer this driver has been approximating.
+   *
+   * It replaces a search for *"which cell of a ring around my parent falls in a
+   * slice measured from my parent"*. The two cannot both be true of one
+   * function, which is why this is a rewrite rather than a patch, and why the
+   * first attempt at patching it came apart.
+   *
+   * Rings outward from the unit's floor, and on each ring **only the cells its
+   * own arc contains** — found by bisection, not by sweeping. That matters more
+   * than it sounds: a ring 120 out holds 720 cells, every spacer question is a
+   * spiral of its own, and asking all of them ran the largest company to 23
+   * seconds. `ringArc` narrows first and is held to the brute-force filter by a
+   * test, because the first attempt's narrowing *changed which cells were
+   * eligible* and quietly put 1,249 spacer breaches back.
+   *
+   * The ranking, worst term first:
+   *
+   *  - **nearer the centre than its own parent** — Law 3's old wording, kept as
+   *    a cost rather than a wall. The floor is the wall now. A cell that fails
+   *    this is only ever taken when the whole reach holds nothing better, which
+   *    is the law's own *"except where that would conflict with Laws 1 or 2"*.
+   *  - **no room for its own crowd** — Law 2.
+   *  - **somebody's spacer** — Law 4.
+   *  - **outside its own arc** — a preference, and the reason it is the mildest
+   *    term: an arc narrower than one cell of the ring contains no cell at all,
+   *    and a unit that stepped half a cell out of a sliver has not strayed.
+   */
+  const seatOut = (
+    who: string,
+    wedge: Wedge,
+    parentCell: Cell | null,
+    at: number,
+  ): { cell: Cell; strayed: boolean } | null => {
+    const fromOut = parentCell ? hexDistance(parentCell, ORIGIN) : 0;
+    const start = Math.max(1, at, sideways === "forbid" ? fromOut + 1 : fromOut);
+    let fallback: { cell: Cell; rank: number; near: number } | null = null;
+    for (let R = start; R <= start + BAND_REACH; R++) {
+      let best: { cell: Cell; near: number } | null = null;
+      for (const candidate of ringArc(ORIGIN, R, wedge.centre, wedge.half)) {
+        const key = cellKey(candidate.cell);
+        if (taken.has(key)) continue;
+        const inward = parentCell
+          ? (sideways === "forbid" ? R <= fromOut : R < fromOut)
+          : false;
+        const rank = (inward ? 8 : 0)
+          + (roomFor(candidate.cell, who) ? 0 : 4)
+          + (barred(candidate.cell, who) ? 2 : 0)
+          + (candidate.inside ? 0 : 1);
+        /**
+         * **The wedge says which way; the family says where in it.**
+         *
+         * Among the cells its arc allows, a unit takes the one nearest its own
+         * parent rather than the one nearest its arc's centre line. The arc is
+         * what does the zoning and it is unaffected — every sibling has a
+         * different arc, so nothing can cross — while centring on the line
+         * instead put a wide branch's children up to a third of a turn round
+         * from the node they report to: the longest step home went 18 cells to
+         * 32 on the 1,000-person company, and Law 5 says a line follows what
+         * the structure already did rather than being the thing that paid.
+         */
+        const near = parentCell ? hexDistance(candidate.cell, parentCell) : candidate.off;
+        if (!fallback || rank < fallback.rank
+          || (rank === fallback.rank && near < fallback.near)) {
+          fallback = { cell: candidate.cell, rank, near };
+        }
+        if (rank < 2 && (!best || near < best.near)) best = { cell: candidate.cell, near };
+      }
+      if (best) return { cell: best.cell, strayed: false };
+    }
+    /** Below the floor rather than nowhere: Law 1 says no unit may be left
+     *  without a cell, and Law 2 says a crowd stays whole, so when the arc and
+     *  the floor between them have nothing to offer the best of the rest wins
+     *  and is counted. */
+    if (fallback) return { cell: fallback.cell, strayed: true };
+    /** Nothing free in the arc for the whole reach. Rather than leave a unit
+     *  without a cell, take any ground round its parent — Law 1 has no exception
+     *  clause, and a ragged edge that is counted beats a unit that is gone. */
+    const anywhere = parentCell
+      ? seatNear(parentCell, who, worldAngle(ORIGIN, parentCell, 1), Math.PI)
+      : null;
+    return anywhere ? { cell: anywhere.cell, strayed: true } : null;
+  };
+
+  /**
+   * **A person stands at their team's door, and that is measured from the team.**
+   *
+   * Law 3 is about places. *"An individual person is pushed outward, never
+   * forbidden from the near side"* — and when the outward push reached people on
+   * 2026-10-16 it tore 188 of 395 teams apart, so this seater is deliberately
+   * the one that did not change: rings outward from the parent's own cell, a
+   * slice measured as a bearing from the parent, the near side ranked rather
+   * than gated. A team is one crowd pressed against its node, which is what
+   * makes it read as one thing.
+   *
+   * It takes the small structural nodes too — anything holding fewer than
+   * `place` units. A clear hexagon round a thing that small buys nothing visual,
+   * so it sits tight against its family where it belongs, and it is too small to
+   * need a wedge of the map.
+   */
+  function seatNear(
     from: Cell,
-    firstBand: number,
+    who: string,
     centre: number,
     half: number,
-    /** The unit being seated, for the spacer rule. */
-    who: string,
-    /** True for a place, which Law 3 forbids the near side to outright. */
-    gateInward: boolean,
     /**
-     * Cells this seating may use although they are reserved.
-     *
-     * The parent's clear ground exists to keep *other* territories out, not to
-     * push a unit's own people away from it. Reserving it against everybody put
-     * a team's people outside their own team's air and sent them walking: 71% of
-     * units touching their parent, 1,369 of 1,686 families whole. Law 3's own
-     * clause is the authority — *"an individual person is pushed outward, never
-     * forbidden from the near side"* — and the atlas reads it the same way, with
-     * its halo turning away a child's whole territory while a lead walks
-     * straight through.
+     * **True for anything that is not a person**, which is Law 3's own split.
+     * A small structural node sits at its family's doorstep for Law 2's sake,
+     * and is still held to the law: *"the engine may not place a team, or
+     * anything above a team, anywhere that is not strictly further from the
+     * centre than its own parent."* Leaving the gate off because the node was
+     * small put 118 of 394 rungs back round the centre in the teams view.
      */
-    allow?: ReadonlySet<string>,
-  ): { cell: Cell; strayed: boolean } | null => {
+    gate = false,
+  ): { cell: Cell; strayed: boolean } | null {
     const fromOut = hexDistance(from, ORIGIN);
-    /** The best cell anywhere, kept only as a last resort. Law 1 says no unit
-     *  may be left without a cell, so a unit leaves its slice — and, if it must,
-     *  its bearing — before it goes unplaced. The ragged edge that causes is
-     *  reported in the stats, not hidden. */
     let fallback: { cell: Cell; rank: number; off: number } | null = null;
-
-    const start = Math.max(1, firstBand);
-    for (let band = start; band <= start + BAND_REACH; band++) {
+    for (let band = 1; band <= 1 + BAND_REACH; band++) {
       let best: { cell: Cell; rank: number; off: number } | null = null;
       for (const cell of ring(from, band)) {
         const key = cellKey(cell);
-        if (taken.has(key) && !allow?.has(key)) continue;
+        if (taken.has(key)) continue;
         const off = apart(worldAngle(from, cell, 1), centre);
+        // **A person is pushed outward, never forbidden**, so for them this is a
+        // rank and never a gate — and `sideways` must not reach them at all,
+        // which is why the strict reading is only read under the gate.
         const out = hexDistance(cell, ORIGIN);
-        // Strictly-outward is Law 3's wording for a place. A person is "pushed
-        // outward, never forbidden", and pushing them this hard breaks teams.
-        const inward = sideways === "forbid" && gateInward ? out <= fromOut : out < fromOut;
-        /**
-         * **The spacer, read from both sides.** A cell is barred if anybody
-         * already standing next to it may not share a boundary with this unit —
-         * which is the same question whichever of the two asks it, because
-         * `mayTouch` is about the pair rather than about either one's claim.
-         * That is the whole reason this rule can be stated once and obeyed
-         * everywhere, where a distance had to be read from both sides by hand
-         * and was not.
-         */
-        let barred = false;
-        for (const near of neighbours(cell)) {
-          const sitting = occupants.get(cellKey(near));
-          if (sitting !== undefined && !mayTouch(who, sitting)) { barred = true; break; }
-        }
-        /**
-         * **Law 3, ranked rather than scored.**
-         *
-         * *"The engine may not place a team, or anything above a team, nearer
-         * the centre than its own parent… an individual person is pushed
-         * outward, never forbidden from the near side."* Two different things,
-         * and the law says so in one sentence, so they are one rank with a gate
-         * over it rather than two weights to balance.
-         *
-         * Ranking rather than weighting is deliberate. Every previous attempt in
-         * this engine priced the home side against something else and measured
-         * as doing nothing or as doing too much — 35.5% → 33.4% at one price,
-         * and a team stopping reading as one thing at another. A rank cannot be
-         * outbid, and nothing here has a price to tune.
-         */
-        /**
-         * The spacer outranks direction, and is outranked by Law 3's gate. It is
-         * a gate with a fallback rather than a refusal: when no cell in the whole
-         * reach respects it, the best of the rest still wins, because Law 1 says
-         * no unit may be left without a cell. A spacer breached that way means
-         * the ground genuinely ran out, which is the only kind this engine should
-         * ever produce on its own — and it is counted, not hidden.
-         */
-        const rank = (inward ? 4 : 0) + (barred ? 2 : 0) + (off > half ? 1 : 0);
+        const inward = gate && sideways === "forbid" ? out <= fromOut : out < fromOut;
+        const rank = (inward ? 4 : 0) + (barred(cell, who) ? 2 : 0) + (off > half ? 1 : 0);
         if (!fallback || rank < fallback.rank || (rank === fallback.rank && off < fallback.off)) {
           fallback = { cell, rank, off };
         }
-        if (gateInward && inward) continue;
+        if (gate && inward) continue;
         if (!best || rank < best.rank || (rank === best.rank && off < best.off)) {
           best = { cell, rank, off };
         }
@@ -522,44 +845,36 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
        *
        * A slice narrower than the gap between two cells contains neither of
        * them, and thickening the band for that reason sends a unit hunting for a
-       * cell that is sitting right beside it — which cost 40% of units touching
-       * their parent when it was got wrong. So anything that merely misses its
-       * slice ends the search.
-       *
-       * The spacer does not. If every free cell on this band would breach
-       * somebody's clear hexagon, the next ring out is exactly the right place
-       * to look, and that is where the clear space between teams comes from —
-       * not from a number, but from there being nowhere nearer that is allowed.
+       * cell sitting right beside it — which cost 40% of units touching their
+       * parent when it was got wrong. The spacer is different: if every free
+       * cell on this band would breach somebody's clear hexagon, the next ring
+       * out is exactly the right place to look, and that is where the clear
+       * space between teams comes from.
        */
-      // `fallback` already holds the best cell seen on any band, ranked, so
-      // there is nothing to carry forward here — only a reason to stop.
       if (best && best.rank < 2) return { cell: best.cell, strayed: false };
     }
     return fallback ? { cell: fallback.cell, strayed: fallback.rank >= 2 } : null;
-  };
+  }
 
-  /**
-   * Place `unit` at `at`, then every child outward from it.
-   *
-   * `centre` and `half` are the arc this unit owns: a bearing and how far either
-   * side of it the unit's descendants may spread.
-   */
-  const put = (
-    unit: UnitNode,
-    at: Cell,
-    centre: number,
-    half: number,
-    branch: string,
-  ) => {
+  /** Record a unit at a cell: everything downstream reads these. */
+  const land = (unit: UnitNode, at: Cell, branch: string) => {
     const demand = demands.get(unit.id)!;
     cells.set(unit.id, at);
     occupants.set(cellKey(at), unit.id);
     taken.add(cellKey(at));
-    facing.set(unit.id, headingAt(centre));
+    const mine = gapFor(tierOf(unit.id), rungs);
+    for (let k = 2; k <= mine; k++) {
+      for (const near of ring(at, k)) {
+        const key = cellKey(near);
+        const had = halo.get(key);
+        if (had) had.push(unit.id); else halo.set(key, [unit.id]);
+      }
+    }
+    facing.set(unit.id, headingAt(wedges.get(unit.id)?.centre ?? worldAngle(ORIGIN, at, 1)));
     tiers.set(unit.id, demand.tier);
     branchOf.set(unit.id, branch);
     depth = Math.max(depth, unit.depth);
-    radius = Math.max(radius, hexDistance(at, { q: 0, r: 0 }));
+    radius = Math.max(radius, hexDistance(at, ORIGIN));
     regions.set(unit.id, { centre: at, radius: demand.reach });
 
     const parentCell = unit.parentId ? cells.get(unit.parentId) : null;
@@ -570,257 +885,82 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
     } else {
       steps.set(unit.id, 0);
     }
-
-    const kids = inGrammarOrder(unit);
-    if (!kids.length) return;
-
-    /**
-     * **The unit's own clear ground is reserved before any child is seated.**
-     *
-     * Otherwise a grandchild leaning in from a neighbouring slice can take a
-     * cell inside the halo, which is the fault that cost the atlas ten points of
-     * cohesion when it blocked the ground rather than the nodes. Reserved as a
-     * spiral round the node and released to this unit's own lead, because the
-     * person who runs a place belongs at its door.
-     */
-    const reserved = new Set<string>();
-    if (demand.clearance > 0) {
-      for (const near of spiral(at, demand.clearance)) {
-        const key = cellKey(near);
-        if (taken.has(key)) continue;
-        taken.add(key);
-        reserved.add(key);
-      }
-    }
-
-    /**
-     * **Arc shared in proportion to what hangs beneath each child**, with a
-     * floor in cells rather than in degrees.
-     *
-     * Proportional alone starves a small team inside a big company — measured at
-     * one cell of arc for a four-child team owning 2.7% of the circle. The floor
-     * is the share of the band a child needs to seat its own widest rung side by
-     * side; when the floors oversubscribe the arc they are scaled back together,
-     * and the band then thickens to find the room instead. Thickening is the
-     * right place for the pressure to go, because it is what Greg's *torus* is.
-     */
-    /**
-     * **A place clears the parent's air. A person stands at its door.**
-     *
-     * Law 3: *"an individual person is pushed outward, never forbidden from the
-     * near side."* The first cut of this driver sent every child out past the
-     * clearance, people included, which is the law read backwards — and it
-     * measured like it: 27% of units touching their parent against the atlas's
-     * 84%, and 380 of 1,686 families in one piece against 1,530.
-     *
-     * The clearance is air between *places*. A team's own people belong against
-     * it, which is what makes a team read as one thing — the same lesson the
-     * atlas learnt twice and this driver does not get to learn again.
-     */
-    /**
-     * **Every child's whole footprint is reserved before any of them is placed,
-     * and it is reserved as an arc.**
-     *
-     * The driver used to seat a child as a *point* and let its subtree grow
-     * afterwards. That is why it is fast, and it is why sibling regions
-     * interpenetrated: nothing had asked how wide the thing being placed was
-     * going to turn out. Measured on the 1,000-person company before this,
-     * 14 of 15 sibling bubble pairs overlapped against the atlas's 2.
-     *
-     * Reserving ground the atlas's way — packing an exact shape — would cost the
-     * search this driver exists to delete. The cheap equivalent in polar terms is
-     * to reserve the **angle** the footprint will occupy, which needs only its
-     * size and never its shape.
-     *
-     * **The arithmetic is the lattice's, and it is two cell counts over each
-     * other.** A ring `R` out holds `6R` cells, so one cell of that ring is
-     * `1/6R` of a turn and a body `w` cells wide subtends `w/6R`. A child whose
-     * subtree packs into a blob of radius `b`, sitting with its node on band `R`,
-     * is about `2b + 1` cells across with its middle about `R + b` out — so it
-     * claims roughly `(b + ½) / (R + b)` either side of its bearing, plus half
-     * the clear ground it is owed. No circumference, no π, no radius: a ratio of
-     * two counts of cells, which is what the standing requirement in MAP-LAWS.md
-     * asks for.
-     */
-    const footprint = kids.map((kid) => {
-      const kd = demands.get(kid.id)!;
-      const isPlace = !people.has(kid.id) && kd.weight >= place;
-      const blob = ringsFor(kd.weight);
-      /** `spacing.ts`'s rule, unchanged and asked in the only currency that can
-       *  hold two sibling *bodies* apart rather than two sibling nodes. */
-      const owed = isPlace
-        ? Math.min(maxGap, Math.max(leastGapFor(demand.tier), spacingFor(blob)))
-        : 0;
-      return { kid, kd, isPlace, isPerson: people.has(kid.id), blob, owed };
-    });
-
-    /** How much of a turn this child claims, with its node on band `R`. */
-    const claim = (k: (typeof footprint)[number], R: number): number => {
-      const out = Math.max(1, R + k.blob);
-      return Math.min(ARC, 2 * (k.blob + k.owed / 2 + 0.5) / out);
-    };
-
-    /**
-     * **When the children do not fit, the band gets thicker.**
-     *
-     * Which is exactly what Greg's *torus* is, and the right place for the
-     * pressure to go: the same angle buys more cells further out, so moving
-     * everybody one ring out is how a crowded rung finds room without anybody
-     * leaving their family or their bearing. It is bounded, and when even
-     * `BAND_REACH` will not do it the claims are scaled back together — a map
-     * that admits it is crowded beats one that walks to the horizon.
-     */
-    /**
-     * **Only the places are asked**, because they are the only children whose
-     * band this moves. A person stands at the door whatever happens — Law 3 —
-     * so counting their claim here asks the band to solve something it cannot:
-     * the first cut did, and since a person's claim never shrinks as the band
-     * grows, every crowded parent walked its children to the guard. Measured
-     * on Northwind with people as units, chains averaged 9.4 cells against 1.7
-     * and the map was eight times wider.
-     *
-     * Where a parent's own people genuinely do not fit on ring 1, `seat` puts the
-     * overflow on ring 2 by itself. That is the right mechanism for it, because
-     * it moves the one person who did not fit rather than the whole family.
-     */
-    const doorstep = footprint
-      .filter((k) => !k.isPlace)
-      .reduce((sum, k) => sum + claim(k, 1), 0);
-    const room = Math.max(0, half * 2 - doorstep);
-
-    /**
-     * **When the regions do not fit, the band gets thicker** — which is what
-     * Greg's *torus* is, and the right place for the pressure to go: the same
-     * angle buys more cells further out, so moving everybody a ring out is how a
-     * crowded rung finds room without anybody leaving their family or their
-     * bearing.
-     *
-     * **Only the places are asked**, because they are the only children whose
-     * band this moves. A person stands at the door whatever happens — Law 3 — and
-     * their claim never shrinks as the band grows, so counting it asks the band
-     * to solve something it cannot: the first cut did, and walked every crowded
-     * parent to the guard. Where a parent's own people genuinely do not fit on
-     * ring 1, `seat` puts the overflow on ring 2 by itself, which moves the one
-     * person who did not fit rather than the whole family.
-     *
-     * **`thicken` is a dial and the trade is a straight line** — see the sweep in
-     * [HEX-LAYOUT.md](../../../../docs/HEX-LAYOUT.md) § Separating siblings.
-     * Separation costs width, about proportionally, and no formulation tried
-     * avoids it. Two others were measured and rejected: thickening until each
-     * slice was at least one cell of its ring, and holding sibling *nodes* apart
-     * by the spacing rule. Both moved the overlap by less than the noise, because
-     * what overlaps is bodies rather than nodes or tolerances.
-     */
-    let placeBand = demand.clearance + 1;
-    const placesFit = (R: number) =>
-      footprint.reduce((sum, k) => sum + (k.isPlace ? claim(k, R) : 0), 0) <= room;
-    while (placeBand < demand.clearance + 1 + thicken && !placesFit(placeBand)) placeBand++;
-
-    const want = footprint.map((k) => claim(k, k.isPlace ? placeBand : 1));
-    /**
-     * **The breathing room, as an angle.** A gap of `kin` tiles at radius `R` is
-     * `kin / 6R` of a turn. Only between *places*: a team's own people belong
-     * pressed against it, and charging this between two of them would be the
-     * 0%-touching bug of 2026-10-03 all over again.
-     */
-    const places = footprint.filter((k) => k.isPlace).length;
-    const gapAngle = places > 1
-      ? (kin / Math.max(1, 6 * placeBand)) * FULL_TURN
-      : 0;
-    const gaps = Math.max(0, places - 1) * gapAngle;
-    const asked = want.reduce((a, b) => a + b, 0) + gaps;
-    /**
-     * Slack is shared out in proportion to what hangs beneath each child, so a
-     * rung with room to spare spreads rather than huddling on one side — which
-     * is what keeps the ring reading as a ring.
-     */
-    const squeeze = asked > half * 2 && asked > 0 ? (half * 2) / asked : 1;
-
-    /**
-     * **The slack is left empty, and the family is centred in what it needs.**
-     *
-     * Spreading it fanned sibling branches across the parent's whole sweep,
-     * which is the measured cause of Greg's *"landlocked areas of one or two
-     * teams that are from one branch, then another is on the other side of the
-     * map"*: the closest pair on the tree put as far apart as the arc allowed.
-     */
-    const used = asked * squeeze;
-    let edge = centre - used / 2;
-    let seen = 0;
-    footprint.forEach((k, i) => {
-      // The air sits between places, so it is added before every place but the
-      // first rather than after each one, which would push the family off centre.
-      if (k.isPlace && seen > 0) edge += gapAngle * squeeze;
-      if (k.isPlace) seen++;
-      const span = want[i] * squeeze;
-      const mid = edge + span / 2;
-      edge += span;
-
-      const band = k.isPlace ? placeBand : 1;
-      spacedBy.set(k.kid.id, k.isPlace ? demand.clearance : 0);
-
-      /**
-       * **The seating slice is floored at one cell of its own ring**, which is
-       * the lattice's version of a floor and replaces a flat 60°.
-       *
-       * The reason for a floor has not changed: ring 1 has six cells 60° apart,
-       * so a slice narrower than the gap between two cells contains neither of
-       * them, and the band then thickens looking for one that is sitting right
-       * beside it. That cost 40% of units touching their parent when it was
-       * missing. But a flat floor is wrong at every other radius — 60° is one
-       * cell on ring 1 and *ten* on ring 10 — and that over-wide floor is what
-       * let subtrees spill across their neighbours. One cell of the ring you are
-       * actually standing on is the same idea measured properly.
-       */
-      const perCell = FULL_TURN / Math.max(1, ring(at, band).length);
-      const seatHalf = Math.max(span, perCell) / 2;
-      const seated = seat(at, band, mid, seatHalf, k.kid.id, !k.isPerson, reserved);
-      if (!seated) { unplaced.push(k.kid.id); return; }
-      const cell = seated.cell;
-      /**
-       * **A unit that could not be seated anywhere its laws and its slice
-       * allowed**, and took the least-bad cell instead.
-       *
-       * This is the number that explains a scattered branch. Everything else on
-       * the panel is an average, and an average cannot show you the one team
-       * that was flung to the far side of the map — which is exactly what Greg
-       * was pointing at and no figure here could account for.
-       */
-      if (seated.strayed) strayed.push(k.kid.id);
-      // Taken for good now, so the rest of the family cannot have it, and no
-      // longer merely reserved — a cell somebody stands on is not clear ground.
-      reserved.delete(cellKey(cell));
-      /**
-       * A child's own arc is centred on where it actually landed rather than on
-       * the slice it was offered, and the width is **the slice it was given**
-       * rather than a floored version of it — handing a subtree more arc than
-       * its parent set aside is how siblings came to overlap.
-       *
-       * **The centring is relative, and this comment used to claim the
-       * opposite.** A direction read back off a placement is exactly the rule
-       * `headings` was built to replace, and it accumulates in principle. Tested
-       * on 2026-10-17 against handing down the offered slice instead: rungs
-       * going round the centre 21% → 22%, chains turning more than 90° 6.0% →
-       * 4.2%. A wash, so it is left alone — but it is a wart, not a virtue, and
-       * the loopbacks come from Law 3 allowing a sideways step rather than from
-       * here. See HEX-LAYOUT.md § Why chains still looped.
-       */
-      put(
-        k.kid, cell, worldAngle(at, cell, 1), Math.min(ARC, Math.max(span, perCell)) / 2,
-        unit.id === root.id ? k.kid.id : branch,
-      );
-    });
-
-    for (const key of reserved) taken.delete(key);
   };
 
   /**
-   * The root owns the circle. A re-laid branch does not — it has a parent
-   * somewhere outside itself, so it is handed a bearing and a sweep.
+   * **A branch is laid whole before the next one starts, and a unit's own crowd
+   * before its children's branches.**
+   *
+   * This was a rung-at-a-time walk for an afternoon, on the reasoning that a
+   * unit's cell no longer depends on where its parent landed — which is true,
+   * and not the point. It seats every node of a rung cheek by jowl and *then*
+   * sends each one's crowd looking for ground that has already gone: 53% of
+   * people ended up off their own parent's doorstep and teams in one piece fell
+   * from 332 of 395 to 202, while every node was legally placed and the panel's
+   * spacer count stayed at nought.
+   *
+   * Order is the mechanism that stops it. When a team's people are seated the
+   * moment the team lands, the next team along finds that ground taken and walks
+   * one ring further out by itself — the crowding is resolved as it happens
+   * rather than discovered afterwards. So: the doorstep first, then the people's
+   * own people, then each place child in turn, each laid in full before the next.
    */
-  const rootBearing = options.bearing ?? 0;
-  const rootHalf = (options.arc ?? FULL_TURN) / 2;
-  put(root, { q: 0, r: 0 }, rootBearing, rootHalf, root.id);
+  const put = (unit: UnitNode) => {
+    const kids = inGrammarOrder(unit);
+    if (!kids.length) return;
+    const at = cells.get(unit.id)!;
+    const outward = worldAngle(ORIGIN, at, 1);
+
+    /**
+     * **The doorstep fan is local, and the lead gets the door.**
+     *
+     * A person is seated on a ring round their own parent, so their slice has to
+     * be a bearing from that parent — a different frame from the absolute wedges
+     * the places live in, and deliberately so. The fan is the whole circle
+     * because the only things that may stand next to a node are its own people,
+     * and it is turned so that the first child in the grammar — the lead, when
+     * there is one — sits on the side facing the master centre. That is Law 3's
+     * own clause: *a team lead belongs at their team's door, on the home side.*
+     */
+    const door = kids.filter((kid) => !isPlace(kid));
+    let doorTotal = 0;
+    for (const kid of door) doorTotal += demands.get(kid.id)!.weight;
+    const perCell = FULL_TURN / 6;
+    let edge = wrap(outward + Math.PI);
+    const seatedDoor: UnitNode[] = [];
+    door.forEach((kid, i) => {
+      const span = FULL_TURN * (demands.get(kid.id)!.weight / Math.max(1, doorTotal));
+      // The first slice is centred on the door rather than starting there, so
+      // the lead faces home instead of standing a sixth of a turn off it.
+      const mid = i === 0 ? edge : edge + span / 2;
+      if (i === 0) edge -= span / 2;
+      edge += span;
+      spacedBy.set(kid.id, 0);
+      const seated = seatNear(at, kid.id, mid, Math.max(span, perCell) / 2, !people.has(kid.id));
+      if (!seated) { unplaced.push(kid.id); return; }
+      if (seated.strayed) strayed.push(kid.id);
+      land(kid, seated.cell, unit.id === root.id ? kid.id : branchOf.get(unit.id) ?? unit.id);
+      seatedDoor.push(kid);
+    });
+    // The whole doorstep is seated before anybody's children are, so a
+    // grandchild cannot take a cell a sibling was about to stand in.
+    for (const kid of seatedDoor) put(kid);
+
+    for (const kid of kids) {
+      if (!isPlace(kid)) continue;
+      const wedge = wedges.get(kid.id)!;
+      /** What the floor schedule charged between these two rungs: the one
+       *  figure `spacing.ts` gives for holding them apart. */
+      spacedBy.set(kid.id, Math.max(0, floorAt(kid.depth) - floorAt(unit.depth)));
+      const seated = seatOut(kid.id, wedge, at, wedge.ring);
+      if (!seated) { unplaced.push(kid.id); continue; }
+      if (seated.strayed) strayed.push(kid.id);
+      land(kid, seated.cell, unit.id === root.id ? kid.id : branchOf.get(unit.id) ?? unit.id);
+      put(kid);
+    }
+  };
+  land(root, ORIGIN, root.id);
+  put(root);
 
   let tooClose = 0;
   const seen = new Set<string>();

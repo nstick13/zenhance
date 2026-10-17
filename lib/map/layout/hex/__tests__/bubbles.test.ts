@@ -126,7 +126,21 @@ describe("a bubble follows the hand", () => {
     const now = after.find((b) => b.unitId === wrapper.unitId)!;
 
     expect(now.cells.map(cellKey)).toContain(cellKey({ q: 400, r: -200 }));
-    expect(now.cells.length).toBeGreaterThan(wrapper.cells.length);
+    /**
+     * **The shape changed; it did not necessarily get bigger.**
+     *
+     * This asserted growth until 2026-10-17, which was a proxy for *it moved*
+     * and stopped being a true one when the radial driver started seating places
+     * on a ring floor by depth. A lone node's bubble is its cell plus six — and
+     * once nodes stand clear of each other, those six are supported by nothing
+     * else, so dragging one away loses exactly the seven it gains. The company
+     * here is all places and no people, which is the case where every node is
+     * isolated by the spacer, so equality is the honest answer rather than a
+     * fault. What must hold is that the bubble is read off live cells: it covers
+     * the new ground and is not the shape it was.
+     */
+    expect(now.cells.map(cellKey).sort()).not.toEqual(wrapper.cells.map(cellKey).sort());
+    expect(now.cells.length).toBeGreaterThanOrEqual(wrapper.cells.length);
   });
 
   it("is the same shape again when the hand puts it back", () => {

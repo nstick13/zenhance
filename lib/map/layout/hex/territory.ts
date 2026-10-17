@@ -1063,6 +1063,11 @@ export function allocateByTerritory(
     /** Radial only: whether a rung may step sideways round the centre rather
      *  than away from it. See `RadialOptions.sideways`. */
     sideways?: "allow" | "forbid";
+    /** Radial only: rungs above team level per extra hexagon of clearance. See
+     *  `RadialOptions.rungs`. */
+    rungs?: number;
+    /** Radial only: clear tiles between one branch and the next. */
+    kin?: number;
   } = {},
 ): Allocation {
   /**

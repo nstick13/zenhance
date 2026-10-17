@@ -114,6 +114,113 @@ export function ring(centre: Cell, radius: number): Cell[] {
   return out;
 }
 
+/**
+ * **The `i`th cell of `ring(centre, radius)`, without building the ring.**
+ *
+ * Same walk, same order, one cell at a time: the sides start at the corners
+ * `radius * DIRECTIONS[(side + 4) % 6]`, which is what `ring` arrives at after
+ * walking each side, and a test holds the two to each other cell for cell.
+ *
+ * It exists so that a placer can *find* its way into a ring rather than sweep
+ * it. A ring 120 out holds 720 cells and a placer that wants the few in one
+ * direction used to enumerate all of them and throw 715 away. See `ringArc`.
+ */
+export const ringCell = (centre: Cell, radius: number, index: number): Cell => {
+  if (radius <= 0) return { ...centre };
+  const n = 6 * radius;
+  const i = ((index % n) + n) % n;
+  const side = Math.floor(i / radius);
+  return add(
+    add(centre, scale(DIRECTIONS[(side + 4) % 6], radius)),
+    scale(DIRECTIONS[side], i % radius),
+  );
+};
+
+/**
+ * **The cells of a ring that lie in one direction, nearest the centre line
+ * first — found by bisection rather than by sweeping the ring.**
+ *
+ * A ring is a convex hexagon about its centre and the walk goes round it once,
+ * so **how far round from the first cell** a cell lies rises strictly with the
+ * index. (The bearing itself falls strictly until the last cell, which is due
+ * west and which `atan2` reports as `+π` rather than `−π`; measuring the turn
+ * from the first cell instead is what makes the sequence monotone everywhere,
+ * seam included.) That single fact is what makes this exact: the cells inside any
+ * arc are one contiguous run of indices, so the run can be entered by binary
+ * search and then walked outward from the middle. `ringArcIsExhaustive` in the hex tests holds
+ * the result to the brute-force filter over every radius and a sweep of arcs,
+ * because **narrowing that quietly changes which cells are eligible is the
+ * mistake that defeated the first attempt at absolute arcs** (HEX-LAYOUT.md,
+ * 2026-10-17): it bought a twentyfold speedup and put 1,249 spacer breaches
+ * back, and the two facts took a day to connect.
+ *
+ * Returned in increasing angular distance from the centre line, so a caller that
+ * wants the cell nearest its bearing takes the first one it can use and stops —
+ * which is the other half of the saving, and the reason this returns an array of
+ * offsets rather than a set of cells.
+ *
+ * **When the arc is narrower than the gap between two cells it contains none**,
+ * and the single nearest cell is returned with `inside: false`. A caller may use
+ * it (a sliver of arc still has to seat its unit somewhere) or walk outward to a
+ * ring where the same arc spans a whole cell; the flag is what lets it choose,
+ * and counting it is how a stray is told from a seat.
+ */
+export function ringArc(
+  centre: Cell,
+  radius: number,
+  /** The bearing the arc is centred on, in world radians. */
+  bearing: number,
+  /** How far either side of it, in radians. */
+  half: number,
+): { cell: Cell; off: number; inside: boolean }[] {
+  if (radius <= 0) return [{ cell: { ...centre }, off: 0, inside: true }];
+  const n = 6 * radius;
+  const TURN = 2 * Math.PI;
+  const angleAt = (i: number) => {
+    const cell = ringCell(centre, radius, i);
+    const to = cellToWorld(cell, 1);
+    const from = cellToWorld(centre, 1);
+    return Math.atan2(to.y - from.y, to.x - from.x);
+  };
+  /** How far the bearing at `i` is from the arc's centre line, the short way. */
+  const offAt = (i: number) => {
+    const d = Math.abs(angleAt(i) - bearing) % TURN;
+    return d > Math.PI ? TURN - d : d;
+  };
+  /** How far round from the first cell, which rises strictly with the index
+   *  because the bearing falls strictly. */
+  const first = angleAt(0);
+  const round = (angle: number) => (((first - angle) % TURN) + TURN) % TURN;
+  const target = round(bearing);
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (round(angleAt(mid)) <= target) lo = mid; else hi = mid - 1;
+  }
+  // The arc's centre line falls between `lo` and the next cell round; the nearer
+  // of the two is where the walk starts.
+  const start = offAt(lo) <= offAt(lo + 1) ? lo : lo + 1;
+  const out: { cell: Cell; off: number; inside: boolean }[] = [];
+  const startOff = offAt(start);
+  if (startOff > half) {
+    return [{ cell: ringCell(centre, radius, start), off: startOff, inside: false }];
+  }
+  out.push({ cell: ringCell(centre, radius, start), off: startOff, inside: true });
+  let left = start - 1;
+  let right = start + 1;
+  // Two pointers, always taking the nearer side, so the run comes out sorted by
+  // angular distance without a sort.
+  while (out.length < n) {
+    const l = right - left > n ? Infinity : offAt(left);
+    const r = right - left > n ? Infinity : offAt(right);
+    if (Math.min(l, r) > half) break;
+    if (l <= r) { out.push({ cell: ringCell(centre, radius, left), off: l, inside: true }); left--; }
+    else { out.push({ cell: ringCell(centre, radius, right), off: r, inside: true }); right++; }
+  }
+  return out;
+}
+
 /** Every cell within `radius` steps, innermost first. */
 export function spiral(centre: Cell, radius: number): Cell[] {
   const out: Cell[] = [{ ...centre }];
