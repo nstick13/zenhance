@@ -133,14 +133,42 @@ whatever rung you grabbed. Not a flat team id.
 
 ## Law 3 — Children sit outward
 
-> **The engine may not place a team, or anything above a team, nearer the centre
-> than its own parent — except where that would conflict with Laws 1 or 2.**
+> **The engine may not place a team, or anything above a team, anywhere that is
+> not strictly further from the centre than its own parent — except where that
+> would conflict with Laws 1 or 2.**
 >
 > **An individual person is pushed outward, never forbidden from the near side.**
 
-Equal distance is allowed; nearer is not. The split is deliberate: a team lead
-belongs at their team's door, on the home side, so for a person this is a cost
-and not a wall.
+The split is deliberate: a team lead belongs at their team's door, on the home
+side, so for a person this is a cost and not a wall.
+
+**Changed 2026-10-17, from "equal distance is allowed; nearer is not".** Greg had
+been saying the map did not look radial and that chains looped back, while the
+panel reported curl-back at **0%** — and both were right, because curl-back
+counts only a rung that goes *inward*. A rung that goes neither in nor out still
+takes you **round** the centre rather than away from it, and six of those is a
+circle. Counted on a clean load, **21–28% of rungs were doing exactly that.**
+
+So the old wording was the fault, not the code obeying it. Measured on Northwind
+with people as the smallest unit, forbidding sideways for places:
+
+| | was | now |
+| --- | ---: | ---: |
+| rungs going round the centre | 21% | **0%** |
+| chains turning more than 90° | 6.0% | **2.2%** |
+| touching their parent | **75%** | 53% |
+| families in one piece | **1,379** | 1,185 |
+| mean chain | **1.7** | 3.2 |
+
+Greg took that trade with both in front of him: *"make strictly-out the default
+and update Law 3 to say sideways is forbidden for places."* The older rule is
+still reachable in the lab under **rung → sideways ok**, because the only way to
+settle a trade like that is to look at both.
+
+**The person clause did not change and must not.** The gate is applied to places
+only. A person is ranked outward more strongly under the new rule, which is
+*pushed*, and is still never refused the near side, which is *not walled* — the
+difference the law has always drawn.
 
 **Why the law states the goal and not a mechanism.** Greg, 2026-10-06: *"if my
 child sits at an angle to my source spine, then its child will similarly sit at
@@ -421,7 +449,7 @@ different maps.
 | 0 — the hand | placements honoured, *n* of *n* | to build |
 | 1 — one cell, one unit | two-on-a-cell count; unplaced count | on the panel |
 | 2 — a body stays whole | whole families; cells pressing against another division; people next to a stranger | on the panel, counted live |
-| 3 — children sit outward | % of units nearer the centre than their parent | on the panel, counted live |
+| 3 — children sit outward | **% of rungs that go round the centre rather than away from it** | on the panel, counted live — *and the number it replaced, "% nearer the centre than their parent", is the one that read nought for a fortnight while the map looped* |
 | 4 — one measure of distance | not visible on a map: nothing outside the atlas calls a spacing function | **structural since 2026-10-16** — the rule lives in `spacing.ts`, both drivers import it, and `radial.test.ts` checks the figures reported are ones that file could produce |
 | 5 — lines follow | tidy produces identical cells with routing switched off | **to build — and the law is currently broken** |
 

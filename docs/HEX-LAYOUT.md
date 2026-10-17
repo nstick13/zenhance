@@ -2427,6 +2427,99 @@ is always finding the room.
 
 ---
 
+## Why chains still looped, and the number that was missing (2026-10-17)
+
+Greg: *"we've somewhere implemented a radial version of the thing but I don't see
+that showing up in how it's presented… descendants loop back on themselves on
+the on-load presentation. What code do we have that's attempting to prevent this?
+What is preventing that code from working?"*
+
+He was right, and the panel had been telling him the opposite.
+
+### The number that was missing
+
+Curl-back — *"units nearer the centre than their parent"* — read **0%** on a
+clean radial load, and that is true. It is also the wrong question. A rung that
+goes neither in nor out still takes you **round** the centre rather than away
+from it, and six of those is a circle.
+
+Counted on the same clean load:
+
+| | curl-back | rungs going round the centre | chains turning >90° | way home ÷ direct |
+| --- | ---: | ---: | ---: | ---: |
+| Northwind · people | 0% | **21%** | 6.0% | ×1.41 |
+| Northwind · teams | 0% | **22%** | 13.8% | ×1.27 |
+| 1,000 · people | 0% | **28%** | 5.8% | ×1.25 |
+
+**This is the fourth time a statistic in this engine has measured the rule
+instead of the map**, and the first where it hid a fault rather than invented
+one. The panel now carries it: *"N% of rungs go round the centre rather than
+away from it"*, counted live from what is drawn.
+
+### What was meant to prevent it, and why neither did
+
+**Law 3's gate**, in `seat`. It forbids a cell nearer the origin than the
+parent — and Law 3 says, deliberately, *"equal distance is allowed; nearer is
+not."* So sideways is legal by the letter of the law, and sideways is what
+compounds. **This is the cause.**
+
+**The compass** (`headings`), built in October for exactly this and *not called
+by the radial driver*, which subdivides arcs itself. That was a suspect, and it
+was tested: handing each child the slice it was **offered** (absolute, tracing
+back to the root's own circle) instead of the direction it **landed** in
+(relative, read back off the placement) moved rungs-round-the-centre from 21% to
+22% and chains turning >90° from 6.0% to 4.2% — a wash. So the relative bearing
+is a real wart but not the fault. The comment in `radial.ts` claiming the landed
+direction is what *prevents* accumulation has it backwards and is corrected.
+
+### Measured: forbidding sideways — now the default
+
+Greg, with both in front of him: *"make strictly-out the default and update Law 3
+to say sideways is forbidden for places."* Done; Law 3 is rewritten in
+[MAP-LAWS.md](MAP-LAWS.md). The older rule stays reachable in the lab under
+**rung → sideways ok**, because that is how the trade was settled and because a
+switch that can still produce the fault is the only proof the fix does anything.
+
+| Northwind · people | sideways ok | strictly out |
+| --- | ---: | ---: |
+| rungs going round the centre | 21% | **0%** |
+| chains turning >90° | 6.0% | **2.2%** |
+| mean turn per rung | 28° | **25°** |
+| touching their parent | **75%** | 53% |
+| families in one piece | **1,379** | 1,185 |
+| mean chain | **1.7** | 3.2 |
+| radius | **100** | 125 |
+
+It fixes the loops outright and costs about twenty points of adjacency, because
+a cell that is both free *and* strictly further out is a rarer thing than one
+that is merely not nearer. **A person is unaffected as a matter of law** — Law 3
+makes the near side a cost for an individual and not a wall, and the gate is
+applied only to places.
+
+### Tidy had to learn it as well
+
+Rotation is what makes this tidy's problem and not only the driver's: a turn
+keeps a branch's shape exactly, so nothing inside it moves relative to anything
+else inside it, but **every member's distance from the master centre changes**.
+Measured before tidy knew the law, one tidy on a clean load put back **3 of 12**
+sideways rungs on the 45-person company and **7 of 164** on the 1,000-person one.
+
+Both phases now check it, and both go to nought. It costs a handful of turns —
+58 down to 52 on the 1,000-person company — and it incidentally took the last two
+spacer breaches after a tidy to nought as well, which had been sitting there
+since 2026-10-16.
+
+### The other half of the complaint is not this
+
+*"I don't see that showing up in how it's presented."* Separately from the loops,
+**the master centre sits 45–63% of the radius away from the middle of its own
+company** — measured against the centroid of every cell, under both settings and
+both drivers. A map whose centre is halfway to the edge does not read as rings
+however straight its chains are. That is the arc allocation and the shape of the
+company, not Law 3, and forbidding sideways does not move it.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

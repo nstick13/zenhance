@@ -244,6 +244,16 @@ export default function HexLab({
    * at so far changes until this is pressed.
    */
   const [driver, setDriver] = useState<HexDriver>("atlas");
+  /**
+   * **Whether a rung may step sideways round the centre.** Greg, 2026-10-17, on
+   * seeing chains loop back: *"what is preventing that code from working?"*
+   *
+   * `forbid` is the default since 2026-10-17 and is now what Law 3 says. `allow`
+   * is the older rule — *"equal distance is allowed; nearer is not"* — kept so
+   * the two can still be put side by side, which is how the decision was made.
+   * The toggle stays for that reason and not because the question is open.
+   */
+  const [sideways, setSideways] = useState<"allow" | "forbid">("forbid");
   const [hover, setHover] = useState<string | null>(null);
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -300,7 +310,7 @@ export default function HexLab({
    * today still load. Greg has one on Northwind that is the only specimen
    * anybody has of a hand-built arrangement at that scale.
    */
-  const storeKey = `zenhance.lab.hex.${companyKey}.${driver}`;
+  const storeKey = `zenhance.lab.hex.${companyKey}.${driver}${driver === "radial" && sideways === "forbid" ? ".out" : ""}`;
 
   useEffect(() => {
     try {
@@ -365,8 +375,8 @@ export default function HexLab({
 
 
   const baseAllocation = useMemo(
-    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds, driver }),
-    [baseTree, leadIds, peopleIds, driver],
+    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds, driver, sideways }),
+    [baseTree, leadIds, peopleIds, driver, sideways],
   );
 
   /**
@@ -640,11 +650,11 @@ export default function HexLab({
   useEffect(() => {
     // The driver belongs in here: swapping it re-lays the whole company, so the
     // camera has to refit or the new arrangement opens off screen.
-    const signature = `${companyKey}|${density}|${mode}|${driver}|${size.width}x${size.height}`;
+    const signature = `${companyKey}|${density}|${mode}|${driver}|${sideways}|${size.width}x${size.height}`;
     if (fittedFor.current === signature || !scene.bounds) return;
     fittedFor.current = signature;
     setCamera(fitCamera(scene.bounds, size, { min: floor }));
-  }, [companyKey, density, mode, driver, size, scene, floor]);
+  }, [companyKey, density, mode, driver, sideways, size, scene, floor]);
 
   useEffect(() => {
     const onResize = () => setSize({ width: window.innerWidth, height: window.innerHeight });
@@ -1270,7 +1280,7 @@ export default function HexLab({
             leads: leadIds, people: peopleIds, compass,
             // The branch comes back laid out the way the map it is on was laid
             // out — and under radial that brings the spacer rule with it.
-            driver,
+            driver, sideways,
           })
         : null;
       /**
@@ -1619,6 +1629,8 @@ export default function HexLab({
      * itself."*
      */
     let curled = 0, curlWorst = 0;
+    /** Rungs that take you no closer to the centre — sideways counts. */
+    let level = 0;
     const centre = cells.get(tree.rootId);
     for (const unit of tree.units.values()) {
       const own = cells.get(unit.id);
@@ -1644,6 +1656,14 @@ export default function HexLab({
           const parentOut = hexDistance(parent, centre);
           // Equal distance is allowed by the law; nearer is not.
           if (out < parentOut) { curled++; curlWorst = Math.max(curlWorst, parentOut - out); }
+          /**
+           * **The number that was missing.** Curl-back counts only a rung that
+           * goes *inward*, and on a clean load that is nought — which is why the
+           * panel said the map had no loopbacks in it while Greg could see that
+           * it did. A rung that goes neither in nor out still takes you round
+           * the centre rather than away from it, and six of those is a circle.
+           */
+          if (out <= parentOut) level++;
         }
       }
       if (unit.childIds.length === 0) continue;
@@ -1667,7 +1687,7 @@ export default function HexLab({
     return {
       children, touchingFamily, touchingParent,
       exclaves: children - touchingFamily, families, wholeFamilies,
-      curled, curlWorst,
+      curled, curlWorst, level,
     };
   }, [allocation, tree]);
 
@@ -1765,6 +1785,11 @@ export default function HexLab({
           <Btn small onClick={() => setDriver("radial")} active={mode === "hex" && driver === "radial"} disabled={mode !== "hex"}>radial</Btn>
         </Row>
         <Row>
+          <span style={{ color: "#6b7280" }}>rung</span>
+          <Btn small onClick={() => setSideways("allow")} active={mode === "hex" && driver === "radial" && sideways === "allow"} disabled={mode !== "hex" || driver !== "radial"}>sideways ok</Btn>
+          <Btn small onClick={() => setSideways("forbid")} active={mode === "hex" && driver === "radial" && sideways === "forbid"} disabled={mode !== "hex" || driver !== "radial"}>strictly out</Btn>
+        </Row>
+        <Row>
           <span style={{ color: "#6b7280" }}>cell</span>
           {(["roomy", "tight"] as HexDensity[]).map((d) => (
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
@@ -1822,6 +1847,13 @@ export default function HexLab({
                 {((100 * live.curled) / Math.max(1, live.children)).toFixed(0)}%
               </b>{" "}sit nearer the centre than their parent
               {live.curled > 0 ? <> · worst <b>{live.curlWorst}</b> tiles</> : null}
+            </Small>
+            {/* The one that shows a loopback. Curl-back alone reads nought on a
+                clean load while chains still wind round the centre. */}
+            <Small suppressHydrationWarning>
+              <b style={{ color: live.level === 0 ? "#166534" : "#b45309" }}>
+                {((100 * live.level) / Math.max(1, live.children)).toFixed(0)}%
+              </b>{" "}of rungs go round the centre rather than away from it
             </Small>
           </>
         ) : (

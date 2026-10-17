@@ -135,6 +135,12 @@ import type { Region, TerritoryLayout } from "@/lib/map/layout/hex/territory";
 const BAND_REACH = 64;
 
 /**
+ * **Every rung climbs.** See `sideways` in `RadialOptions` for the measurements
+ * and for what the older setting was.
+ */
+const DEFAULT_SIDEWAYS: "allow" | "forbid" = "forbid";
+
+/**
  * **Default rings of thickening: none.**
  *
  * Measured rather than chosen. The sweep is in HEX-LAYOUT.md § Separating
@@ -199,6 +205,35 @@ export type RadialOptions = {
   leads?: ReadonlySet<string>;
   /** Units that are people rather than structure. A person is never a place. */
   people?: ReadonlySet<string>;
+  /**
+   * **Whether a rung may step sideways.**
+   *
+   * **`"forbid"` since 2026-10-17, and it is now what Law 3 says.** Greg, having
+   * seen both: *"make strictly-out the default and update Law 3 to say sideways
+   * is forbidden for places."*
+   *
+   * Law 3 used to read *"equal distance is allowed; nearer is not"*, and
+   * `"allow"` is that older rule, kept so the two can still be put side by side.
+   * It is where the loopbacks came from: on a clean load 21–28% of the rungs on
+   * a leaf's way home took you no closer to the master centre — they went round
+   * it — and sideways compounds, six steps being a circle. That is Greg's *"we
+   * end up with spirals within four steps"* reached by a different route, and
+   * the panel never showed it, because curl-back counts only a rung that goes
+   * *inward* and that was honestly nought.
+   *
+   * `"forbid"` takes those rungs to **nought** and chains doubling back from 6%
+   * to 2%. It costs cohesion, because a cell that is both free and strictly
+   * further out is a rarer thing than one that is merely not nearer: on
+   * Northwind with people as units, units touching their parent fall from 75% to
+   * 53% and the mean chain grows from 1.7 cells to 3.2. Greg took that trade
+   * with both in front of him.
+   *
+   * **A person is unaffected either way.** Law 3 makes the near side a cost for
+   * an individual rather than a wall — *"pushed outward, never forbidden"* — and
+   * that gate is applied only to places, so a lead still stands at their team's
+   * door whatever this is set to.
+   */
+  sideways?: "allow" | "forbid";
   /** Which way this tree's root faces, and how wide its children fan. */
   bearing?: number;
   arc?: number;
@@ -227,6 +262,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const leads = options.leads ?? new Set<string>();
   const people = options.people ?? new Set<string>();
   const thicken = options.thicken ?? DEFAULT_THICKEN;
+  const sideways = options.sideways ?? DEFAULT_SIDEWAYS;
 
   /**
    * **The spacer rule** (Greg, 2026-10-16).
@@ -405,7 +441,8 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
         const key = cellKey(cell);
         if (taken.has(key) && !allow?.has(key)) continue;
         const off = apart(worldAngle(from, cell, 1), centre);
-        const inward = hexDistance(cell, ORIGIN) < fromOut;
+        const out = hexDistance(cell, ORIGIN);
+        const inward = sideways === "forbid" ? out <= fromOut : out < fromOut;
         /**
          * **The spacer, read from both sides.** A cell is barred if anybody
          * already standing next to it may not share a boundary with this unit —
@@ -692,10 +729,19 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
       // longer merely reserved — a cell somebody stands on is not clear ground.
       reserved.delete(cellKey(cell));
       /**
-       * A child's own arc is centred on where it actually landed, not on the
-       * slice it was offered, and it is **the slice it was given** rather than a
-       * floored version of it. Handing a subtree more arc than its parent set
-       * aside for it is the whole of how siblings came to overlap.
+       * A child's own arc is centred on where it actually landed rather than on
+       * the slice it was offered, and the width is **the slice it was given**
+       * rather than a floored version of it — handing a subtree more arc than
+       * its parent set aside is how siblings came to overlap.
+       *
+       * **The centring is relative, and this comment used to claim the
+       * opposite.** A direction read back off a placement is exactly the rule
+       * `headings` was built to replace, and it accumulates in principle. Tested
+       * on 2026-10-17 against handing down the offered slice instead: rungs
+       * going round the centre 21% → 22%, chains turning more than 90° 6.0% →
+       * 4.2%. A wash, so it is left alone — but it is a wart, not a virtue, and
+       * the loopbacks come from Law 3 allowing a sideways step rather than from
+       * here. See HEX-LAYOUT.md § Why chains still looped.
        */
       put(
         k.kid, cell, worldAngle(at, cell, 1), Math.min(ARC, Math.max(span, perCell)) / 2,

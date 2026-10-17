@@ -245,6 +245,35 @@ export function neaten(
   const { mayTouch } = people
     ? spacerRule(tree, people)
     : { mayTouch: () => true };
+  /**
+   * **Law 3, which tidy also has to keep.**
+   *
+   * *"The engine may not place a team, or anything above a team, anywhere that
+   * is not strictly further from the centre than its own parent."* Rotation is
+   * what makes this tidy's problem and not only the driver's: a turn keeps a
+   * branch's shape exactly, so nothing inside it moves relative to anything else
+   * inside it, but **every member's distance from the master centre changes**.
+   * Measured before this check existed, one tidy on a clean load reintroduced
+   * 3 of 12 sideways rungs on the 45-person company and 7 of 164 on the
+   * 1,000-person one.
+   *
+   * Only places are held to it, as in the driver — a person is pushed outward,
+   * never forbidden.
+   */
+  const CENTRE: Cell = { q: 0, r: 0 };
+  const climbs = (landing: ReadonlyMap<string, Cell>): boolean => {
+    if (!people) return true;
+    for (const [id, at] of landing) {
+      if (people.has(id)) continue;
+      const parentId = tree.units.get(id)?.parentId;
+      if (!parentId) continue;
+      const parentAt = landing.get(parentId) ?? placed.get(parentId);
+      if (!parentAt) continue;
+      if (hexDistance(at, CENTRE) <= hexDistance(parentAt, CENTRE)) return false;
+    }
+    return true;
+  };
+
   /** cell key → who is standing there, kept in step as the gather moves things. */
   const occupantAt = new Map<string, string>();
   for (const [id, cell] of placed) occupantAt.set(cellKey(cell), id);
@@ -434,6 +463,9 @@ export function neaten(
             if (breaches) continue;
           }
 
+          // Law 3: every place in the branch must still climb where it lands.
+          if (people && !climbs(new Map(landing))) continue;
+
           // **Room first, then nearness.** The old rule was nearness alone,
           // and nearness alone is what packs a map solid: every branch takes
           // the first free cell against its family, so every boundary on the
@@ -549,6 +581,17 @@ export function neaten(
           if (breaches) break;
         }
         if (breaches) continue;
+      }
+
+      // Law 3 again, and this is the phase that needed it most: a rotation
+      // changes every member's distance from the centre.
+      if (people) {
+        const turned = new Map<string, Cell>();
+        for (const id of members) {
+          const from = placed.get(id);
+          if (from) turned.set(id, rotateCell(from, anchor, steps));
+        }
+        if (!climbs(turned)) continue;
       }
 
       // What this turn would actually cost in clashes. Only the branch's own

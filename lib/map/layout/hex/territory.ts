@@ -915,6 +915,9 @@ export function relayBranch(options: {
   leads?: ReadonlySet<string>;
   people?: ReadonlySet<string>;
   maxGap?: number;
+  /** Radial only: whether a rung may step sideways. A branch re-laid on a map
+   *  laid out one way should come back the same way. */
+  sideways?: "allow" | "forbid";
   /**
    * **Which driver re-lays the branch.** Defaults to the atlas, as it always
    * has.
@@ -931,7 +934,7 @@ export function relayBranch(options: {
    *  way it always faced — see `compass` on `layoutTerritories`. */
   compass?: ReadonlyMap<string, number>;
 }): { cells: Map<string, Cell>; radius: number } | null {
-  const { tree, anchorId, homeward, leads, people, maxGap, compass, driver } = options;
+  const { tree, anchorId, homeward, leads, people, maxGap, compass, driver, sideways } = options;
   if (!tree.units.get(anchorId)) return null;
 
   /**
@@ -945,7 +948,7 @@ export function relayBranch(options: {
   const laid = lay(
     { ...tree, rootId: anchorId },
     {
-      leads, people, maxGap, compass,
+      leads, people, maxGap, compass, sideways,
       // Away from home, over the same half-turn every other rung fans across.
       // Without this the branch spreads all the way round the node the hand is
       // holding, which puts half of it behind the unit it reports to.
@@ -1051,6 +1054,9 @@ export function allocateByTerritory(
     driver?: HexDriver;
     /** Radial only: how many rings a crowded rung may push its regions out. */
     thicken?: number;
+    /** Radial only: whether a rung may step sideways round the centre rather
+     *  than away from it. See `RadialOptions.sideways`. */
+    sideways?: "allow" | "forbid";
   } = {},
 ): Allocation {
   /**

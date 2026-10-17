@@ -558,3 +558,138 @@ describe("the five-second re-pickup", () => {
     expect([...plain.cells]).toEqual([...atlas.cells]);
   });
 });
+
+describe("sideways steps, and the loopbacks they cause", () => {
+  /**
+   * Greg, 2026-10-17: *"descendants loop back on themselves on the on-load
+   * presentation… what code do we have that's attempting to prevent this? What
+   * is preventing that code from working?"*
+   *
+   * The answer was that the thing meant to prevent it — Law 3's gate — only
+   * forbids a rung that goes *inward*, and Law 3 says so on purpose: *"equal
+   * distance is allowed; nearer is not."* A rung that goes neither in nor out
+   * still takes you round the centre rather than away from it, and six of those
+   * is a circle. Measured on a clean load, 21–28% of rungs were doing exactly
+   * that while the panel's curl-back figure read nought.
+   */
+  const ORIGIN_CELL: Cell = { q: 0, r: 0 };
+
+  /** Rungs that take you no further from the centre than your parent. */
+  const sidewaysRungs = (tree: OrbitalTree, cells: ReadonlyMap<string, Cell>, places: ReadonlySet<string>) => {
+    let level = 0;
+    let of = 0;
+    for (const unit of tree.units.values()) {
+      if (!places.has(unit.id)) continue;
+      const own = cells.get(unit.id);
+      const parent = unit.parentId ? cells.get(unit.parentId) : null;
+      if (!own || !parent) continue;
+      of++;
+      if (hexDistance(own, ORIGIN_CELL) <= hexDistance(parent, ORIGIN_CELL)) level++;
+    }
+    return { level, of };
+  };
+
+  it("forbids them by default, which is Law 3 since 2026-10-17", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const places = new Set([...tree.units.keys()].filter((id) => !people.has(id)));
+    const laid = layoutRadial(tree, { people });
+    const { level, of } = sidewaysRungs(tree, laid.cells, places);
+    expect(of).toBeGreaterThan(20);
+    expect(laid.stats.unplaced).toBe(0);
+    expect(level).toBe(0);
+  });
+
+  it("still has the older rule, so the two can be put side by side", () => {
+    // `allow` is Law 3 as it read until 2026-10-17. It is kept because that is
+    // how the trade was settled, and because a test that can still produce the
+    // fault is the only proof the fix is doing anything.
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const places = new Set([...tree.units.keys()].filter((id) => !people.has(id)));
+    const laid = layoutRadial(tree, { people, sideways: "allow" });
+    expect(sidewaysRungs(tree, laid.cells, places).level).toBeGreaterThan(0);
+  });
+
+  /**
+   * Law 3: *"an individual person is pushed outward, never forbidden from the
+   * near side."* So this setting may **push** a person harder — it feeds the
+   * ranking as well as the gate — but it may never become a wall for one.
+   *
+   * The first cut of this test asserted that a company of nothing but people
+   * came out identical under both settings, on the reasoning that the gate is
+   * applied to places only. That was wrong, and usefully so: `inward` is also a
+   * term in the ranking, so under `forbid` a person prefers an outward cell more
+   * strongly while still being allowed the near one. Pushed harder, not walled —
+   * which is the law, said properly.
+   */
+  it("pushes a person outward without ever forbidding them the near side", () => {
+    const tree = treeOf(1000, 8);
+    const everyone = new Set(tree.units.keys());
+    const allow = layoutRadial(tree, { people: everyone, sideways: "allow" });
+    const forbid = layoutRadial(tree, { people: everyone, sideways: "forbid" });
+
+    expect(forbid.stats.unplaced).toBe(0);
+    expect(forbid.stats.placed).toBe(tree.units.size);
+
+    const level = (laid: typeof allow) => {
+      let n = 0;
+      for (const unit of tree.units.values()) {
+        const own = laid.cells.get(unit.id);
+        const parent = unit.parentId ? laid.cells.get(unit.parentId) : null;
+        if (!own || !parent) continue;
+        if (hexDistance(own, ORIGIN_CELL) <= hexDistance(parent, ORIGIN_CELL)) n++;
+      }
+      return n;
+    };
+    // Pushed: fewer people sit level with or inside their parent.
+    expect(level(forbid)).toBeLessThan(level(allow));
+    /**
+     * **Not walled, shown by nobody going unplaced rather than by somebody
+     * taking the near side.**
+     *
+     * On these companies `level(forbid)` is nought — an outward cell is always
+     * available, so the near side is never *needed*, and a test asserting that
+     * somebody still takes it would be asserting the shape of the fixture. What
+     * the law actually promises is that a person is never refused, and a refusal
+     * would show up here as an unplaced unit, which is asserted above.
+     */
+    expect(level(forbid)).toBe(0);
+  });
+
+  /**
+   * **Rotation is what makes this tidy's problem too.** A turn keeps a branch's
+   * shape exactly, so nothing inside it moves relative to anything else inside
+   * it — but every member's distance from the master centre changes. Measured
+   * before tidy learnt the law, one tidy on a clean load put back 3 of 12
+   * sideways rungs on the 45-person company and 7 of 164 on the 1,000-person
+   * one. It costs a handful of turns: 58 down to 52 on the larger company.
+   */
+  it("survives a tidy", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const places = new Set([...tree.units.keys()].filter((id) => !people.has(id)));
+    const laid = layoutRadial(tree, { people });
+    const tidied = neaten(tree, laid.cells, new Set(), 100, laid.spacedBy, people);
+    const after = new Map(laid.cells);
+    for (const [id, cell] of tidied.cells) after.set(id, cell);
+    expect(sidewaysRungs(tree, after, places).level).toBe(0);
+  });
+
+  it("keeps the spacer rule whichever way it is set", () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    const { mayTouch } = spacerRule(tree, people);
+    for (const sideways of ["allow", "forbid"] as const) {
+      const laid = layoutRadial(tree, { people, sideways });
+      const at = new Map<string, string>();
+      for (const [id, cell] of laid.cells) at.set(cellKey(cell), id);
+      for (const [id, cell] of laid.cells) {
+        for (const near of neighbours(cell)) {
+          const other = at.get(cellKey(near));
+          if (other !== undefined && other !== id) expect(mayTouch(id, other)).toBe(true);
+        }
+      }
+    }
+  });
+});
