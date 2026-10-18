@@ -36,8 +36,7 @@ import {
   restBranch,
   type HexDriver,
 } from "@/lib/map/layout/hex/territory";
-import { bubblesFor, grow } from "@/lib/map/layout/hex/bubbles";
-import { spacerRule } from "@/lib/map/layout/hex/spacing";
+import { bubblesFor, groupRingsFor, grow } from "@/lib/map/layout/hex/bubbles";
 import {
   branchOf,
   dropOutcome,
@@ -621,17 +620,9 @@ export default function HexLab({
    */
   const groupRings = useMemo(() => {
     if (!hexScene || peopleIds.size === 0) return [];
-    const { groupFor } = spacerRule(tree, peopleIds);
-    const byGroup = new Map<string, Cell[]>();
-    for (const [id, cell] of hexScene.hex.cells) {
-      const group = groupFor(id);
-      if (!group) continue;
-      const had = byGroup.get(group);
-      if (had) had.push(cell); else byGroup.set(group, [cell]);
-    }
-    return [...byGroup.values()].map(
-      (cells) => outline(grow(grow(cells)), hexScene.hex.size),
-    );
+    return groupRingsFor({
+      tree, cells: hexScene.hex.cells, people: peopleIds, size: hexScene.hex.size,
+    });
   }, [hexScene, tree, peopleIds]);
 
   const teamSpacers = useMemo(() => {
@@ -1039,11 +1030,9 @@ export default function HexLab({
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
       ctx.beginPath();
-      for (const segments of groupRings) {
-        for (const seg of segments) {
-          ctx.moveTo(seg.from.x, seg.from.y);
-          ctx.lineTo(seg.to.x, seg.to.y);
-        }
+      for (const seg of groupRings) {
+        ctx.moveTo(seg.from.x, seg.from.y);
+        ctx.lineTo(seg.to.x, seg.to.y);
       }
       ctx.stroke();
     }

@@ -11,7 +11,11 @@
 import { describe, expect, it } from "vitest";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
-import { BUBBLE_TIER, bubbleClashes, bubblesFor, grow, subtreeCells } from "@/lib/map/layout/hex/bubbles";
+import {
+  BUBBLE_TIER, bubbleClashes, bubblesFor, groupRingsFor, grow, subtreeCells,
+} from "@/lib/map/layout/hex/bubbles";
+import { spacerRule } from "@/lib/map/layout/hex/spacing";
+import { outline } from "@/lib/map/layout/hex/arrange";
 import { allocateByTerritory, type HexDriver } from "@/lib/map/layout/hex/territory";
 import { cellKey, hexDistance, type Cell } from "@/lib/map/layout/hex/coords";
 
@@ -274,5 +278,113 @@ describe("regions tile, and meet at a frontier", () => {
     }
     const after = bubblesFor({ tree, cells: hand, tier: allocation.tier!, size: 100 });
     expect(bubbleClashes(tree, after)).toBeGreaterThan(0);
+  });
+});
+
+describe("the ring round a group of teams", () => {
+  /**
+   * Greg, 2026-10-18: *"where two regions touch, we shouldn't see the outline
+   * of both. They should appear to bubble together."*
+   *
+   * A group's ring reaches two hexagons — its teams' own spacers, then the
+   * group's — and two groups sit three cells apart, so grown independently each
+   * one's ring crosses the gap and draws a boundary through the other's ground.
+   * The ground is shared out first, so they meet at one membrane.
+   */
+  const treeOf = (people: number, maxDepth: number): OrbitalTree => {
+    const org = buildDeepOrg("hexlab", { people, maxDepth, seed: 7 });
+    return buildOrbitalTree(
+      {
+        units: org.units.map((u) => ({
+          id: u.id, name: u.name, parentId: u.parentId ?? null,
+          leadPersonId: u.leadPersonId ?? null,
+        })),
+        people: org.people.map((p) => ({ id: p.id, name: p.name })),
+        assignments: org.assignments.map((a) => ({
+          personId: a.personId, orgUnitId: a.orgUnitId, allocationPct: a.allocationPct ?? 100,
+        })),
+      },
+      { mergePassThroughRoot: false, workCountFor: () => 6 },
+    );
+  };
+
+  const laidOutWithPeople = (people = 1000, depth = 8) => {
+    const tree = treeOf(people, depth);
+    const crowd = new Set(
+      [...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id),
+    );
+    const allocation = allocateByTerritory(tree, {
+      people: crowd, driver: "radial", sideways: "forbid",
+    });
+    return { tree, crowd, allocation };
+  };
+
+  /** The same thing without sharing: every group grown twice on its own. */
+  const unshared = (
+    tree: OrbitalTree,
+    crowd: Set<string>,
+    cells: ReadonlyMap<string, Cell>,
+    size: number,
+  ) => {
+    const { groupFor } = spacerRule(tree, crowd);
+    const byGroup = new Map<string, Cell[]>();
+    for (const [id, cell] of cells) {
+      const group = groupFor(id);
+      if (!group) continue;
+      const had = byGroup.get(group);
+      if (had) had.push(cell); else byGroup.set(group, [cell]);
+    }
+    return [...byGroup.values()].flatMap((own) => outline(grow(grow(own)), size));
+  };
+
+  it("draws one wall where two groups meet, not two", () => {
+    const { tree, crowd, allocation } = laidOutWithPeople();
+    const shared = groupRingsFor({
+      tree, cells: allocation.cells, people: crowd, size: 100,
+    });
+    const both = unshared(tree, crowd, allocation.cells, 100);
+    expect(shared.length).toBeGreaterThan(50);
+    // Sharing the ground out, and then drawing each edge once, is strictly less
+    // line than letting every group draw its own boundary through its
+    // neighbour's ring.
+    expect(shared.length).toBeLessThan(both.length);
+  });
+
+  it("never draws the same edge twice, so a shared wall is no darker", () => {
+    const { tree, crowd, allocation } = laidOutWithPeople();
+    const walls = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    const seen = new Set<string>();
+    const at = (n: number) => Math.round(n * 100) / 100;
+    for (const seg of walls) {
+      const a = `${at(seg.from.x)},${at(seg.from.y)}`;
+      const b = `${at(seg.to.x)},${at(seg.to.y)}`;
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+  });
+
+  it("is a pure function of the company, like everything else here", () => {
+    const { tree, crowd, allocation } = laidOutWithPeople(45, 4);
+    const once = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    const again = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    expect(once).toEqual(again);
+  });
+
+  it("draws them in the teams view too, where the leaves are the teams", () => {
+    /**
+     * Written the other way round first — *"nothing to draw when nobody is a
+     * person"* — and that was a guess about the code rather than a statement
+     * about the map. A team is a structural node whose children are all people,
+     * and a node with no children satisfies that vacuously, so in the view that
+     * has no people at all the **leaves** are the teams and their parents are
+     * the groups. Which is what should happen: the same grouping, read at
+     * whatever the smallest unit on screen is.
+     */
+    const { tree, allocation } = laidOutWithPeople();
+    const walls = groupRingsFor({
+      tree, cells: allocation.cells, people: new Set<string>(), size: 100,
+    });
+    expect(walls.length).toBeGreaterThan(50);
   });
 });

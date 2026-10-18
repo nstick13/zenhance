@@ -60,8 +60,9 @@
  * gap between anything.
  */
 import type { OrbitalTree } from "@/lib/map/layout/model";
-import { type Cell, cellKey, neighbours } from "@/lib/map/layout/hex/coords";
+import { type Cell, cellFromKey, cellKey, neighbours } from "@/lib/map/layout/hex/coords";
 import { outline, type Segment } from "@/lib/map/layout/hex/arrange";
+import { spacerRule } from "@/lib/map/layout/hex/spacing";
 
 /** Tier at or above which a unit is drawn a bubble. Nought is a team. */
 export const BUBBLE_TIER = 1;
@@ -354,4 +355,110 @@ export function bubbleClashes(tree: OrbitalTree, bubbles: readonly Bubble[]): nu
     }
   }
   return clashes;
+}
+
+/**
+ * **The ring a group of teams keeps, as one set of walls rather than two.**
+ *
+ * Greg, 2026-10-18: *"where two regions touch, we shouldn't see the outline of
+ * both. They should appear to bubble together."*
+ *
+ * Which is the same finding as the skirt partition above, arriving at the line
+ * this time instead of at the wash. A group's ring is its own ground grown by
+ * **two** hexagons — its teams' spacers, then the group's own — and two groups
+ * sit three cells apart, so each one's second ring reaches all the way across
+ * the gap to the other's doorstep. Grown independently they overlap, and each
+ * draws a boundary *through* the other's ground: two lines with a band between
+ * them, which is what Greg saw. Soap bubbles do not do this. They meet at one
+ * membrane.
+ *
+ * So the ground between groups is **shared out before it is drawn**, by a
+ * flood from every group at once: a cell goes to whichever group reaches it
+ * first, ties to the lower id so the picture stays a pure function of the
+ * company. Two groups two cells apart take one each, their regions tile, and
+ * the boundary between them is a single edge belonging to both. It is then
+ * **de-duplicated**, because a wall drawn twice is a wall twice as dark, and a
+ * shared wall should look exactly like any other.
+ */
+export function groupRingsFor(options: {
+  tree: OrbitalTree;
+  /** Live cells, so the rings follow a hand that moved something. */
+  cells: ReadonlyMap<string, Cell>;
+  /** Who is a person. Without them there are no teams and so no groups. */
+  people: ReadonlySet<string>;
+  size: number;
+  /** How many hexagons of room the group keeps. Two: the teams' own spacer,
+   *  then the group's. */
+  rings?: number;
+}): Segment[] {
+  const { tree, cells, people, size } = options;
+  const rings = options.rings ?? 2;
+  const { groupFor } = spacerRule(tree, people);
+
+  /** Who is standing where, so a ring never swallows somebody else's node. */
+  const standing = new Map<string, string>();
+  for (const [id, cell] of cells) standing.set(cellKey(cell), id);
+
+  /** group id → the cells its own teams and their people stand on. */
+  const own = new Map<string, Cell[]>();
+  for (const [id, cell] of cells) {
+    const group = groupFor(id);
+    if (!group) continue;
+    const had = own.get(group);
+    if (had) had.push(cell); else own.set(group, [cell]);
+  }
+  if (own.size === 0) return [];
+
+  /**
+   * **A flood from every group at once**, which is what shares the ground out.
+   * Reaching a cell first is what *being more inside* a region means, and it
+   * costs one pass rather than a comparison for every contested cell.
+   */
+  const claimed = new Map<string, { group: string; ring: number }>();
+  const region = new Map<string, Set<string>>();
+  let frontier: { cell: Cell; group: string }[] = [];
+  for (const [group, mine] of own) {
+    region.set(group, new Set());
+    for (const cell of mine) {
+      const key = cellKey(cell);
+      claimed.set(key, { group, ring: 0 });
+      region.get(group)!.add(key);
+      frontier.push({ cell, group });
+    }
+  }
+  for (let ring = 1; ring <= rings; ring++) {
+    const next: { cell: Cell; group: string }[] = [];
+    // Sorted so that two groups reaching one cell on the same ring settle it
+    // by id rather than by whichever happened to be walked first.
+    frontier.sort((a, b) => a.group.localeCompare(b.group));
+    for (const { cell, group } of frontier) {
+      for (const near of neighbours(cell)) {
+        const key = cellKey(near);
+        const taken = claimed.get(key);
+        if (taken) continue;
+        // Somebody else's node keeps its own cell; a ring is room, not ground
+        // to annex.
+        const sitting = standing.get(key);
+        if (sitting !== undefined && groupFor(sitting) !== group) continue;
+        claimed.set(key, { group, ring });
+        region.get(group)!.add(key);
+        next.push({ cell: near, group });
+      }
+    }
+    frontier = next;
+  }
+
+  /** One wall per edge, however many regions meet along it. */
+  const walls = new Map<string, Segment>();
+  const at = (n: number) => Math.round(n * 100) / 100;
+  for (const mine of region.values()) {
+    const shape: Cell[] = [];
+    for (const key of mine) shape.push(cellFromKey(key));
+    for (const seg of outline(shape, size)) {
+      const a = `${at(seg.from.x)},${at(seg.from.y)}`;
+      const b = `${at(seg.to.x)},${at(seg.to.y)}`;
+      walls.set(a < b ? `${a}|${b}` : `${b}|${a}`, seg);
+    }
+  }
+  return [...walls.values()];
 }
