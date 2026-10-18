@@ -24,6 +24,19 @@ import { cellKey, hexDistance, neighbours, type Cell } from "@/lib/map/layout/he
 
 const ORIGIN: Cell = { q: 0, r: 0 };
 
+/** The world bearing from one cell to another — `cellToWorld`'s own geometry,
+ *  so an angle is not skewed by the two axes being scaled differently. */
+const bearing = (from: Cell, to: Cell): number => {
+  const dq = to.q - from.q;
+  const dr = to.r - from.r;
+  return Math.atan2(Math.sqrt(3) * (dr + dq / 2), 1.5 * dq);
+};
+/** How far apart two bearings are, the short way round. */
+const apart = (a: number, b: number): number => {
+  const d = Math.abs(a - b) % (2 * Math.PI);
+  return d > Math.PI ? 2 * Math.PI - d : d;
+};
+
 const treeOf = (people: number, maxDepth: number): OrbitalTree => {
   const org = buildDeepOrg("hexlab", { people, maxDepth, seed: 7 });
   return buildOrbitalTree(
@@ -261,7 +274,7 @@ describe("Law 4 — the gap is one measure, read from both sides", () => {
   });
 });
 
-describe("Greg's radiating rule, which the chart now serves", () => {
+describe("Greg's radiating rule, and the circle at the far end", () => {
   /**
    * Greg, 2026-10-02: *"if I drag a family group away from a shared parent, the
    * highest-ranking node in the dragged group should position itself closest to
@@ -269,32 +282,43 @@ describe("Greg's radiating rule, which the chart now serves", () => {
    * line flows freely from that node to the parent uninterrupted — like a leaf
    * on a branch."*
    *
-   * Under the old mechanism that was read against the branch's *own parent*.
-   * It is now read against the **master centre**, which is what Greg asked for
-   * on 2026-10-17 — *"the orientation should always be on the side of the
-   * dragged node opposite master-centre"* — and the two agree wherever the
-   * parent is on the way home, which is wherever the map is radial at all.
+   * Read against the **master centre** since 2026-10-17, which is what Greg
+   * asked for: *"the orientation should always be on the side of the dragged
+   * node opposite master-centre."*
    */
   const c = company();
 
-  it("puts the branch on the far side of the node you dragged", () => {
-    const laid = dropAt(c, 8);
-    const reach = hexDistance(laid.hand, ORIGIN);
-    let outward = 0;
-    let of = 0;
+  it("grows away from the master centre, mostly within a half-turn", () => {
+    const laid = dropAt(c, 20);
+    const away = bearing(laid.hand, ORIGIN);
+    const off: number[] = [];
     for (const [id, cell] of laid.cells) {
       if (id === c.anchor.id) continue;
-      of++;
-      if (hexDistance(cell, ORIGIN) > reach) outward++;
+      off.push(apart(bearing(cell, laid.hand), away));
     }
-    expect(of).toBeGreaterThan(20);
-    // Not every single cell: a crowd packs round its node and half of any ring
-    // round a node is nearer the centre than the node is.
-    expect(outward / of).toBeGreaterThan(0.75);
+    expect(off.length).toBeGreaterThan(20);
+    /**
+     * **Mostly, and the exception is the dial rather than the fan.**
+     *
+     * The branch is laid over a half-turn away from home, so ±90° is what its
+     * own shape asks for — and 14% of it sits further round than that, up to
+     * 126°. That is deference still working at the far end: the pull toward a
+     * body's home cell is `δ · (distance home)`, and since `δ` is the rung's
+     * floor over that distance, the pull **converges to the floor** — about 22
+     * cells here, however far out the hand goes. Each body is pulled toward its
+     * own home rather than all in one direction, so the fan is sheared into
+     * something rounder. Greg asked for *"a tendency toward a circular
+     * arrangement"*, so this is the dial doing its job and not a leak; what
+     * would be wrong is the branch wrapping all the way round the hand.
+     */
+    const behind = off.filter((d) => d > Math.PI / 2 + 0.2).length;
+    expect(behind / off.length).toBeLessThan(0.25);
+    const mean = off.reduce((a, b) => a + b, 0) / off.length;
+    expect(mean).toBeLessThan(Math.PI / 2);
   });
 
   it("leaves the way home open, so the chain can run straight", () => {
-    const laid = dropAt(c, 8);
+    const laid = dropAt(c, 20);
     const taken = new Set([...laid.cells.values()].map(cellKey));
     const steps = hexDistance(laid.hand, ORIGIN);
     let clear = 0;
@@ -306,61 +330,102 @@ describe("Greg's radiating rule, which the chart now serves", () => {
       });
       if (!taken.has(key)) clear++;
     }
-    // The straight line from the node back to the master centre is the branch's
-    // own way home, and the branch is not standing on it.
     expect(clear).toBe(steps - 1);
+  });
+
+  /**
+   * **Circular, not linear — which is the whole of the 18 October change.**
+   *
+   * The far end was an org chart for a day. A tidy tree's width grows with its
+   * leaves, so it came out as a ribbon: 863 cells by 8 for a branch that
+   * occupies 93 rings on the map, nine times too wide for a division. Greg,
+   * having looked: *"math and reality collide to produce elongated less legible
+   * results… a tendency toward a circular arrangement rather than a linear
+   * one."* So the branch is laid by the same radial driver that drew the map,
+   * and this is the test that says it has not gone back to a ribbon.
+   */
+  it("clusters round the node rather than stringing out", () => {
+    const laid = dropAt(c, 20);
+    const out: number[] = [];
+    const across: number[] = [];
+    const away = bearing(laid.hand, ORIGIN);
+    for (const [id, cell] of laid.cells) {
+      if (id === c.anchor.id) continue;
+      const d = hexDistance(cell, laid.hand);
+      const off = apart(bearing(cell, laid.hand), away);
+      out.push(d * Math.cos(off));
+      across.push(d * Math.sin(off));
+    }
+    const span = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
+    // A ribbon is a hundred to one. A body laid about its own node is within a
+    // small factor either way, whichever axis you measure.
+    const ratio = span(out) / Math.max(1, span(across));
+    expect(ratio).toBeGreaterThan(0.25);
+    expect(ratio).toBeLessThan(4);
+  });
+
+  it("is no bigger than the branch's own shape says it is", () => {
+    const laid = dropAt(c, 20);
+    let far = 0;
+    for (const [id, cell] of laid.cells) {
+      if (id === c.anchor.id) continue;
+      far = Math.max(far, hexDistance(cell, laid.hand));
+    }
+    // Its own radial shape, which is what it was laid from. Room for the snap
+    // to have moved somebody aside, and nothing like the chart's nine times.
+    expect(far).toBeLessThanOrEqual(laid.afar.radius * 1.5 + 4);
   });
 });
 
-describe("the two ends of the dial", () => {
+describe("it does this because of where you put it, not because you picked it up", () => {
+  /**
+   * **The question Greg asked, and the answer the dial gives.** Having seen the
+   * circular far end he wondered whether he had talked himself back into the
+   * behaviour retired the day before — *"each node becoming its own master
+   * centre the further away from true master it becomes?"*
+   *
+   * It is not the same, and this is the test that says why. The retired
+   * behaviour laid a branch about its own node **whatever the distance**: nudge
+   * it two cells and it still re-centred on itself. Here the same branch, the
+   * same gesture, two different distances: near the centre it goes back to the
+   * master centre's own cells, and far from it, it is laid about itself.
+   */
   const c = company();
 
-  it("hands a descendant back to the master centre's own cell, at full deference", () => {
-    const laid = dropAt(c, 1);
-    let back = 0;
+  it("goes home when the hand puts it back where its rung belongs", () => {
+    const near = dropAt(c, 1);
+    let same = 0;
     let of = 0;
-    for (const [id, cell] of laid.cells) {
+    for (const [id, cell] of near.cells) {
       if (id === c.anchor.id) continue;
       const was = c.laid.cells.get(id);
       if (!was) continue;
       of++;
-      if (cellKey(cell) === cellKey(was)) back++;
+      if (cellKey(cell) === cellKey(was)) same++;
     }
-    expect(of).toBeGreaterThan(20);
-    // Everything a rung or more below the hand goes back where it was. Not all
-    // of it: the node's own crowd travels with the node, which is Law 2, and
-    // the taper is one rung, so the first rung is the one that moved.
-    expect(back / of).toBeGreaterThan(0.8);
+    expect(same / of).toBeGreaterThan(0.8);
   });
 
-  it("does not become its own master centre, which is the whole point", () => {
-    /**
-     * The retired model laid the branch as a company of its own, so its
-     * sub-branches fanned **all the way round** the node in the hand. Measured
-     * on Northwind, Everest Region's three business units then overlapped one
-     * another by 152° as seen from Everest. A chart does not fan: it grows one
-     * way, away from the master centre.
-     */
-    const laid = dropAt(c, 8);
-    const bearings: number[] = [];
-    for (const [id, cell] of laid.cells) {
-      if (id === c.anchor.id) continue;
-      const dq = cell.q - laid.hand.q;
-      const dr = cell.r - laid.hand.r;
-      bearings.push(Math.atan2(Math.sqrt(3) * (dr + dq / 2), 1.5 * dq));
-    }
-    const away = Math.atan2(
-      Math.sqrt(3) * (laid.hand.r + laid.hand.q / 2),
-      1.5 * laid.hand.q,
-    );
-    const off = bearings.map((b) => {
-      const d = Math.abs(b - away) % (2 * Math.PI);
-      return d > Math.PI ? 2 * Math.PI - d : d;
-    });
-    // Three quarters of the branch within a right angle of straight out. Under
-    // the retired model this was a fan over the whole circle.
-    const inFront = off.filter((d) => d < Math.PI / 2).length;
-    expect(inFront / off.length).toBeGreaterThan(0.75);
+  it("lays itself about itself only when the hand takes it away", () => {
+    const near = dropAt(c, 1);
+    const afar = dropAt(c, 20);
+    /** How much of the branch is where the master centre would have it. */
+    const athome = (laid: ReturnType<typeof dropAt>) => {
+      let same = 0;
+      let of = 0;
+      for (const [id, cell] of laid.cells) {
+        if (id === c.anchor.id) continue;
+        const was = c.laid.cells.get(id);
+        if (!was) continue;
+        of++;
+        // Allowing for the whole branch having been carried: what matters is
+        // whether it kept the master centre's *arrangement*, not its address.
+        if (hexDistance(cell, was) <= 2) same++;
+      }
+      return same / of;
+    };
+    expect(athome(near)).toBeGreaterThan(0.8);
+    expect(athome(afar)).toBeLessThan(0.2);
   });
 });
 

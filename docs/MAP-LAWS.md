@@ -100,8 +100,16 @@ far the hand took it from where its own rung belongs:
 Put a node back inside its rung's floor and its branch goes back to the picture
 the master centre drew, with the hand's own cell kept — a wedge with its tip at
 your hand. Take it far out and the master centre stops being relevant: the
-branch becomes an orderly chart, growing away from the centre. Everything in
-between is in between. The law itself does not change: Law 0 still says the unit
+branch is laid about its own node by the same radial driver that drew the map,
+growing away from the centre. Everything in between is in between.
+
+**This is not the behaviour retired on 17 October**, which did that *whatever the
+distance* and through the relative-arc driver, so a branch's children fanned
+right round it. The local arrangement was never the fault; applying it
+unconditionally was. (It was an org chart for a day in between — legible, and
+the wrong shape at scale: a tidy tree's width grows with its leaves, so a
+2,811-unit division charted 1,933 cells wide against the 217 it occupies on the
+map.) The law itself does not change: Law 0 still says the unit
 you aimed at keeps its cell, and it is the only cell in the branch the engine may
 not choose. The mechanism is `deferBranch` in `lib/map/layout/hex/defer.ts`, and
 the write-up is in [HEX-LAYOUT.md](HEX-LAYOUT.md) § The hand and the centre.

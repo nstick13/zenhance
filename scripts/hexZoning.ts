@@ -91,7 +91,7 @@ export function drag(key: CompanyKey, strata: Strata, branchName?: string) {
       + `  deference ${moved.deference.toFixed(2)}`
       + `  ${ms.toFixed(0)}ms`.padEnd(8)
       + `  hand kept ${moved.held ? "yes" : "no "}`
-      + `  chart ${String(moved.chart.width).padStart(4)}×${moved.chart.rows}`
+      + `  its own shape ${String(moved.afar.radius).padStart(3)} rings`
       + `  two-on-a-cell ${doubled}`
       + `  spacer ${String(breaches(now)).padStart(2)}`
       + `  teams ${t.whole}/${t.teams}`.padEnd(14)

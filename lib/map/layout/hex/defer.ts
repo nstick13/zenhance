@@ -64,9 +64,43 @@
  *  - **The master centre's picture** is the *calculated* layout, handed in. No
  *    recomputation and, more to the point, no second opinion: at full deference
  *    a descendant goes back to the cell master-centre gave it.
- *  - **The orderly chart** is `chartShape`, turned to grow away from the master
- *    centre. See that file for why it is square and why it charts places rather
- *    than people.
+ *  - **The branch's own picture** is the same radial driver that drew the map,
+ *    run on the branch alone with the node in your hand at its centre, turned to
+ *    grow away from the master centre. `branchShape`, below.
+ *
+ * ### The far end was an org chart for a day, and that was wrong at scale
+ *
+ * Greg asked for *"a normal org chart"* far from the centre and it was built as
+ * one: a tidy tree, square on the lattice, charting places and leaving people at
+ * their team's door. It is legible and it is the wrong shape, because **a tidy
+ * tree's width grows with its leaves while the map grows with the square root of
+ * its units**, so the two scale apart:
+ *
+ * | branch | units | across, on the map | as a chart |
+ * | --- | ---: | ---: | ---: |
+ * | Granite Division | 2,811 | 217 | 1,933 × 11 |
+ * | Orchid Business Unit | 707 | 157 | 483 × 9 |
+ * | Iris Chapter | 266 | 115 | 177 × 8 |
+ * | Ridge Domain | 113 | 93 | 75 × 5 |
+ * | Beacon Cluster | 24 | 25 | 9 × 2 |
+ *
+ * Below about 150 units a chart is *narrower* than the branch already was, and
+ * above it the chart runs away — nine times too wide by a division, which on
+ * screen is a thin ribbon across the whole map. Greg, having looked: *"math and
+ * reality collide to produce elongated less legible results… I think we need to
+ * preserve the spacing around master-centre, but reinstate the way the leaf
+ * clustering happened the further away it gets… a tendency toward a circular
+ * arrangement rather than a linear one."*
+ *
+ * **So the far end is radial again — but it is not the behaviour that was
+ * retired.** That one laid every picked-up branch as its own company *whatever
+ * the distance*, and it did it through the relative-arc driver, which fanned a
+ * branch's children right round it: Everest Region's three business units
+ * overlapped one another by **152°**. Through today's driver the same branch
+ * comes out as clean wedges — **0° overlap**, spans of 74°, 63° and 46° — and at
+ * **101 rings for 1,258 units against the 93 it occupies on the map**, where the
+ * chart wanted 863. The local arrangement was never the fault. Applying it
+ * unconditionally was, and that is what the dial fixes.
  *
  * A unit's target is the two lerped by `t(k)` and rounded to a cell; it is then
  * seated at the nearest cell that is free and breaches nobody's spacer. Greg's
@@ -94,7 +128,7 @@ import {
   worldAngle,
 } from "@/lib/map/layout/hex/coords";
 import { RUNGS_PER_HEX, gapFor, leastApart, spacerRule } from "@/lib/map/layout/hex/spacing";
-import { chartShape, type ChartShape } from "@/lib/map/layout/hex/chart";
+import { relayBranch } from "@/lib/map/layout/hex/territory";
 
 const ORIGIN: Cell = { q: 0, r: 0 };
 const SIXTH = Math.PI / 3;
@@ -120,17 +154,65 @@ export const TAPER_RUNGS = 1;
  *  it is a guard rather than a design decision, like the driver's `BAND_REACH`. */
 const SNAP_REACH = 24;
 
+export type BranchShape = {
+  /** unit id → where it sits relative to the node in the hand, laid about that
+   *  node and growing along +x. Turned onto its real bearing by `deferBranch`. */
+  offsets: Map<string, Cell>;
+  /** How many rings the branch reaches from its own node. */
+  radius: number;
+};
+
+/**
+ * **The branch as a company of its own**, anchor at the origin, growing along
+ * +x — which `deferBranch` then turns to face away from the master centre.
+ *
+ * It is the same radial driver that drew the map, which is the point: a branch
+ * far from the centre arranges itself the way the company does, circular and
+ * clustered, rather than in some second idea of a layout. `relayBranch` has done
+ * exactly this since 2026-10-16 and it is unchanged — what changed is that it is
+ * now **one end of a dial** rather than what happens to every picked-up branch.
+ *
+ * **Worked out once, when the gesture arms.** A branch's own shape does not
+ * depend on where you drop it, only on which way it is turned, and turning a
+ * lattice shape by sixths is exact. So the costly half (26ms for the largest
+ * branch on Northwind) is computed once and carried, and the half that *does*
+ * depend on the hand — the deference blend — is a lerp and a snap. Hand it in
+ * through `afar` to get that; leave it out and it is computed on the spot.
+ */
+export function branchShape(args: {
+  tree: OrbitalTree;
+  anchorId: string;
+  people?: ReadonlySet<string>;
+  leads?: ReadonlySet<string>;
+  maxGap?: number;
+  sideways?: "allow" | "forbid";
+}): BranchShape {
+  const laid = relayBranch({
+    tree: args.tree,
+    anchorId: args.anchorId,
+    // Pointing the branch along +x in its own frame: `relayBranch` grows a
+    // branch *away* from home, and a home due west is a branch due east.
+    homeward: { q: -2, r: 1 },
+    leads: args.leads,
+    people: args.people,
+    maxGap: args.maxGap,
+    driver: "radial",
+    sideways: args.sideways ?? "forbid",
+  });
+  return { offsets: laid?.cells ?? new Map(), radius: laid?.radius ?? 0 };
+}
+
 export type DeferResult = {
   /** unit id → the cell it should stand on, in the map's own frame. */
   cells: Map<string, Cell>;
   /** How much this placement answered to the master centre: 1 is "as the master
-   *  centre would have it", 0 is "an orderly chart of its own". On the panel. */
+   *  centre would have it", 0 is "laid about itself". On the panel. */
   deference: number;
   /** Whether the node is on the very cell the hand let go of. False only when
    *  somebody who is not moving was already standing there — Law 1. */
   held: boolean;
-  /** Which sixth of a turn the chart was rotated by, and how big it is. */
-  chart: ChartShape & { turns: number };
+  /** The branch's own shape and which sixth of a turn it was put on. */
+  afar: BranchShape & { turns: number };
 };
 
 /**
@@ -156,8 +238,12 @@ export function deferBranch(args: {
   /** unit id → rungs of places beneath it, from the same layout. */
   tier?: ReadonlyMap<string, number>;
   people?: ReadonlySet<string>;
+  leads?: ReadonlySet<string>;
   taper?: number;
   rungs?: number;
+  /** The branch's own shape, from `branchShape`, worked out once when the
+   *  gesture armed. Computed here when it is not handed in. */
+  afar?: BranchShape;
 }): DeferResult {
   const { tree, anchorId, hand, calculated, occupants, floors } = args;
   const people = args.people ?? new Set<string>();
@@ -165,8 +251,9 @@ export function deferBranch(args: {
   const taper = Math.max(1, args.taper ?? TAPER_RUNGS);
   const anchor = tree.units.get(anchorId);
   const cells = new Map<string, Cell>();
-  const chart = chartShape({ tree, anchorId, people, rungs });
-  if (!anchor) return { cells, deference: 1, held: false, chart: { ...chart, turns: 0 } };
+  const afar = args.afar
+    ?? branchShape({ tree, anchorId, people, leads: args.leads });
+  if (!anchor) return { cells, deference: 1, held: false, afar: { ...afar, turns: 0 } };
 
   // --- the dial ------------------------------------------------------------
 
@@ -194,8 +281,8 @@ export function deferBranch(args: {
    * drift, however many times it is turned.
    */
   const turns = Math.round(worldAngle(ORIGIN, hand, 1) / SIXTH);
-  const chartAt = (id: string): Cell | null => {
-    const offset = chart.offsets.get(id);
+  const afarAt = (id: string): Cell | null => {
+    const offset = afar.offsets.get(id);
     if (!offset) return null;
     const turned = rotateCell(offset, ORIGIN, turns);
     return { q: hand.q + turned.q, r: hand.r + turned.r };
@@ -423,10 +510,10 @@ export function deferBranch(args: {
     }
     const below = Math.max(0, (tree.units.get(body)?.depth ?? anchor.depth) - anchor.depth);
     const t = deference * Math.min(1, below / taper);
-    const bodyChart = chartAt(body) ?? hand;
-    if (!master || !bodyMaster) return bodyChart;
+    const bodyAfar = afarAt(body) ?? hand;
+    if (!master || !bodyMaster) return bodyAfar;
     return blend(
-      { q: bodyChart.q + master.q - bodyMaster.q, r: bodyChart.r + master.r - bodyMaster.r },
+      { q: bodyAfar.q + master.q - bodyMaster.q, r: bodyAfar.r + master.r - bodyMaster.r },
       master,
       t,
     );
@@ -477,6 +564,6 @@ export function deferBranch(args: {
   put(anchor);
 
   return {
-    cells, deference, held: !occupied, chart: { ...chart, turns },
+    cells, deference, held: !occupied, afar: { ...afar, turns },
   };
 }

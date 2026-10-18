@@ -2999,6 +2999,97 @@ improvement and a separate change.
 
 ---
 
+## The far end was linear, and is a circle again (2026-10-18)
+
+Greg, having looked at a large branch dropped far out: *"it's clean and legible…
+that's not the criticism. The struggle is that math and reality collide to
+produce elongated less legible results. I think we need to preserve the spacing
+around master-centre, but reinstate the way the leaf clustering happened the
+further away it gets… a tendency toward a circular arrangement rather than a
+linear one."*
+
+And then, which is the better question: *"I've just talked myself into basically
+saying 'undo' haven't I? Because what I've just asked for is each node becoming
+its own master centre the further away from true master it becomes?"*
+
+**No, and the distinction is the whole design.** The behaviour retired on 17
+October laid a picked-up branch about its own node **whatever the distance** —
+nudge it two cells and it still re-centred — and it did so through the
+*relative-arc* driver, which fanned a branch's children right round it: Everest
+Region's three business units overlapped one another by **152°**. Both faults
+are gone independently: the arcs are absolute since 17 October, and the distance
+condition is the dial. So the far end can be the branch laid about its own node
+again, and it comes out as clean wedges — **0° overlap**, spans of 74°, 63° and
+46°.
+
+### Why the chart had to go, in one number
+
+A tidy tree's width grows with its **leaves**; a map grows with the square root
+of its **units**. So they scale apart, and the crossover is sharp:
+
+| branch | units | across, on the map | as a chart |
+| --- | ---: | ---: | ---: |
+| Granite Division | 2,811 | 217 | 1,933 × 11 |
+| Orchid Business Unit | 707 | 157 | 483 × 9 |
+| Iris Chapter | 266 | 115 | 177 × 8 |
+| **Ridge Domain** | **113** | **93** | **75 × 5** |
+| Beacon Cluster | 24 | 25 | 9 × 2 |
+
+Below about 150 units a chart is *narrower* than the branch already was — it
+genuinely tidies, which is what was asked for. Above it the chart runs away, and
+at a division it is a ribbon nine times too wide, which is what Greg saw.
+
+### What the swap costs, measured
+
+Northwind, dropping a branch far from the centre. **The chart wins on line
+crossings and loses on everything else**, and that is worth saying plainly
+because reduced crossings were part of what Greg asked to get back:
+
+| branch dropped far out | | crossings on the map | reaches, from its node |
+| --- | --- | ---: | ---: |
+| Everest Region, 1,258 units | chart | **122** | 513 rings |
+| | its own shape | 268 | **85** |
+| Orchid Business Unit, 707 | chart | **150** | 246 |
+| | its own shape | 175 | **68** |
+| Iris Chapter, 266 | chart | 145 | 119 |
+| | its own shape | **135** | **61** |
+
+A clean load of the same company is 149 crossings. So a chart of a big branch
+actually crosses *less* than the map does at rest — it is planar by construction
+— at three to six times the footprint; a body laid about its own node is compact
+and packs its lines together. Law 5 ranks lines last, and compactness is what
+Greg is optimising, so the body wins; but the trade is real and it is not what
+either of us expected.
+
+The laws hold across the dial, on every company: **nought two-on-a-cell, nought
+spacer breaches** (other than the hand's own node, Law 0 above Law 4), **381–395
+of 395 teams in one piece** against 395 on a clean load, and the dip in the
+middle of the dial is gone — 385 at δ 0.67 where the chart gave 368.
+
+### A residual worth knowing about
+
+The pull toward home is `δ × (distance home)`, and `δ` is the rung's floor over
+that distance — so **the pull converges to the floor**, about 22 cells for a
+rung-3 branch, however far out the hand goes. Each body is pulled toward its own
+home cell rather than all in one direction, so the half-turn fan is sheared into
+something rounder: 14% of the branch sits more than 90° round from straight-out,
+the worst at 126°. Greg asked for a tendency toward circular, so this reads as
+the dial working rather than as a leak — but it is why the far end never becomes
+*purely* the branch's own shape, and if it ever wants to, deference has to fall
+off faster than `1/d` (`1/d²` would do it, at the cost of a weaker middle).
+
+### What it cost in code
+
+`chart.ts` and its eleven tests are deleted; `branchShape` in `defer.ts` is six
+lines over `relayBranch`, which has done exactly this since 16 October. The dial,
+the floors, the spring-back, the crowd travelling as one body, the retirement of
+tidy's turn and of the dead radiate path all stand unchanged. The gesture is back
+to **working the shape out once when it arms** — a branch's shape does not depend
+on where you drop it, only on which way it is turned, and turning a lattice shape
+by sixths is exact.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

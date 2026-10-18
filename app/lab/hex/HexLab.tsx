@@ -25,7 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
-import { TAPER_RUNGS, deferBranch } from "@/lib/map/layout/hex/defer";
+import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
 import { routeAll } from "@/lib/map/layout/hex/route";
 import { layoutCompany } from "@/lib/map/layout/complexity";
 import type { OrbitalScene } from "@/lib/map/layout/layout";
@@ -688,6 +688,17 @@ export default function HexLab({
      * drawing can say which of the three it is showing.
      */
     deference: number | null;
+    /**
+     * **The branch's own shape, worked out once when the gesture armed.**
+     *
+     * Which is where this started: a branch's shape does not change as the hand
+     * moves, only where it lands and which way it is turned. What *does* change
+     * with the hand is how much of that shape is used at all — the deference —
+     * and that half is a lerp. So the 26ms half is computed once and the
+     * per-move half is cheap, which is the arrangement the old code had for the
+     * right reason even though it then froze the wrong thing.
+     */
+    afar: BranchShape | null;
     heldOver: string | null;
     holdSince: number;
   };
@@ -749,10 +760,15 @@ export default function HexLab({
    * unchanged — it has no ring floors and so nothing to defer to.
    */
   const reLay = useCallback(
-    (unitId: string, at: Cell): { cells: Map<string, Cell>; deference: number | null } | null => {
+    (
+      unitId: string,
+      at: Cell,
+      afar?: BranchShape | null,
+    ): { cells: Map<string, Cell>; deference: number | null; afar: BranchShape } | null => {
       if (driver === "radial") {
         const laid = deferBranch({
           tree, anchorId: unitId, hand: at,
+          afar: afar ?? undefined,
           // The master centre's own answer, never the arrangement pasted over
           // it: deference is measured against what the engine would do, so a
           // second pick-up of the same node is derived afresh rather than from
@@ -762,9 +778,10 @@ export default function HexLab({
           floors: baseAllocation.floors ?? [],
           tier: baseAllocation.tier,
           people: peopleIds,
+          leads: leadIds,
           taper,
         });
-        return { cells: laid.cells, deference: laid.deference };
+        return { cells: laid.cells, deference: laid.deference, afar: laid.afar };
       }
       const home = tree.units.get(unitId)?.parentId ?? null;
       const homeCell = home ? hexScene?.hex.cells.get(home) ?? null : null;
@@ -779,7 +796,9 @@ export default function HexLab({
       if (!shape) return null;
       const moving = new Set(branchOf(tree, unitId));
       const rested = restBranch(shape.cells, at, allocation.occupants, moving);
-      return rested ? { cells: rested.cells, deference: null } : null;
+      return rested
+        ? { cells: rested.cells, deference: null, afar: { offsets: shape.cells, radius: shape.radius } }
+        : null;
     },
     [driver, tree, baseAllocation, allocation, peopleIds, leadIds, compass, hexScene, taper],
   );
@@ -1313,7 +1332,10 @@ export default function HexLab({
        * with it so the branch keeps facing the way it always faced.
        */
       const grabbedAt = hexScene.hex.cells.get(hit)!;
-      const relaid = armed ? reLay(hit, grabbedAt) : null;
+      const shape = armed
+        ? branchShape({ tree, anchorId: hit, people: peopleIds, leads: leadIds })
+        : null;
+      const relaid = armed ? reLay(hit, grabbedAt, shape) : null;
       /**
        * **An armed pick-up shows its answer immediately.**
        *
@@ -1333,6 +1355,7 @@ export default function HexLab({
         reshaped: false, radiated: Boolean(relaid),
         armedAt: armed,
         deference: relaid?.deference ?? null,
+        afar: shape,
         heldOver: null, holdAt: world, holdSince: performance.now(),
       });
       return;
@@ -1379,7 +1402,7 @@ export default function HexLab({
        * was to take the branch apart one unit at a time until the pieces fitted.
        */
       if (drag.armedAt) {
-        const relaid = reLay(drag.unitId, target);
+        const relaid = reLay(drag.unitId, target, drag.afar);
         setDrag({
           ...drag, world, target,
           landing: relaid?.cells ?? null,
