@@ -4,8 +4,22 @@
     {
       "name": "zenhance-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3100,
+      "autoPort": false
+    },
+    {
+      "name": "zenhance-lab",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "stage",
+        "lab"
+      ],
+      "port": 3001,
       "autoPort": false
     }
   ]
