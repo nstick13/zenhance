@@ -36,7 +36,8 @@ import {
   restBranch,
   type HexDriver,
 } from "@/lib/map/layout/hex/territory";
-import { BUBBLE_TIER, bubblesFor, grow } from "@/lib/map/layout/hex/bubbles";
+import { bubblesFor, grow } from "@/lib/map/layout/hex/bubbles";
+import { spacerRule } from "@/lib/map/layout/hex/spacing";
 import {
   branchOf,
   dropOutcome,
@@ -595,6 +596,44 @@ export default function HexLab({
    * Only the cells nobody stands on: a ring cell that turns out to be occupied
    * belongs to whoever is standing there.
    */
+  /**
+   * **The ring round a group of teams** — the second hexagon of clear ground,
+   * drawn where it actually is.
+   *
+   * Two things were wrong with the first attempt, and Greg saw both: *"I do not
+   * see the additional perimeter of an additional hexagon around the group of
+   * teams."*
+   *
+   *  - It was drawn as the **tier-1 bubble's** edge, and a bubble is the shape
+   *    *grown by one* — which is exactly where each team's own spacer already
+   *    is. So the line landed on top of the team ring instead of outside it.
+   *    The group's ring is the *second* hexagon out, so the shape is grown
+   *    twice.
+   *  - Tier is about **places**, not about teams: a node only reaches tier 1 if
+   *    its children are big enough to count as places, so on Northwind just
+   *    **51 of the 117 groups of teams** had a bubble at all and the other 66
+   *    were never drawn.
+   *
+   * It now asks `groupFor` — the very function that decides the spacing — so
+   * the line and the ground it draws cannot disagree. One rule, one answer, and
+   * if a group is scattered the pieces each get their own ring for free,
+   * because growing a set of cells knows nothing about whether they touch.
+   */
+  const groupRings = useMemo(() => {
+    if (!hexScene || peopleIds.size === 0) return [];
+    const { groupFor } = spacerRule(tree, peopleIds);
+    const byGroup = new Map<string, Cell[]>();
+    for (const [id, cell] of hexScene.hex.cells) {
+      const group = groupFor(id);
+      if (!group) continue;
+      const had = byGroup.get(group);
+      if (had) had.push(cell); else byGroup.set(group, [cell]);
+    }
+    return [...byGroup.values()].map(
+      (cells) => outline(grow(grow(cells)), hexScene.hex.size),
+    );
+  }, [hexScene, tree, peopleIds]);
+
   const teamSpacers = useMemo(() => {
     if (!hexScene || !teamOutlines.length) return null;
     if (typeof Path2D === "undefined") return null;
@@ -975,30 +1014,33 @@ export default function HexLab({
     //     Drawn over the region washes on purpose: these cells are room, not
     //     territory, and they should read as the same room everywhere.
     if (teamSpacers) {
-      ctx.fillStyle = "rgba(15,23,42,0.05)";
+      /**
+       * **Opaque, not a wash.** Greg: *"it should be light grey"*, and it was
+       * not — a tint of `rgba(15,23,42,0.05)` over a cell that already carries
+       * the nested region washes of every rung above it comes out mid grey, and
+       * darker the deeper the company. A flat colour is the only way the ring
+       * reads the same everywhere, which is the whole point of it being grey:
+       * **colour is for what is there, grey is for the room around it.**
+       */
+      ctx.fillStyle = "#f1f2f4";
       ctx.fill(teamSpacers);
     }
     /**
      * **A line round a group of teams, which is a border coming back.**
      *
-     * Greg took the borders off every bubble on 2026-10-16 — *"there are borders
-     * around the bubbles — they don't need to be there"* — and what was drawn
-     * then was a coastline in each region's own hue at every rung, twelve deep
-     * on the largest company. This is one line, at one rung, in grey. The rung
-     * is the one that holds teams, which is exactly the *"collection of teams
-     * with a common parent"* the extra hexagon of space belongs to, so the line
-     * is drawn where there is now real ground to show.
+     * Greg took the borders off every bubble on 2026-10-16 — *"there are
+     * borders around the bubbles — they don't need to be there"* — and what was
+     * drawn then was a coastline in each region's own hue at every rung, twelve
+     * deep on the largest company. This is one line, at one rung, in grey,
+     * drawn where there is now real ground to show: the second clear hexagon
+     * that a group of teams keeps.
      */
-    if (bubbles.length > 0) {
+    if (groupRings.length > 0) {
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
-      ctx.strokeStyle = "rgba(15,23,42,0.14)";
+      ctx.strokeStyle = "rgba(15,23,42,0.16)";
       ctx.beginPath();
-      for (const bubble of bubbles) {
-        if (bubble.tier !== BUBBLE_TIER) continue;
-        const { box } = bubble;
-        if (box.maxX < view.minX || box.minX > view.maxX) continue;
-        if (box.maxY < view.minY || box.minY > view.maxY) continue;
-        for (const seg of bubble.edge) {
+      for (const segments of groupRings) {
+        for (const seg of segments) {
           ctx.moveTo(seg.from.x, seg.from.y);
           ctx.lineTo(seg.to.x, seg.to.y);
         }
@@ -1364,7 +1406,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, bubbles, peopleIds, leadIds, hueById]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById]);
 
   // --- input ---------------------------------------------------------------
 
