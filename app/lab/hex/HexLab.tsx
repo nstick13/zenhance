@@ -244,7 +244,19 @@ export default function HexLab({
    * archipelago. The atlas is still the default, so nothing anybody has looked
    * at so far changes until this is pressed.
    */
-  const [driver, setDriver] = useState<HexDriver>("atlas");
+  /**
+   * **The lab opens on the driver the work is in** — radial since 2026-10-18.
+   *
+   * It opened on the atlas because that is what `allocateByTerritory` defaults
+   * to, and that default is right for the *API*: a caller who does not ask gets
+   * what it always got. It was wrong here. Every spacing rule of the last three
+   * days lives in the radial driver — the atlas has never held to the spacer at
+   * all — so the page opened showing none of it, and Greg twice went looking
+   * for work that was two clicks away. A study should open on the thing being
+   * studied; the atlas is still a button away for comparison, which is the only
+   * reason it is still here.
+   */
+  const [driver, setDriver] = useState<HexDriver>("radial");
   /**
    * **Whether a rung may step sideways round the centre.** Greg, 2026-10-17, on
    * seeing chains loop back: *"what is preventing that code from working?"*
