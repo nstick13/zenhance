@@ -196,9 +196,20 @@ export const leastGapFor = (tier: number): number =>
  * one of those. Both the radial driver and `tidy` read it from this file.
  */
 export function spacerRule(
-  tree: { units: ReadonlyMap<string, { parentId: string | null }> },
+  tree: { units: ReadonlyMap<string, { parentId: string | null; childIds?: readonly string[] }> },
   people: ReadonlySet<string>,
-): { teamFor: (id: string) => string | null; mayTouch: (a: string, b: string) => boolean } {
+  /**
+   * What the units' rungs are, so `apart` can answer in full. Left out, every
+   * unit is treated as a team and `apart` is the plain spacer — which is what
+   * `tidy` wants when the atlas drew the map.
+   */
+  options: { tierOf?: (id: string) => number; rungs?: number } = {},
+): {
+  teamFor: (id: string) => string | null;
+  groupFor: (id: string) => string | null;
+  mayTouch: (a: string, b: string) => boolean;
+  apart: (a: string, b: string) => number;
+} {
   /** A human's team is their nearest structural ancestor. No new data: the
    *  `people` set says who is human and the tree says the rest. */
   const teams = new Map<string, string | null>();
@@ -225,7 +236,60 @@ export function spacerRule(
     return teamFor(human) === node || tree.units.get(human)?.parentId === node;
   };
 
-  return { teamFor, mayTouch };
+  /**
+   * **The group a team belongs to: everything under one parent.**
+   *
+   * Greg, 2026-10-18: *"a collection of teams with a common parent together gain
+   * an additional outline of one hexagon's worth of space around the drawn area
+   * that they occupy, even if they're 'archipelago' — in the case of an
+   * archipelago, the exclave and the main mass would both receive the two-level
+   * hexagon spacing."*
+   *
+   * So there is a third level of belonging, and it is the one the eye reads
+   * before it reads a label: *same team* (may touch), *same group* (one clear
+   * hexagon), *different group* (two). Nought for anything above team level,
+   * because the rungs above already have their room — their own clear rings by
+   * `gapFor`, and the ring floors holding each rung clear of the one inside it.
+   *
+   * **It needs no new data and no second idea of what a team is.** `teamFor` is
+   * already *"your nearest structural ancestor"*, which for a person is their
+   * team and for a team is its own parent — so the group is one more step of the
+   * same walk.
+   */
+  const leaves = new Map<string, boolean>();
+  const isTeam = (id: string): boolean => {
+    if (people.has(id)) return false;
+    const had = leaves.get(id);
+    if (had !== undefined) return had;
+    const kids = tree.units.get(id)?.childIds ?? [];
+    const answer = kids.every((kid) => people.has(kid));
+    leaves.set(id, answer);
+    return answer;
+  };
+  const groupFor = (id: string): string | null => {
+    const team = people.has(id) ? teamFor(id) : isTeam(id) ? id : null;
+    if (!team) return null;
+    return tree.units.get(team)?.parentId ?? null;
+  };
+
+  /**
+   * **How far apart two things must sit** — the whole of Law 4, in one place
+   * with everything it needs rather than threaded through four arguments at
+   * each call site.
+   */
+  const tierOf = options.tierOf ?? (() => 0);
+  const apart = (a: string, b: string): number => {
+    if (mayTouch(a, b)) return 1;
+    const ga = groupFor(a);
+    const gb = groupFor(b);
+    // The groups' rings meet at one frontier rather than each claiming their
+    // own, which is why this is a single extra hexagon and not two — the same
+    // reading the bubbles have had since 2026-10-16.
+    const apartGroups = ga !== null && gb !== null && ga !== gb ? 1 : 0;
+    return leastApart(a, b, mayTouch, tierOf, options.rungs) + apartGroups;
+  };
+
+  return { teamFor, groupFor, mayTouch, apart };
 }
 
 
@@ -264,6 +328,13 @@ export const RUNGS_PER_HEX = 2;
  * One when they are allowed to touch. Otherwise one more than the wider of the
  * two rings they keep — read from both sides, as Law 4 requires, because a gap
  * belongs to the pair and not to whichever of them asks least.
+ *
+ * **This is the rung part of the answer, not the whole of it.** Since
+ * 2026-10-18 two teams under different parents keep one more hexagon than two
+ * under the same one, and that is a property of the *pair* rather than of
+ * either unit's rung — so it lives in `spacerRule`'s `apart`, which is what
+ * placers should ask. This stays exported because it is the arithmetic the
+ * rungs contribute, and a test reads it.
  */
 export function leastApart(
   a: string,

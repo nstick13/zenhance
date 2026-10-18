@@ -3090,6 +3090,86 @@ by sixths is exact.
 
 ---
 
+## Room round a group of teams, and grey for the room (2026-10-18, later)
+
+Greg, having left the placement rules alone — *"they kinda work"* — asked for two
+things about **space** instead:
+
+> *"A collection of teams with a common parent together gain an additional
+> outline of one hexagon's worth of space around the drawn area that they
+> occupy, even if they're 'archipelago' — in the case of an archipelago, the
+> exclave and the main mass would both receive the two-level hexagon spacing."*
+>
+> *"The hexagon spacing itself should be a faint grey — just darker than the
+> background, regardless of what colour a team has. The secondary outline (for
+> groups of teams) should be a grey between the background and the team
+> outline."*
+
+### Three levels of belonging, still one rule
+
+Same team may touch; same group keeps one clear hexagon; different groups keep
+two. It is a property of a **pair**, which is why the archipelago clause needed
+no code — a scattered group keeps its ring round every piece without anybody
+having to find the pieces — and why it belongs in `spacerRule` beside
+`mayTouch` rather than anywhere a placer could hold a second opinion. That
+function now hands out `apart(a, b)`, the whole of Law 4 in one place, and the
+two placers stopped threading four arguments through every call.
+
+Nothing above team level changed. Those rungs already have their room.
+
+### What it cost, measured
+
+| Northwind, people | before | after |
+| --- | ---: | ---: |
+| radius | 109 | **117** |
+| teams in one piece | 395/395 | **389/395** |
+| spacer breaches, every company | 0 | **0** |
+| touching their family | 84.7% | 84.5% |
+| typical step home | 2 | **3** |
+| layout | 55ms | **89ms** |
+
+The step home rising by a cell *is* the feature: things that are not in the same
+group now sit a hexagon further apart. The six teams are the price of the same
+thing — the rungs where teams live are the crowded ones, and Northwind's depth 8
+holds 80 teams and some 900 people in one band.
+
+### Two faults the extra ring found, both worth keeping
+
+**The rung schedule was a cell short.** It stepped from one rung to the next by
+`apart(repA, repB)` — the two *representative* units — and the group term only
+fires between two team-level things, which the representatives usually are not.
+So the rungs holding teams came out tighter than their teams needed. It now
+steps by the widest ring either rung keeps, plus a cell, which over-provides by
+one where a rung of teams faces a rung of divisions. That is the right way to be
+wrong.
+
+**A unit with a full slice had nowhere legal to go, and took somewhere illegal.**
+`ringArc` offers cells outside the arc only when the arc holds *none*, so a unit
+whose narrow slice was full never saw the legal ground beside it. The ranking
+has always said a stray costs 1 and a spacer breach costs 2 — the search simply
+could not act on it. One team on Northwind, **Union Team 235**, walked 21 rings
+out from its floor and then breached, which showed up as 2 breaches and 7 units
+standing closer than the rule allows. The slice is now widened in two steps
+before any breach is accepted, and the figure is back to nought everywhere; the
+one unit that needed it is counted in `strayed`.
+
+### Colour is for what is there; grey is for the room around it
+
+The spacing was taking the hue of whichever region's wash it fell inside, so the
+space a team keeps read as more of the team. Every spacer ring is now the same
+neutral whoever it belongs to — which also makes it visible at a glance that the
+spacing rule is one rule.
+
+The group's ring is drawn as a line, in a grey between the background and the
+team outline. **That is a border coming back**, eight days after Greg took them
+off every bubble — *"there are borders around the bubbles, they don't need to be
+there"* — and the difference is worth stating: what was drawn then was a
+coastline in each region's own hue at every rung, twelve deep on the largest
+company. This is one line, at one rung, in grey, and it is drawn where there is
+now real ground to show.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

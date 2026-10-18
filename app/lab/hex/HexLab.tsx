@@ -36,7 +36,7 @@ import {
   restBranch,
   type HexDriver,
 } from "@/lib/map/layout/hex/territory";
-import { bubblesFor } from "@/lib/map/layout/hex/bubbles";
+import { BUBBLE_TIER, bubblesFor, grow } from "@/lib/map/layout/hex/bubbles";
 import {
   branchOf,
   dropOutcome,
@@ -562,9 +562,48 @@ export default function HexLab({
     }
     return [...byTeam].map(([teamId, cells]) => ({
       teamId,
+      cells,
       segments: outline(cells, hexScene.hex.size),
     }));
   }, [groups, hexScene]);
+
+  /**
+   * **The clear hexagon round each team, drawn as ground rather than as team.**
+   *
+   * Greg, 2026-10-18: *"the hexagon spacing itself should be a faint grey —
+   * just darker than the background, regardless of what colour a team has."*
+   *
+   * Which is a rule about what colour *means* on this map, and a good one:
+   * **colour is for what is there, grey is for the room around it.** The ring
+   * was taking the hue of whichever region's wash it fell inside, so the space
+   * a team keeps read as more of the team — the opposite of what the space is
+   * for. Every ring is now the same neutral whoever it belongs to, which is
+   * also how you can see at a glance that the spacing rule is one rule.
+   *
+   * Only the cells nobody stands on: a ring cell that turns out to be occupied
+   * belongs to whoever is standing there.
+   */
+  const teamSpacers = useMemo(() => {
+    if (!hexScene || !teamOutlines.length) return null;
+    if (typeof Path2D === "undefined") return null;
+    const size = hexScene.hex.size;
+    const taken = new Set<string>();
+    for (const cell of hexScene.hex.cells.values()) taken.add(cellKey(cell));
+    const path = new Path2D();
+    const drawn = new Set<string>();
+    for (const team of teamOutlines) {
+      for (const cell of grow(team.cells)) {
+        const key = cellKey(cell);
+        if (taken.has(key) || drawn.has(key)) continue;
+        drawn.add(key);
+        const pts = corners(cell, size);
+        path.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < 6; i++) path.lineTo(pts[i].x, pts[i].y);
+        path.closePath();
+      }
+    }
+    return path;
+  }, [hexScene, teamOutlines]);
   /**
    * **The bubbles** (Greg, 2026-10-16, requirements 4 and 6).
    *
@@ -915,6 +954,44 @@ export default function HexLab({
          * nested outlines carried a thicket.
          */
       }
+    }
+
+    // 1b. The clear hexagon round each team, and the ring round a group of
+    //     them. Greg, 2026-10-18: the spacing is *"a faint grey, just darker
+    //     than the background, regardless of what colour a team has"*, and the
+    //     group's is *"a grey between the background and the team outline"*.
+    //     Drawn over the region washes on purpose: these cells are room, not
+    //     territory, and they should read as the same room everywhere.
+    if (teamSpacers) {
+      ctx.fillStyle = "rgba(15,23,42,0.05)";
+      ctx.fill(teamSpacers);
+    }
+    /**
+     * **A line round a group of teams, which is a border coming back.**
+     *
+     * Greg took the borders off every bubble on 2026-10-16 — *"there are borders
+     * around the bubbles — they don't need to be there"* — and what was drawn
+     * then was a coastline in each region's own hue at every rung, twelve deep
+     * on the largest company. This is one line, at one rung, in grey. The rung
+     * is the one that holds teams, which is exactly the *"collection of teams
+     * with a common parent"* the extra hexagon of space belongs to, so the line
+     * is drawn where there is now real ground to show.
+     */
+    if (bubbles.length > 0) {
+      ctx.lineWidth = Math.max(0.6, 1.6 / scale);
+      ctx.strokeStyle = "rgba(15,23,42,0.14)";
+      ctx.beginPath();
+      for (const bubble of bubbles) {
+        if (bubble.tier !== BUBBLE_TIER) continue;
+        const { box } = bubble;
+        if (box.maxX < view.minX || box.minX > view.maxX) continue;
+        if (box.maxY < view.minY || box.minY > view.maxY) continue;
+        for (const seg of bubble.edge) {
+          ctx.moveTo(seg.from.x, seg.from.y);
+          ctx.lineTo(seg.to.x, seg.to.y);
+        }
+      }
+      ctx.stroke();
     }
 
     // 1a. The territory, as a faint wash over the whole cell. It is what makes
@@ -1275,7 +1352,7 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, bubbles, peopleIds, leadIds, hueById]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, bubbles, peopleIds, leadIds, hueById]);
 
   // --- input ---------------------------------------------------------------
 

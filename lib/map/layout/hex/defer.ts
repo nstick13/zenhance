@@ -110,7 +110,7 @@
  *
  * ## What it is not
  *
- * It holds **no spacing rule of its own** — `leastApart` from `spacing.ts`, as
+ * It holds **no spacing rule of its own** — `spacerRule`'s `apart`, as
  * everywhere else, which is Law 4 — and **no idea of its own about which way is
  * out**: the chart's orientation is the bearing from the master centre to the
  * hand, and the deference is a ratio of two radii from the master centre. There
@@ -127,7 +127,7 @@ import {
   roundCell,
   worldAngle,
 } from "@/lib/map/layout/hex/coords";
-import { RUNGS_PER_HEX, gapFor, leastApart, spacerRule } from "@/lib/map/layout/hex/spacing";
+import { RUNGS_PER_HEX, gapFor, spacerRule } from "@/lib/map/layout/hex/spacing";
 import { relayBranch } from "@/lib/map/layout/hex/territory";
 
 const ORIGIN: Cell = { q: 0, r: 0 };
@@ -290,10 +290,13 @@ export function deferBranch(args: {
 
   // --- the spacer, which is the same rule it is everywhere -----------------
 
-  const { mayTouch, teamFor } = spacerRule(tree, people);
   const tierOf = (id: string): number => args.tier?.get(id) ?? 0;
-  const apartOf = (a: string, b: string): number =>
-    leastApart(a, b, mayTouch, tierOf, rungs);
+  const { mayTouch, teamFor, groupFor, apart: apartOf } =
+    spacerRule(tree, people, { tierOf, rungs });
+  /** How many rings this unit keeps clear of strangers: its own by rung, and
+   *  one more if it is a team, whose group keeps a ring of its own. */
+  const keepOf = (id: string): number =>
+    gapFor(tierOf(id), rungs) + (groupFor(id) !== null ? 1 : 0);
 
   /** Everything in the branch moves, so none of it counts as in the way. */
   const moving = new Set<string>();
@@ -355,7 +358,7 @@ export function deferBranch(args: {
       const sitting = standing.get(at({ q: cell.q + d.q, r: cell.r + d.r }));
       if (sitting !== undefined && sitting !== who && !mayTouch(who, sitting)) return true;
     }
-    const keep = gapFor(tierOf(who), rungs);
+    const keep = keepOf(who);
     for (let k = 2; k <= keep; k++) {
       for (const near of ring(cell, k)) {
         const sitting = standing.get(at(near));

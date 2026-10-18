@@ -161,6 +161,62 @@ describe("Law 4 — one measure of distance", () => {
     }
   });
 
+  /**
+   * **A group of teams keeps a hexagon of its own** (Greg, 2026-10-18).
+   *
+   * *"A collection of teams with a common parent together gain an additional
+   * outline of one hexagon's worth of space around the drawn area that they
+   * occupy, even if they're 'archipelago' — in the case of an archipelago, the
+   * exclave and the main mass would both receive the two-level hexagon
+   * spacing."*
+   *
+   * Three levels of belonging, and the eye reads them before it reads a label:
+   * same team may touch, same group keeps one clear hexagon, different groups
+   * keep two. **The archipelago clause needs no code**: the rule is a property
+   * of a pair, so a group scattered into pieces keeps its ring round every
+   * piece without anybody having to find the pieces.
+   */
+  it.each(SHAPES)("holds two groups of teams two hexagons apart on %s", (_label, count, depth, span) => {
+    const tree = treeOf(count, depth, span);
+    const people = new Set(
+      [...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id),
+    );
+    const laid = layoutRadial(tree, { people });
+    const { apart, groupFor } = spacerRule(tree, people, {
+      tierOf: (id) => laid.tier.get(id) ?? 0,
+    });
+    const placed = [...laid.cells];
+    let sameGroup = 0;
+    let crossGroup = 0;
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const [a, there] = placed[i];
+        const [b, here] = placed[j];
+        const gap = hexDistance(there, here);
+        if (gap > 4) continue;
+        expect(gap).toBeGreaterThanOrEqual(apart(a, b));
+        const ga = groupFor(a);
+        const gb = groupFor(b);
+        if (ga !== null && gb !== null) {
+          if (ga === gb) sameGroup++; else crossGroup++;
+        }
+      }
+    }
+    /**
+     * **Both arms exercised, on the companies dense enough to have any.**
+     *
+     * The 45-person one has nothing of team level within four cells of anything
+     * else at all — its thirteen teams have the whole map to themselves — so
+     * the loop above is vacuous there. That is the spacing working rather than
+     * a hole in the test, but it is worth saying which fixtures are actually
+     * carrying it.
+     */
+    if (count >= 1000) {
+      expect(sameGroup).toBeGreaterThan(0);
+      expect(crossGroup).toBeGreaterThan(0);
+    }
+  });
+
   it("holds a person at no distance at all, so a team reads as one thing", () => {
     const tree = treeOf(1000, 8);
     const everyone = new Set(tree.units.keys());
@@ -315,7 +371,16 @@ describe("what it trades against the atlas", () => {
       const xs = [...steps.values()];
       return xs.reduce((a, b) => a + b, 0) / xs.length;
     };
-    expect(median(radial.steps)).toBeLessThanOrEqual(median(atlas.steps));
+    /**
+     * **Within a cell of the atlas's, which it was equal to until 2026-10-18.**
+     *
+     * A group of teams keeps a clear hexagon of its own since then, so two
+     * teams under different parents sit three cells apart where they used to
+     * sit two — and the typical step home went 2 to 3 with them. That is the
+     * spacing Greg asked for arriving, not a regression; what would be one is
+     * the figure drifting on past it.
+     */
+    expect(median(radial.steps)).toBeLessThanOrEqual(median(atlas.steps) + 1);
     expect(mean(radial.steps)).toBeLessThan(mean(atlas.steps) * 2);
     // The tail is the cost, and it is bounded rather than ignored: a step home
     // longer than the map's own radius would mean a line across the company.

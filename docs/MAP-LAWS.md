@@ -299,8 +299,33 @@ b)` is how far apart two things must sit — one more than the wider of the two
 rings they keep, read from both sides, because a gap belongs to the pair. Nothing
 below team level changes.
 
-He left the number open — *"number TBC"* — and **2 is what the sweep says**, on
-Northwind with people as the smallest unit:
+**And a group of teams keeps one of its own** (Greg, 2026-10-18): *"a collection
+of teams with a common parent together gain an additional outline of one
+hexagon's worth of space around the drawn area that they occupy, even if they're
+'archipelago' — in the case of an archipelago, the exclave and the main mass
+would both receive the two-level hexagon spacing."*
+
+So the spacer now reads three levels of belonging, which is still one rule:
+
+| | may be | |
+| --- | ---: | --- |
+| same team | **touching** | a team is one crowd |
+| same group of teams | **one clear hexagon** | the spacer each team has always had |
+| different groups | **two** | the group's own ring |
+
+Nothing above team level changes: those rungs already have their room, from
+`gapFor` and from Law 3's floors. **The archipelago clause needs no code at
+all** — the rule is a property of a *pair*, so a group scattered into pieces
+keeps its ring round every piece without anybody having to find the pieces.
+
+It lives in `spacerRule`'s `apart`, which is now the one function a placer asks
+and the one place the three levels are written down. Measured on Northwind with
+people: the map widens from a radius of 109 to **117**, teams in one piece go
+395 of 395 to **389**, the typical step home goes 2 cells to 3, and the spacer
+still reads **nought breaches on every company**.
+
+He left the per-rung number open — *"number TBC"* — and **2 is what the sweep
+says**, on Northwind with people as the smallest unit:
 
 | rungs per hexagon | radius | spacer breaches | teams in one piece |
 | --- | ---: | ---: | ---: |

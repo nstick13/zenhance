@@ -110,7 +110,6 @@ import {
   PLACE_SIZE,
   RUNGS_PER_HEX,
   gapFor,
-  leastApart,
   leastGapFor,
   spacerRule,
   spacingFor,
@@ -334,7 +333,9 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
    * A human's team is their nearest structural ancestor, which needs no new data:
    * the `people` set already says who is a human, and the tree says the rest.
    */
-  const { mayTouch, teamFor } = spacerRule(tree, people);
+  // Built below, once the measuring pass knows each unit's rung — `apart`
+  // needs that, and Law 4 is one function with everything it needs rather than
+  // four arguments threaded through every call site.
 
   const cells = new Map<string, Cell>();
   const occupants = new Map<string, string>();
@@ -434,9 +435,20 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const isPlace = (unit: UnitNode): boolean =>
     !people.has(unit.id) && (demands.get(unit.id)?.weight ?? 1) >= place;
   const tierOf = (id: string): number => demands.get(id)?.tier ?? 0;
-  /** Law 4, the only way this file is allowed to ask how far apart two things
-   *  sit. `rungs` is threaded through so the lab can sweep it. */
-  const apartOf = (a: string, b: string): number => leastApart(a, b, mayTouch, tierOf, rungs);
+  /**
+   * **Law 4, and the only way this file may ask how far apart two things sit.**
+   *
+   * `apart` is the whole rule — may they touch, how wide a ring does each rung
+   * keep, and since 2026-10-18 whether they belong to the same group of teams.
+   * `groupFor` is here for the same reason: how far a candidate has to look is
+   * how much ground it might be asked to keep clear.
+   */
+  const { teamFor, groupFor, apart: apartOf } =
+    spacerRule(tree, people, { tierOf, rungs });
+  /** How many rings this unit keeps clear of strangers: its own by rung, and
+   *  one more if it is a team, whose group keeps a ring of its own. */
+  const keepOf = (id: string): number =>
+    gapFor(tierOf(id), rungs) + (groupFor(id) !== null ? 1 : 0);
 
   // --- pass two: the ring floors, one schedule for the whole company -------
 
@@ -478,13 +490,33 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
     let pick: string | null = null;
     for (const unit of tree.units.values()) {
       if (unit.depth !== d || !isPlace(unit)) continue;
-      if (!pick || gapFor(tierOf(unit.id), rungs) > gapFor(tierOf(pick), rungs)) pick = unit.id;
+      if (!pick || keepOf(unit.id) > keepOf(pick)) pick = unit.id;
     }
     widestOnRung.push(pick ?? widestOnRung[d - 1] ?? root.id);
   }
+  /**
+   * **A rung clears the one inside it by the widest ring either of them keeps,
+   * plus a cell** — which is `apart` read for the worst pair they could offer,
+   * rather than for the two representatives themselves.
+   *
+   * It was `apart(repA, repB)` until 2026-10-18, and that was a cell short as
+   * soon as a group of teams started keeping a ring of its own: the term only
+   * fires between two *team-level* units, the representatives of two rungs
+   * usually are not both teams, and so the schedule stopped reflecting what the
+   * teams on those rungs actually need. The rungs holding teams came out too
+   * tight, and one team on Northwind — Union Team 235 — ran out of legal ground
+   * entirely and had to take a cell it was not entitled to, which showed up as
+   * two breaches and seven units standing closer than the rule allows.
+   *
+   * Reading the widest ring either rung keeps over-provides by a cell where one
+   * rung holds teams and the other does not. That is the right way to be wrong:
+   * a slightly wider map, rather than a unit with nowhere to stand.
+   */
   const floors: number[] = [0];
   for (let d = 1; d <= deepestPlace; d++) {
-    floors.push(floors[d - 1] + apartOf(widestOnRung[d - 1], widestOnRung[d]));
+    floors.push(
+      floors[d - 1] + 1 + Math.max(keepOf(widestOnRung[d - 1]), keepOf(widestOnRung[d])),
+    );
   }
   const floorAt = (d: number): number => floors[Math.min(Math.max(0, d), floors.length - 1)] ?? 0;
 
@@ -632,7 +664,7 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
    * rather than as a distance one side can ask for.
    */
   const barred = (cell: Cell, who: string): boolean => {
-    const mine = gapFor(tierOf(who), rungs);
+    const mine = keepOf(who);
     for (let k = 1; k <= mine; k++) {
       for (const near of ring(cell, k)) {
         const sitting = occupants.get(cellKey(near));
@@ -741,9 +773,28 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
     const fromOut = parentCell ? hexDistance(parentCell, ORIGIN) : 0;
     const start = Math.max(1, at, sideways === "forbid" ? fromOut + 1 : fromOut);
     let fallback: { cell: Cell; rank: number; near: number } | null = null;
+    /**
+     * **A unit that cannot be seated in its slice gets a wider slice before it
+     * is allowed to breach anybody's spacer.**
+     *
+     * Which is only the ranking below, said out loud: a cell outside the arc
+     * costs 1 and a cell that breaches the spacer costs 2, so the law already
+     * holds that straying is the lesser fault. The search could not act on it,
+     * because `ringArc` offers cells outside the arc only when the arc holds
+     * none at all — so a unit whose narrow slice was full never saw the legal
+     * ground beside it and took an illegal cell instead.
+     *
+     * It cost nothing until the groups of teams started keeping a ring of their
+     * own on 2026-10-18. That tightened the rungs where the teams live —
+     * Northwind's depth 8 holds 80 teams and some 900 people in one band — and
+     * **Union Team 235** walked 21 rings out from its floor, ran out of arc, and
+     * breached. Widening is tried in two steps and only when the first pass has
+     * nothing legal to offer, so the common case is unchanged.
+     */
+    for (const half of [wedge.half, Math.min(ARC, wedge.half * 4), ARC]) {
     for (let R = start; R <= start + BAND_REACH; R++) {
-      let best: { cell: Cell; near: number } | null = null;
-      for (const candidate of ringArc(ORIGIN, R, wedge.centre, wedge.half)) {
+      let best: { cell: Cell; near: number; strayed: boolean } | null = null;
+      for (const candidate of ringArc(ORIGIN, R, wedge.centre, half)) {
         const key = cellKey(candidate.cell);
         if (taken.has(key)) continue;
         const inward = parentCell
@@ -770,9 +821,16 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
           || (rank === fallback.rank && near < fallback.near)) {
           fallback = { cell: candidate.cell, rank, near };
         }
-        if (rank < 2 && (!best || near < best.near)) best = { cell: candidate.cell, near };
+        if (rank < 2 && (!best || near < best.near)) {
+          // Strayed means *the slice it was offered could not hold it*, which is
+          // the widening above — not the everyday case of an arc narrower than
+          // one cell of its own ring, which every deep team has and which the
+          // nearest cell answers perfectly well.
+          best = { cell: candidate.cell, near, strayed: half !== wedge.half };
+        }
       }
-      if (best) return { cell: best.cell, strayed: false };
+      if (best) return { cell: best.cell, strayed: best.strayed };
+    }
     }
     /** Below the floor rather than nowhere: Law 1 says no unit may be left
      *  without a cell, and Law 2 says a crowd stays whole, so when the arc and
