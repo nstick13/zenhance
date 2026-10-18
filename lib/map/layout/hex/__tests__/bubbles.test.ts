@@ -12,12 +12,12 @@ import { describe, expect, it } from "vitest";
 import { buildDeepOrg } from "@/lib/map/layout/__tests__/fixtures/deepOrg";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import {
-  BUBBLE_TIER, bubbleClashes, bubblesFor, groupRingsFor, grow, subtreeCells,
+  BUBBLE_TIER, bubbleClashes, bubblesFor, groupZones, grow, subtreeCells,
 } from "@/lib/map/layout/hex/bubbles";
 import { spacerRule } from "@/lib/map/layout/hex/spacing";
 import { outline } from "@/lib/map/layout/hex/arrange";
 import { allocateByTerritory, type HexDriver } from "@/lib/map/layout/hex/territory";
-import { cellKey, hexDistance, type Cell } from "@/lib/map/layout/hex/coords";
+import { cellFromKey, cellKey, hexDistance, neighbours, type Cell } from "@/lib/map/layout/hex/coords";
 
 const treeOf = (people: number, maxDepth: number): OrbitalTree => {
   const org = buildDeepOrg("hexlab", { people, maxDepth, seed: 7 });
@@ -337,37 +337,67 @@ describe("the ring round a group of teams", () => {
     return [...byGroup.values()].flatMap((own) => outline(grow(grow(own)), size));
   };
 
-  it("draws one wall where two groups meet, not two", () => {
+  it("draws no wall at all where two groups meet", () => {
     const { tree, crowd, allocation } = laidOutWithPeople();
-    const shared = groupRingsFor({
+    const zone = groupZones({
       tree, cells: allocation.cells, people: crowd, size: 100,
     });
+    /**
+     * **The silhouette, and nothing inside it.** Every edge drawn has the zone
+     * on one side and background on the other, which is the same as saying the
+     * count equals the number of (cell, direction) pairs that leave the zone.
+     * Were two touching groups each drawing their own boundary — or even
+     * sharing one, which is what this did first — there would be more.
+     */
+    const inside = new Set(zone.cells.map(cellKey));
+    let leaving = 0;
+    for (const cell of zone.cells) {
+      for (const near of neighbours(cell)) if (!inside.has(cellKey(near))) leaving++;
+    }
+    expect(zone.walls.length).toBe(leaving);
+    expect(zone.walls.length).toBeGreaterThan(50);
+
+    // And strictly less line than giving every group its own boundary.
     const both = unshared(tree, crowd, allocation.cells, 100);
-    expect(shared.length).toBeGreaterThan(50);
-    // Sharing the ground out, and then drawing each edge once, is strictly less
-    // line than letting every group draw its own boundary through its
-    // neighbour's ring.
-    expect(shared.length).toBeLessThan(both.length);
+    expect(zone.walls.length).toBeLessThan(both.length);
   });
 
-  it("never draws the same edge twice, so a shared wall is no darker", () => {
+  it("merges two groups that touch into one patch", () => {
     const { tree, crowd, allocation } = laidOutWithPeople();
-    const walls = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
-    const seen = new Set<string>();
-    const at = (n: number) => Math.round(n * 100) / 100;
-    for (const seg of walls) {
-      const a = `${at(seg.from.x)},${at(seg.from.y)}`;
-      const b = `${at(seg.to.x)},${at(seg.to.y)}`;
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-      expect(seen.has(key)).toBe(false);
-      seen.add(key);
+    const zone = groupZones({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    const inside = new Set(zone.cells.map(cellKey));
+    /** How many separate pieces the zone falls into. */
+    const left = new Set(inside);
+    let pieces = 0;
+    while (left.size) {
+      const seed = cellFromKey([...left][0]);
+      left.delete(cellKey(seed));
+      pieces++;
+      const stack = [seed];
+      while (stack.length) {
+        const at = stack.pop()!;
+        for (const near of neighbours(at)) {
+          const key = cellKey(near);
+          if (left.has(key)) { left.delete(key); stack.push(near); }
+        }
+      }
     }
+    // Far fewer pieces than there are groups: the ones that touch have become
+    // one body, which is the whole of what was asked for.
+    const { groupFor } = spacerRule(tree, crowd);
+    const groups = new Set<string>();
+    for (const id of allocation.cells.keys()) {
+      const group = groupFor(id);
+      if (group) groups.add(group);
+    }
+    expect(groups.size).toBeGreaterThan(20);
+    expect(pieces).toBeLessThan(groups.size);
   });
 
   it("is a pure function of the company, like everything else here", () => {
     const { tree, crowd, allocation } = laidOutWithPeople(45, 4);
-    const once = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
-    const again = groupRingsFor({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    const once = groupZones({ tree, cells: allocation.cells, people: crowd, size: 100 });
+    const again = groupZones({ tree, cells: allocation.cells, people: crowd, size: 100 });
     expect(once).toEqual(again);
   });
 
@@ -382,7 +412,7 @@ describe("the ring round a group of teams", () => {
      * whatever the smallest unit on screen is.
      */
     const { tree, allocation } = laidOutWithPeople();
-    const walls = groupRingsFor({
+    const { walls } = groupZones({
       tree, cells: allocation.cells, people: new Set<string>(), size: 100,
     });
     expect(walls.length).toBeGreaterThan(50);

@@ -36,7 +36,7 @@ import {
   restBranch,
   type HexDriver,
 } from "@/lib/map/layout/hex/territory";
-import { bubblesFor, groupRingsFor, grow } from "@/lib/map/layout/hex/bubbles";
+import { bubblesFor, groupZones, grow } from "@/lib/map/layout/hex/bubbles";
 import {
   branchOf,
   dropOutcome,
@@ -619,10 +619,20 @@ export default function HexLab({
    * because growing a set of cells knows nothing about whether they touch.
    */
   const groupRings = useMemo(() => {
-    if (!hexScene || peopleIds.size === 0) return [];
-    return groupRingsFor({
+    if (!hexScene) return null;
+    if (typeof Path2D === "undefined") return null;
+    const zone = groupZones({
       tree, cells: hexScene.hex.cells, people: peopleIds, size: hexScene.hex.size,
     });
+    if (!zone.cells.length) return null;
+    const fill = new Path2D();
+    for (const cell of zone.cells) {
+      const pts = corners(cell, hexScene.hex.size);
+      fill.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 6; i++) fill.lineTo(pts[i].x, pts[i].y);
+      fill.closePath();
+    }
+    return { fill, walls: zone.walls };
   }, [hexScene, tree, peopleIds]);
 
   const teamSpacers = useMemo(() => {
@@ -1004,6 +1014,18 @@ export default function HexLab({
     //     group's is *"a grey between the background and the team outline"*.
     //     Drawn over the region washes on purpose: these cells are room, not
     //     territory, and they should read as the same room everywhere.
+    /**
+     * **Three tones, and the order they go down in.** Greg, 2026-10-18: the
+     * zone is *"a grey between the team-zone and the background"*, and the team
+     * zone goes *"slightly darker if necessary"* to stay apart from it. So:
+     * white, then the group's ground, then the clear hexagon round each team,
+     * each a step darker than the last, and nothing in any of them says which
+     * colour the team is.
+     */
+    if (groupRings) {
+      ctx.fillStyle = "#f7f8fa";
+      ctx.fill(groupRings.fill);
+    }
     if (teamSpacers) {
       /**
        * **Opaque, not a wash.** Greg: *"it should be light grey"*, and it was
@@ -1013,24 +1035,23 @@ export default function HexLab({
        * reads the same everywhere, which is the whole point of it being grey:
        * **colour is for what is there, grey is for the room around it.**
        */
-      ctx.fillStyle = "#f1f2f4";
+      ctx.fillStyle = "#e8eaee";
       ctx.fill(teamSpacers);
     }
     /**
-     * **A line round a group of teams, which is a border coming back.**
+     * **The silhouette of the whole, and nothing inside it.**
      *
-     * Greg took the borders off every bubble on 2026-10-16 — *"there are
-     * borders around the bubbles — they don't need to be there"* — and what was
-     * drawn then was a coastline in each region's own hue at every rung, twelve
-     * deep on the largest company. This is one line, at one rung, in grey,
-     * drawn where there is now real ground to show: the second clear hexagon
-     * that a group of teams keeps.
+     * Greg, 2026-10-18: *"where two large zones touch, there should not be an
+     * outline."* Not a quieter line, not one line instead of two — none. So the
+     * only edges here are the ones with background on the other side; two
+     * groups that meet simply become one shape, which is what *bubbling
+     * together* means.
      */
-    if (groupRings.length > 0) {
+    if (groupRings) {
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
       ctx.beginPath();
-      for (const seg of groupRings) {
+      for (const seg of groupRings.walls) {
         ctx.moveTo(seg.from.x, seg.from.y);
         ctx.lineTo(seg.to.x, seg.to.y);
       }
