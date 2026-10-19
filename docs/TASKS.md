@@ -516,6 +516,36 @@ map ever wants genuine air between regions — a label in the gap, or a region
 grabbable by its margin. The three ideas already spent are node-to-node spacing,
 footprint-as-arc and thickening; the sweep says thickening makes it worse.
 
+### ⏸ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19*
+
+Two things were being tracked separately and Greg has merged them: **making the
+corporate layers intelligible to look at**, and **what the map shows at each
+zoom level**. His reasoning is that they are linked by the zoom behaviour and
+cannot be designed apart — what a division should look like depends on when you
+see it, and vice versa.
+
+> *"There's the styling of the whole thing to make the corporate layers more
+> intelligible, and then there's the behaviour at each zoom level. Hex has no
+> differentiation yet on either aside from a little shading and some minor node
+> sizing. I have thoughts on what we should do here but it's tightly integrated
+> into what shows at each level."*
+
+He has also asked for a sub-task inside it: **some styling and artistic fun**.
+
+**This is design-first and it is Greg's.** Do not start building it from this
+entry — he has thoughts and they come first. Parked here so the scope is
+recorded, not so somebody picks it up.
+
+What it would absorb when it starts: the orbital map's semantic layer, three
+engines of which the hex map currently uses none — `lib/map/work` (work as a
+status-coloured arc, resolving into a dot grid), `lib/map/signal` (the three
+data rings: delivery, sprint, team health, drawn only where real source data
+exists), and the lower rungs of `lib/map/camera/lod` (people absent at
+overview, then a crowd stand-in, then portraits with their own lines). Plus
+everything in [LARGE-COMPANY-NAVIGATION.md](LARGE-COMPANY-NAVIGATION.md) that
+hex has no answer for: the local detail field, the mark budget and hierarchical
+thinning, the edge basket, and focus with a route home.
+
 ### ☐ A merged team presses against its neighbours — *Claude, 2026-10-19*
 
 Two teams can now be merged into one on the hex study: you hold one over the
@@ -539,7 +569,14 @@ in the panel. `spacerRule` reads the merged tree, so the rule itself is being
 asked the right question; suspect the ring floors in `layoutRadial`, which are
 measured per rung and may not have grown with the team.
 
-### ☐ The neck ignores a reduced-motion setting — *Claude, 2026-10-19*
+### ☑ The neck ignores a reduced-motion setting — *Claude, 2026-10-19*
+
+**Done** the same day, in *Grow, on the lattice — phase one*: both motions on
+the page stand down under `prefers-reduced-motion`, and the animation clock is
+not started at all. Kept here rather than moved, because the entry below still
+describes what the rule is.
+
+<details><summary>Original</summary>
 
 Holding one node over another now draws a shape between them that grows over
 half a second, so you can see the question arming before you let go. It is the
@@ -554,6 +591,8 @@ reaches a customer.
 *For whoever picks it up:* `app/lab/hex/HexLab.tsx`, the `pulse` clock and the
 neck in the painter. Under `prefers-reduced-motion` skip the `requestAnimationFrame`
 loop entirely and treat `held` as 1.
+
+</details>
 
 ### ☐ Tapping a node says "your tile can't fit here right now" — *Claude, 2026-10-19*
 

@@ -23,6 +23,17 @@ import type { OrgInput } from "@/lib/map/layout/model";
 const SPOTLIGHT = { small: 3, large: 50 };
 
 export const COMPANIES = {
+  /**
+   * **Blank paper**, for the Grow path (Greg, 2026-10-19): *"lab/grow was
+   * brilliant… we need to do that within the hex layout paradigm."*
+   *
+   * It is a company with nothing in it, so the first thing on the lattice is
+   * whatever the user makes. Everything else here is a fixture the engine lays
+   * out; this one is laid out by a hand, which is the whole point — *"people
+   * are going to want to create things wherever they want, then tidy them up
+   * using assists later."*
+   */
+  blank: { label: "Blank · grow one", people: 0, maxDepth: 0, spotlight: undefined },
   small: { label: "Sparrow-ish · 10", people: 10, maxDepth: 2, spotlight: undefined },
   medium: { label: "Digital Tailoring-ish · 45", people: 45, maxDepth: 4, spotlight: SPOTLIGHT },
   large: { label: "1,000 · 8 rungs", people: 1000, maxDepth: 8, spotlight: SPOTLIGHT },
@@ -41,6 +52,8 @@ export type LabCompany = {
 };
 
 export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
+  // Nothing to generate: the company is whatever gets made on the page.
+  if (key === "blank") return { org: { units: [], people: [], assignments: [] }, groups: [], leads: [] };
   const spec = COMPANIES[key];
   const org = buildDeepOrg("hexlab", {
     people: spec.people,

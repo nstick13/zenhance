@@ -3377,6 +3377,118 @@ know what meaning yet. We'll cross that bridge when we come to it."*
 
 ---
 
+## Grow, on the lattice — phase one (2026-10-19, evening)
+
+Greg, after merge and reparent landed: *"lab/grow was brilliant — you created an
+intelligible, clear way of us building teams. We need to do that within the hex
+layout paradigm. That is our next task."*
+
+The original study was recovered from `archive/codex/grow-child-orbits` rather
+than rebuilt from its write-up — 3,320 lines of `app/lab/grow/GrowLab.tsx`, with
+the sequence, the wizard and the reveal intact.
+
+### What the lattice gives for free
+
+Grow's hardest problem was **angles**. A node arrived at the angle you clicked,
+and that angle had to be remembered — `rememberChildAngle`, `angleHints` — or
+the siblings would spin round their parent every time a new one appeared.
+
+A lattice has no angles. **The cell you point at is the position.** That whole
+class of problem is gone, and with it the one thing that made the orbital study
+feel slightly unpredictable as a team filled up.
+
+### Unconstrained by the engine, without suspending a law
+
+Greg's scoping call, and the thing that shaped the build:
+
+> *"When we're on the Grow path, I think we need to pay a lot less attention to
+> the layout engines that dictate the radial shape. People are going to want to
+> create things wherever they want, then tidy them up using assists later…
+> I'm not confident we want to invoke the auto-tidy for a large corporation yet.
+> I fear it'll be too opinionated too quickly."*
+
+It needs **no law suspended**, and that is worth stating because the first plan
+proposed suspending one. Every law in [MAP-LAWS.md](MAP-LAWS.md) is written as a
+constraint on the **engine** — *"the engine may not place a team…"* — and Law 0
+says the hand outranks the engine. So the mechanism is one line of intent:
+**everything born here is born as a hand placement.** Its cell goes into `moves`
+and its id into `pinned`, and no driver has standing to move it.
+
+What that leaves running during Grow: Law 1 (one cell, one unit) always; Law 2
+(a body stays whole); Law 4 (the spacer) only where the *engine* places
+something, which here is just the pieces it makes for you; Law 5 (lines follow).
+Law 3 — children sit outward from the master centre — simply never fires,
+because nothing is being placed by the engine for it to constrain. Auto-tidy
+already only ever ran from its own button; `neaten` is called in exactly one
+place.
+
+**One good consequence.** Inserting a parent only threatened to shove a whole
+branch outward because the ring floors demanded it. With nothing enforcing
+rung-distance during Grow, a new parent takes a free cell beside its child and
+the chain redraws — no relayout under the hand, which was the riskiest thing in
+the plan.
+
+### What phase one is
+
+`/lab/hex?company=blank` — a fifth company that the fixture leaves empty, so
+creation is tested against the same engine, the same drivers and the same drag,
+merge and tidy gestures as everything else. One map, not two.
+
+- **Blank paper and one thing to press.** *"The user starts with almost
+  nothing."* Click it and you make a **human** — not a company, not a value
+  stream. With nothing made yet the canvas draws nothing at all: the engine
+  synthesises a root so the rest of it always has one, and drawing that put a
+  single enormous cell behind the button.
+- **Name → role → "does this person have any teammates?"** Only the lone first
+  person is ever asked the last one; asking anybody else would mean the team
+  already existed, and the reveal would be dead.
+- **The reveal.** On *yes*, two nodes arrive at once — the team takes the cell
+  the person was standing on, and the two humans step to either side of it.
+  **The team is discovered, not declared.**
+- **A node breathes until it is described, not until it is named.** "Named but
+  no role" is still an empty node. A breathing node answers a tap by opening its
+  own wizard rather than being picked up.
+- **The camera frames the ground, not just the nodes** — a few cells of air on
+  every side, and clear of the settings panel. Fitting a one-node company to its
+  own bounds puts a single cell across the whole glass, which reads as a huge
+  coloured shape rather than as a person standing somewhere.
+
+**`prefers-reduced-motion` is respected**, which closes the task opened against
+the merge neck this morning. Both motions — the neck arming, and a node
+breathing — stand down, and the rAF clock is not started at all.
+
+### The fault that cost the most, and the shape of it
+
+**An effect that loads state must not depend on anything derived from that
+state.** The arrangement loader filtered saved placements against `baseTree`,
+and `baseTree` is now built from the company *plus* whatever has been born — so
+loading set `born`, which rebuilt the tree, which ran the loader again. React
+says it plainly: *maximum update depth exceeded*, several hundred times a
+second, with the page still looking almost normal.
+
+The first fix — ask the fixture's own ids instead — was wrong in a quieter way:
+it narrows what counts as a known id, and the tree legitimately contains ids the
+fixture does not, such as the root the engine synthesises for a company with
+several. The tree is now read through a ref, which asks the same question of the
+same tree without tying the effect to it.
+
+### Verified
+
+Driven end to end on `:3001` against the blank company: blank paper, the seed,
+the name step with its suggestions, the role step, *"Does Ana have any
+teammates?"* by first name, and the reveal putting Ana at (-1,0), her team at
+(0,0) and the new teammate at (1,0) — one row, the team between them, 100% of
+children touching their family and nobody next to a stranger. Tapping the
+unnamed team opens *"What is this team called?"*. Console clean on a fresh tab;
+the four fixture companies are unaffected, and Digital Tailoring still loads
+Greg's own arrangement.
+
+**Not built yet** — phases two and three: growing from the spacer ring (a
+person, another team, something above it, a separate team), and the callout
+placement that scores sides against the other nodes rather than picking one.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and

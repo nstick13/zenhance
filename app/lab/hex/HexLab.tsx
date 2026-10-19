@@ -62,6 +62,27 @@ export type LabOrg = OrgInput;
  *  a pass must not arm anything. */
 const HOLD_MS = 550;
 
+/** The master centre. A company grown from nothing starts here. */
+const ORIGIN: Cell = { q: 0, r: 0 };
+
+/**
+ * Invented, per the house rule that demo mode uses invented data only. These
+ * are suggestions in the wizard, never anything the map fills in by itself: a
+ * node that nobody has described stays undescribed and says so.
+ */
+const SAMPLE_NAMES = ["Ana Whitfield", "Marcus Reyn", "Priya Solanki", "Tom Okafor", "Lena Brandt"];
+const ROLES = [
+  "Engineer", "Designer", "Product manager", "Delivery lead",
+  "Analyst", "Quality engineer", "Architect",
+];
+const PLACE_NAMES = ["Checkout", "Onboarding", "Payments", "Search", "Mobile", "Customer Portal"];
+const PURPOSES = [
+  "Builds and runs a product",
+  "Keeps a platform standing",
+  "Serves customers directly",
+  "Holds several teams together",
+];
+
 /**
  * The second pick-up — Greg's "radiating" gesture, 2026-10-02.
  *
@@ -221,6 +242,46 @@ type Pending =
   | { kind: "blocked"; unitId: string; occupiedBy: string; cells: Map<string, Cell> | null }
   | { kind: "reshape"; unitId: string; cells: Map<string, Cell> };
 
+/**
+ * **A node somebody made, rather than one the fixture came with.**
+ *
+ * Greg, 2026-10-19, on bringing the grow study into hex: *"people are going to
+ * want to create things wherever they want, then tidy them up using assists
+ * later… while we develop Grow, let's be unconstrained by the layout engine
+ * for mega-scale stuff."*
+ *
+ * The mechanism for that is this: **everything born here is born as a hand
+ * placement.** Its cell goes straight into `moves` and its id into `pinned`,
+ * which puts it under Law 0 — *the hand outranks the engine* — where no driver
+ * has standing to move it. So no law has to be suspended for the Grow path;
+ * the engine simply never gets a say about a node it did not place.
+ *
+ * `kind` is what the lattice needs to know: a **person** is a human and may
+ * only touch their own team, a **place** is a team or anything above one.
+ * Nothing here is a seat: this lab has people as units, which is the model
+ * Greg chose on 2026-10-02 to avoid *"one mode to view people, one to view the
+ * org."*
+ */
+export type Born = {
+  id: string;
+  kind: "person" | "place";
+  /** Null until somebody says. A node breathes until it is *described*. */
+  name: string | null;
+  /** A person's role. */
+  role: string | null;
+  /** A place's purpose. Prose — it never reaches the map, only the panel. */
+  purpose: string | null;
+  parentId: string | null;
+};
+
+/** What a node is still waiting to be told, or null when it is complete. */
+export function stillNeeds(node: Born): string | null {
+  if (!node.name?.trim()) return "Needs a name";
+  if (node.kind === "person" && !node.role?.trim()) return "Needs a role";
+  if (node.kind === "place" && !node.purpose?.trim()) return "Needs a purpose";
+  return null;
+}
+
 export default function HexLab({
   org, companyKey, initialDensity, groups: rawGroups, leads,
 }: {
@@ -277,6 +338,8 @@ export default function HexLab({
   const [pinned, setPinned] = useState<Set<string>>(() => new Set());
   /** Units merged away: the one that went in → the survivor. */
   const [merges, setMerges] = useState<Map<string, string>>(() => new Map());
+  /** Units somebody made on this page, in the order they arrived. */
+  const [born, setBorn] = useState<Born[]>(() => []);
   /** 0 = as arranged, 1 = neatened. A second press compresses. */
   const [tidyStage, setTidyStage] = useState(0);
   /**
@@ -295,10 +358,44 @@ export default function HexLab({
   const loaded = loadedFor !== null;
   const [pending, setPending] = useState<Pending | null>(null);
 
+
+
+  /**
+   * **The company, plus whatever has been made on the page.**
+   *
+   * Born nodes go in as ordinary units, so everything downstream — the drivers,
+   * the spacer rule, the drag path, merging — treats a node somebody made
+   * exactly like one the fixture came with. Nothing in `lib/map` learns that
+   * creation is happening, which is the same discipline people-as-units was
+   * built to.
+   */
+  const orgWithBorn = useMemo<LabOrg>(() => {
+    if (!born.length) return org;
+    return {
+      ...org,
+      units: [
+        ...org.units,
+        ...born.map((b) => ({
+          id: b.id,
+          // An unnamed node still needs something to sort by; what the map
+          // *draws* for it is decided by `nameOf`, not by this.
+          name: b.name?.trim() || "",
+          parentId: b.parentId,
+          leadPersonId: null,
+        })),
+      ],
+    };
+  }, [org, born]);
+
   const baseTree = useMemo(
-    () => buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 }),
-    [org],
+    () => buildOrbitalTree(orgWithBorn, { mergePassThroughRoot: false, workCountFor: () => 6 }),
+    [orgWithBorn],
   );
+  /** The tree as it stands, for effects that must read it without depending
+   *  on it. See the arrangement loader below. Written in an effect rather than
+   *  during render, which is where a ref may be touched. */
+  const treeNow = useRef(baseTree);
+  useEffect(() => { treeNow.current = baseTree; }, [baseTree]);
   /**
    * **A merge changes the shape of the company; a reparent does not.**
    *
@@ -347,14 +444,20 @@ export default function HexLab({
       const raw = window.localStorage.getItem(storeKey);
       const saved = raw ? (JSON.parse(raw) as {
         moves?: [string, Cell][]; reparents?: [string, string][]; pinned?: string[];
-        merges?: [string, string][];
+        merges?: [string, string][]; born?: Born[];
       }) : null;
       // **Only keep what this company still contains.** An arrangement saved
       // before the fixture's ids became deterministic names units that no
       // longer exist, and keeping those entries puts phantom tiles on the map:
       // ground nothing can be placed on, cells that cannot be hovered, and a
       // dialog naming a raw id. Anything unrecognised is dropped on the floor.
-      const known = (id: string) => baseTree.units.has(id);
+      // **Born nodes load first and are their own authority on existing.**
+      // Everything else is filtered against the tree, and the tree does not
+      // contain them until they are back in state.
+      const bornBack = (saved?.born ?? []).filter((b) => b && b.id && (b.kind === "person" || b.kind === "place"));
+      setBorn(bornBack);
+      const bornIds = new Set(bornBack.map((b) => b.id));
+      const known = (id: string) => treeNow.current.units.has(id) || bornIds.has(id);
       setMoves(new Map((saved?.moves ?? []).filter(([id]) => known(id))));
       setReparents(new Map(
         (saved?.reparents ?? []).filter(([id, parentId]) => known(id) && known(parentId)),
@@ -368,25 +471,40 @@ export default function HexLab({
       setReparents(new Map());
       setPinned(new Set());
       setMerges(new Map());
+      setBorn([]);
     }
     setTidyStage(0);
     setLoadedFor(storeKey);
-  }, [storeKey, baseTree]);
+    /**
+     * **The tree is read through a ref, and is deliberately not a dependency.**
+     *
+     * `baseTree` is built from the company *plus* whatever has been born, so
+     * depending on it here is a loop: loading sets `born`, which rebuilds the
+     * tree, which runs this again — React's own *"maximum update depth
+     * exceeded"*, several hundred times a second. Asking a ref gets the same
+     * answer about the same tree without tying this effect to it, and keeps
+     * `known` meaning exactly what it meant before: does this id exist in the
+     * company as the engine sees it, synthesised root and all.
+     */
+  }, [storeKey]);
 
   useEffect(() => {
     // Never write back before the first read, and never write one key's
     // arrangement under another's.
     if (loadedFor !== storeKey) return;
     try {
-      if (!moves.size && !reparents.size && !merges.size) window.localStorage.removeItem(storeKey);
-      else window.localStorage.setItem(storeKey, JSON.stringify({
-        moves: [...moves], reparents: [...reparents], pinned: [...pinned],
-        merges: [...merges],
-      }));
+      if (!moves.size && !reparents.size && !merges.size && !born.length) {
+        window.localStorage.removeItem(storeKey);
+      } else {
+        window.localStorage.setItem(storeKey, JSON.stringify({
+          moves: [...moves], reparents: [...reparents], pinned: [...pinned],
+          merges: [...merges], born,
+        }));
+      }
     } catch {
       // A browser that will not keep it is not a reason to stop working.
     }
-  }, [storeKey, loadedFor, moves, reparents, pinned, merges]);
+  }, [storeKey, loadedFor, moves, reparents, pinned, merges, born]);
 
   /**
    * Who is a person rather than a structural node. Greg, 2026-10-03: *"at the
@@ -398,7 +516,13 @@ export default function HexLab({
    * structural node wears a darker border, so the thing that is a *place* is
    * visibly not the thing that is a *human*.
    */
-  const peopleIds = useMemo(() => new Set((rawGroups ?? []).map(([id]) => id)), [rawGroups]);
+  const peopleIds = useMemo(
+    () => new Set([
+      ...(rawGroups ?? []).map(([id]) => id),
+      ...born.filter((b) => b.kind === "person").map((b) => b.id),
+    ]),
+    [rawGroups, born],
+  );
 
   /**
    * **Who belongs to which team, after any merges.**
@@ -411,7 +535,34 @@ export default function HexLab({
    * people who have just been put on one team are strangers to each other.
    */
   const groups = useMemo(() => {
-    if (!rawGroups?.length || !merges.size) return rawGroups;
+    /**
+     * A born person's team is their nearest ancestor that is **not** a person
+     * — the same reading `spacerRule` uses, and for the same reason: in a
+     * people-as-units model a person's parent is usually their manager, and a
+     * manager is not a team.
+     */
+    const bornById = new Map(born.map((b) => [b.id, b]));
+    const teamOfBorn = (id: string): string | null => {
+      const walked = new Set<string>();
+      let at: string | null = bornById.get(id)?.parentId ?? null;
+      while (at && !walked.has(at)) {
+        walked.add(at);
+        const up = bornById.get(at);
+        if (!up) return at; // a fixture unit: that is the team
+        if (up.kind === "place") return up.id;
+        at = up.parentId;
+      }
+      return null;
+    };
+    const bornPairs = born
+      .filter((b) => b.kind === "person")
+      .map((b) => [b.id, teamOfBorn(b.id)] as const)
+      .filter((pair): pair is readonly [string, string] => pair[1] !== null);
+
+    if (!merges.size) {
+      if (!bornPairs.length) return rawGroups;
+      return [...(rawGroups ?? []), ...bornPairs];
+    }
     const survivor = (id: string) => {
       let at = id;
       const walked = new Set<string>([at]);
@@ -423,8 +574,9 @@ export default function HexLab({
       }
       return at;
     };
-    return rawGroups.map(([personId, teamId]) => [personId, survivor(teamId)] as const);
-  }, [rawGroups, merges]);
+    return [...(rawGroups ?? []), ...bornPairs]
+      .map(([personId, teamId]) => [personId, survivor(teamId)] as const);
+  }, [rawGroups, merges, born]);
   const leadIds = useMemo(() => new Set(leads ?? []), [leads]);
 
   /**
@@ -799,6 +951,35 @@ export default function HexLab({
    * 2026-10-03: *"zoom should persist."* The signature is what the camera
    * actually responds to; a move is not part of it.
    */
+  /**
+   * **The camera steps back after something is made.** Creation changes the
+   * arrangement, and the fit below deliberately ignores arrangement changes —
+   * so a grown company would otherwise appear off-screen at whatever zoom the
+   * last gesture left behind. Capped so that one node does not fill the glass.
+   */
+  const stepBack = useRef(false);
+  useEffect(() => {
+    if (!stepBack.current || !scene.bounds) return;
+    stepBack.current = false;
+    /**
+     * **Frame the ground, not just the nodes.** Fitting a one-node company to
+     * its own bounds puts a single cell across the whole glass, which reads as
+     * a huge coloured shape rather than as a person standing somewhere. A few
+     * cells of air on every side shows the lattice they are standing on and
+     * leaves somewhere for the next one to go.
+     */
+    const air = (hexScene?.hex.size ?? 0) * 2.5;
+    const b = scene.bounds;
+    // The settings panel owns the right-hand strip, so the company is framed
+    // in what is left of the glass rather than under it.
+    const clear = { width: Math.max(320, size.width - 300), height: size.height };
+    setCamera(fitCamera(
+      { minX: b.minX - air, minY: b.minY - air, maxX: b.maxX + air, maxY: b.maxY + air },
+      clear,
+      { min: floor, max: 2.2 },
+    ));
+  }, [scene, hexScene, size, floor]);
+
   const fittedFor = useRef("");
   useEffect(() => {
     // The driver belongs in here: swapping it re-lays the whole company, so the
@@ -907,6 +1088,88 @@ export default function HexLab({
     setTidyStage(0); // a hand has been in it again
   }, []);
 
+  /* --- growing a company from nothing ------------------------------------ */
+
+  /**
+   * **This page is for making a company, not for looking at one.**
+   *
+   * True only for the blank fixture, which hands down no units at all. The
+   * rest of the lab is unchanged by everything below: a company that arrived
+   * with content never shows the seed and never opens a wizard.
+   */
+  const growing = org.units.length === 0;
+
+  const seq = useRef(0);
+  const makeId = useCallback((kind: Born["kind"]) => {
+    seq.current += 1;
+    // People keep the fixture's own prefix so nothing downstream has to learn
+    // that there are two ways to be a person.
+    return `${kind === "person" ? "person" : "place"}:born-${seq.current}-${Math.random().toString(36).slice(2, 7)}`;
+  }, []);
+
+  /**
+   * **Born in the hand's layer.** A created node's cell goes into `moves` and
+   * its id into `pinned`, which is what makes Greg's instruction true without
+   * suspending a law: under Law 0 the engine may not move either, so no driver
+   * has an opinion about where a grown company sits.
+   */
+  const placeBorn = useCallback((id: string, cell: Cell) => {
+    setMoves((m) => new Map(m).set(id, cell));
+    setPinned((p) => new Set(p).add(id));
+  }, []);
+
+  const [wizard, setWizard] = useState<{ id: string; step: number } | null>(null);
+
+  /** The first click on blank paper makes a **human** — not a company. */
+  const seedPerson = useCallback(() => {
+    const id = makeId("person");
+    setBorn((b) => [...b, { id, kind: "person", name: null, role: null, purpose: null, parentId: null }]);
+    placeBorn(id, ORIGIN);
+    setWizard({ id, step: 0 });
+    stepBack.current = true;
+  }, [makeId, placeBorn]);
+
+  const describe = useCallback((id: string, patch: Partial<Born>) => {
+    setBorn((b) => b.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  }, []);
+
+  /**
+   * **The reveal.** On *"yes, they have teammates"* the GUI creates two nodes
+   * at once — a **parent** (the team) and a **sibling** (the teammate) — and
+   * the person who answered steps aside to make room between them.
+   *
+   * The team is **discovered, not declared**. That is the whole point of the
+   * sequence, and it is why the create-a-person flow deliberately never asks
+   * which team somebody is in: asking would mean the team already existed, and
+   * the reveal would be dead.
+   *
+   * On a lattice this is exact in a way the orbital study could not be. There,
+   * a new node arrived at an angle that had to be remembered or the siblings
+   * would spin round their parent; here the team takes the cell the person was
+   * standing on and the two humans step to either side of it.
+   */
+  const formTeam = useCallback(() => {
+    const lone = born.find((b) => b.kind === "person" && b.parentId === null);
+    if (!lone) return;
+    const at = moves.get(lone.id) ?? ORIGIN;
+    const teamId = makeId("place");
+    const mateId = makeId("person");
+    const around = neighbours(at);
+    const mine = around[3];   // west
+    const theirs = around[0]; // east
+    setBorn((b) => [
+      ...b.map((n) => (n.id === lone.id ? { ...n, parentId: teamId } : n)),
+      { id: teamId, kind: "place", name: null, role: null, purpose: null, parentId: null },
+      { id: mateId, kind: "person", name: null, role: null, purpose: null, parentId: teamId },
+    ]);
+    setMoves((m) => new Map(m).set(teamId, at).set(lone.id, mine).set(mateId, theirs));
+    setPinned((p) => new Set(p).add(teamId).add(mateId));
+    // Both arrivals are still asking for something, so neither gets a wizard
+    // opened on it: the breathing nodes are the invitation.
+    setWizard(null);
+    stepBack.current = true;
+  }, [born, moves, makeId]);
+
   /**
    * **One place decides where a picked-up branch's children go.**
    *
@@ -969,6 +1232,30 @@ export default function HexLab({
 
   // --- drawing -------------------------------------------------------------
 
+  /** Nothing has been made yet, so there is nothing to draw. */
+  const blankPaper = growing && born.length === 0;
+
+  /** Nodes still waiting to be told something. They breathe. */
+  const unfinished = useMemo(
+    () => new Set(born.filter((b) => stillNeeds(b) !== null).map((b) => b.id)),
+    [born],
+  );
+
+  /**
+   * **`prefers-reduced-motion`.** Two things move on this page — the neck
+   * arming over the dwell, and a node breathing until it is described — and
+   * both stand down for anybody who has asked for that. Watched rather than
+   * read once, because the setting can change while the page is open.
+   */
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const read = () => setStill(mq.matches);
+    read();
+    mq.addEventListener("change", read);
+    return () => mq.removeEventListener("change", read);
+  }, []);
+
   /**
    * **A clock, and only while the hand is resting on somebody.**
    *
@@ -981,13 +1268,16 @@ export default function HexLab({
    */
   const [pulse, tick] = useState(0);
   const holding = drag?.heldOver ?? null;
+  /** The clock runs while the hand rests on somebody, or while anything is
+   *  still asking to be described — and stops dead otherwise. */
+  const beating = Boolean(holding) || unfinished.size > 0;
   useEffect(() => {
-    if (!holding) return;
+    if (!beating || still) return;
     let raf = 0;
     const step = () => { tick((n) => n + 1); raf = requestAnimationFrame(step); };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [holding]);
+  }, [beating, still]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1007,6 +1297,14 @@ export default function HexLab({
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
+    /**
+     * **Blank paper is blank.** With nothing in it, `buildOrbitalTree`
+     * synthesises a root so that the rest of the engine always has one — and
+     * drawing it put a single enormous cell behind the "start here" button,
+     * which is a company nobody made. The tree keeps its root; the canvas
+     * simply has nothing to say until somebody makes something.
+     */
+    if (blankPaper) return;
     ctx.save();
     ctx.transform(scale, 0, 0, scale, camera.x, camera.y);
 
@@ -1333,7 +1631,9 @@ export default function HexLab({
       const theirCell = hexScene.hex.cells.get(drag.heldOver);
       if (theirCell) {
         const there = cellToWorld(theirCell, hexSize);
-        const held = Math.min(1, (performance.now() - drag.holdSince) / HOLD_MS);
+        // Under reduced motion the shape simply *is* there, at full strength:
+        // the gesture still announces itself, it just does not grow.
+        const held = still ? 1 : Math.min(1, (performance.now() - drag.holdSince) / HOLD_MS);
         const dx = there.x - here.x;
         const dy = there.y - here.y;
         const span = Math.hypot(dx, dy) || 1;
@@ -1367,6 +1667,27 @@ export default function HexLab({
         ctx.lineWidth = Math.max(0.8, 2 / scale);
         ctx.strokeStyle = `rgba(91,33,182,${0.35 + 0.5 * held})`;
         ctx.stroke();
+      }
+    }
+
+    // 3c. **A node breathes until it is described, not until it is named.**
+    //     The grow study's rule, 2026-09-19: "named but no role" is still an
+    //     empty node. The halo rides on `fill` rather than a stroke, because a
+    //     stroke is a screen width and this wants to read as the cell itself
+    //     being unfinished.
+    if (hexScene && unfinished.size > 0) {
+      const beat = still ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 620);
+      for (const id of unfinished) {
+        const cell = hexScene.hex.cells.get(id);
+        if (!cell) continue;
+        hexPath(cell);
+        ctx.fillStyle = `rgba(234,88,12,${0.10 + 0.16 * beat})`;
+        ctx.fill();
+        ctx.lineWidth = Math.max(0.8, 2.2 / scale);
+        ctx.strokeStyle = `rgba(194,65,12,${0.45 + 0.35 * beat})`;
+        ctx.setLineDash([5 / scale, 4 / scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -1568,7 +1889,7 @@ export default function HexLab({
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper]);
 
   // --- input ---------------------------------------------------------------
 
@@ -1597,6 +1918,24 @@ export default function HexLab({
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     const world = worldAt(e.clientX, e.clientY, rect);
     const hit = unitAtPointer(world);
+
+    /**
+     * **A node that is asking for something answers a tap, not a drag.**
+     *
+     * While anything is breathing it is the only thing on the map asking for
+     * attention, so a press on it opens its wizard rather than picking it up.
+     * Everything else about dragging is untouched — including dragging that
+     * same node, once it has been described.
+     */
+    if (hit && unfinished.has(hit) && !pending) {
+      const node = born.find((b) => b.id === hit);
+      if (node) {
+        const at = stillNeeds(node) === "Needs a name" ? 0 : 1;
+        setWizard({ id: hit, step: at });
+        return;
+      }
+    }
+
     if (hexScene && hit && hit !== tree.rootId && !pending) {
       // A tile travels with its branch, so one gesture moves a single team or a
       // whole island — Greg's rules 5 and 7 are the same drag.
@@ -2104,10 +2443,55 @@ export default function HexLab({
 
   const stats = hexScene?.hex.stats ?? null;
   const b = scene.bounds ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-  const nameOf = (id: string) => tree.units.get(id)?.name ?? id;
+  const nameOf = (id: string) => {
+    const named = tree.units.get(id)?.name?.trim();
+    if (named) return named;
+    const unborn = born.find((b) => b.id === id);
+    return unborn ? (unborn.kind === "person" ? "This person" : "This team") : id;
+  };
+
+  /* --- the wizard --------------------------------------------------------- */
+  const wizardNode = wizard ? born.find((b) => b.id === wizard.id) ?? null : null;
+  const loneRoot = wizardNode
+    ? wizardNode.kind === "person" && wizardNode.parentId === null
+      && born.filter((b) => b.parentId === null).length === 1
+    : false;
+  const wizardSteps = wizardNode ? stepsFor(wizardNode.kind, loneRoot) : [];
+  const step = wizardNode ? wizardSteps[Math.min(wizard!.step, wizardSteps.length - 1)] : null;
+
+  /** The card goes on the side with more room, so it never sits on the node it
+   *  is asking about — the grow study's rule, at its simplest. */
+  const wizardSide = (() => {
+    if (!wizardNode) return "right" as const;
+    const cell = allocation.cells.get(wizardNode.id);
+    if (!cell || !hexScene) return "right" as const;
+    const at = cellToWorld(cell, hexScene.hex.size);
+    return at.x * camera.scale + camera.x < size.width / 2 ? ("right" as const) : ("left" as const);
+  })();
+
+  const answer = (value: string) => {
+    if (!wizardNode || !step) return;
+    if (step.key === "teammates") {
+      if (value === "yes") formTeam();
+      else setWizard(null);
+      return;
+    }
+    describe(wizardNode.id, { [step.key]: value } as Partial<Born>);
+    if (step.key !== "name") advance();
+  };
+
+  function advance() {
+    if (!wizard) return;
+    if (wizard.step < wizardSteps.length - 1) setWizard({ ...wizard, step: wizard.step + 1 });
+    else setWizard(null);
+  }
 
   return (
     <>
+      <style>{`@keyframes zen-breathe {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0.35); }
+        50% { box-shadow: 0 0 0 16px rgba(148,163,184,0); }
+      }`}</style>
       <canvas
         ref={canvasRef}
         onWheel={onWheel}
@@ -2116,6 +2500,91 @@ export default function HexLab({
         onPointerUp={onPointerUp}
         style={{ display: "block", cursor: drag ? "grabbing" : "grab", touchAction: "none" }}
       />
+
+      {/**
+        * **Blank paper, and one thing to press.** Greg's framing for the grow
+        * study: *"the user starts with almost nothing."* Click it and you
+        * create a **human** — not a company, not a value stream.
+        */}
+      {growing && born.length === 0 && (
+        <button
+          onClick={seedPerson}
+          style={{
+            position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)",
+            zIndex: 20, width: 148, height: 148, borderRadius: "50%", cursor: "pointer",
+            border: "2px dashed #94a3b8", background: "#fff", color: "#0f172a",
+            fontFamily: "ui-sans-serif, system-ui", display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 4,
+            animation: still ? undefined : "zen-breathe 2.6s ease-in-out infinite",
+          }}
+        >
+          <span style={{ fontSize: 34, lineHeight: 1, fontWeight: 300 }}>+</span>
+          <span style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>Start here</span>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Add the first person</span>
+        </button>
+      )}
+
+      {/* The wizard. One question at a time, beside the node it is about. */}
+      {wizardNode && step && (
+        <div style={{
+          position: "absolute", top: 96, zIndex: 21, width: 300, padding: "14px 16px",
+          ...(wizardSide === "right" ? { right: 300 } : { left: 24 }),
+          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14,
+          boxShadow: "0 18px 48px rgba(15,23,42,0.18)",
+          fontFamily: "ui-sans-serif, system-ui", fontSize: 13, color: "#0f172a",
+        }}>
+          <b>{step.key === "teammates" && wizardNode.name
+            ? `Does ${wizardNode.name.split(" ")[0]} have any teammates?`
+            : step.title}</b>
+
+          {step.kind === "text" && (
+            <>
+              <input
+                autoFocus
+                value={wizardNode.name ?? ""}
+                placeholder={step.placeholder}
+                onChange={(e) => describe(wizardNode.id, { name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter" && wizardNode.name?.trim()) advance(); }}
+                style={{
+                  width: "100%", marginTop: 10, padding: "8px 10px", fontSize: 13,
+                  border: "1px solid #e2e8f0", borderRadius: 9, outline: "none",
+                }}
+              />
+              <Row>
+                <div style={{ marginTop: 8, display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {step.suggestions.slice(0, 3).map((name) => (
+                    <Btn key={name} small onClick={() => describe(wizardNode.id, { name })}>{name}</Btn>
+                  ))}
+                </div>
+              </Row>
+              <div style={{ marginTop: 12 }}>
+                <Btn primary disabled={!wizardNode.name?.trim()} onClick={advance}>Next</Btn>
+              </div>
+            </>
+          )}
+
+          {step.kind === "select" && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+              {step.options.map((option) => (
+                <Btn key={option} onClick={() => answer(option)}>{option}</Btn>
+              ))}
+            </div>
+          )}
+
+          {step.kind === "choice" && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              <Btn primary onClick={() => answer("yes")}>Yes — they work with others</Btn>
+              <Small>A team will open up around them.</Small>
+              <Btn onClick={() => answer("no")}>Not yet — just them</Btn>
+              <Small>You can add teammates at any time.</Small>
+            </div>
+          )}
+
+          <div style={{ marginTop: 12, borderTop: "1px solid #f1f5f9", paddingTop: 8 }}>
+            <Btn small onClick={() => setWizard(null)}>Leave it for now</Btn>
+          </div>
+        </div>
+      )}
 
       {pending && (
         <Dialog>
@@ -2418,6 +2887,35 @@ export default function HexLab({
 }
 
 const pStyle: React.CSSProperties = { margin: "6px 0 10px", fontSize: 12, lineHeight: 1.55, color: "#475569" };
+
+/**
+ * **What a node is asked, and in what order** — the grow study's sequence,
+ * unchanged (2026-09-19).
+ *
+ * A person is asked who they are and what they do. The **lone first person**
+ * is then asked one more thing, and it is the question the whole study exists
+ * for: *does this person have any teammates?* Nobody else is asked it, because
+ * once there is a team there is nothing left to discover.
+ */
+type Step =
+  | { key: "name"; title: string; kind: "text"; placeholder: string; suggestions: readonly string[] }
+  | { key: "role" | "purpose"; title: string; kind: "select"; options: readonly string[] }
+  | { key: "teammates"; title: string; kind: "choice" };
+
+export function stepsFor(kind: "person" | "place", isLoneRoot: boolean): Step[] {
+  if (kind === "place") {
+    return [
+      { key: "name", title: "What is this team called?", kind: "text", placeholder: "Team name", suggestions: PLACE_NAMES },
+      { key: "purpose", title: "What does it deliver?", kind: "select", options: PURPOSES },
+    ];
+  }
+  const base: Step[] = [
+    { key: "name", title: "Who is this?", kind: "text", placeholder: "Their name", suggestions: SAMPLE_NAMES },
+    { key: "role", title: "What do they do?", kind: "select", options: ROLES },
+  ];
+  if (!isLoneRoot) return base;
+  return [...base, { key: "teammates", title: "Does this person have any teammates?", kind: "choice" }];
+}
 
 const Dialog = ({ children }: { children: React.ReactNode }) => (
   <div style={{
