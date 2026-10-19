@@ -152,6 +152,79 @@ route arrives with a free `InsertionPlan` and commits through `commitPlan`
 (ripple + `setSessionPlaced`); the map route arrives with no plan and has its
 delta applied raw.
 
+### ☐ Is dragging a large branch a feature, or a side effect? — *raised with Greg, 2026-10-19*
+
+Anything on the map can be picked up and put somewhere else: a person, a team,
+or a region holding 1,258 units. The small gestures are obviously useful and
+nobody questions them. **The large one was never designed.** It exists because
+the engine treats every node the same way — not because we decided a user
+should be able to carry a quarter of the company across the screen and drop it.
+
+A week of work now hangs off that gesture: the rule that makes a moved node
+answer to master-centre by distance, the dial that sets how fast it does, and
+two of the open faults further down this list. All of it is machinery for
+making an undesigned gesture behave.
+
+**The question for Greg:** should a user be able to pick up a large structural
+node at all? Three answers are live, and they lead to different work.
+
+- **Keep it.** The gesture stays general, and we go on paying for it in rules.
+- **Gate it by size.** Above some headcount the map offers something else —
+  the basket, or "put this unit under that one" — and the free drag is for
+  things small enough to land where you aimed.
+- **Replace it.** Big structural change becomes an explicit instruction and the
+  engine decides the geometry; dragging stays for arranging what you can see.
+
+Nothing is broken and nothing is waiting on this — `lab` is in a good state.
+It matters because it decides whether the two drag faults below are worth
+fixing, or whether they go away with the gesture.
+
+*For whoever picks it up:* the radial drag path is `deferBranch`
+(`lib/map/layout/hex/defer.ts:225`), called on every cell crossing from `reLay`
+in `app/lab/hex/HexLab.tsx`; the atlas still uses `relayBranch` + `restBranch`
+in `territory.ts`. A size gate belongs where the gesture arms, not inside the
+layout. Both *Dragging a big branch costs six frames per mouse move* and *The
+drag path still thinks the map is an archipelago* are work on this same
+gesture.
+
+### ☐ The maths is right and the result still surprises you — *raised by Greg, 2026-10-19*
+
+Moving a deep node far from the centre produces exactly what the rules say it
+should, and not the picture Greg expected. His words, watching it:
+
+> "The spacing rules on moving a deep child node result in a very linear
+> scattering of the child branches — which does resemble an org chart indeed.
+> My idea has not implemented as I thought it would… I need to think on how
+> this can work more… predictably for a user."
+
+And the round after: *"math and reality collide to produce elongated less
+legible results."*
+
+The worst symptom is fixed — leaf clustering comes back at the far end of the
+dial, so a far-flung branch reads as a circle rather than a chart (`3f81323`).
+The question underneath it is open: **what should a user be able to predict
+before they let go?** Today the honest answer is "nothing precise" — you find
+out where a branch lands by dropping it and looking.
+
+Three directions, not exclusive:
+
+- **Show the landing before the drop** — a ghost of where the branch will sit,
+  so there is nothing left to predict.
+- **Constrain where it may land**, so the prediction is easy to hold in your
+  head even when the geometry underneath is not.
+- **Accept the surprise**, and make undo cheap and obvious.
+
+**Greg is thinking about this one himself.** It is written down so it isn't
+lost, not as a job for an agent to go and solve.
+
+*For whoever picks it up:* the rule is deference `δ = floors[depth] /
+distance(hand, centre)`, capped at 1 and arriving over `taper` rungs
+(`TAPER_RUNGS`, `lib/map/layout/hex/defer.ts:150`; the **wedge** dial in the lab
+panel offers 1, 2 or 3 rungs so the settings can be compared side by side).
+`npm run hex:zoning` measures what a drag costs in teams kept whole, spacer
+breaches and family adjacency. The reasoning is written up in
+[HEX-LAYOUT.md](HEX-LAYOUT.md).
+
 ### ☐ We lost the panel that surfaced problems
 
 The old **Radial** map — deleted on 2026-09-24 — carried a side panel called
