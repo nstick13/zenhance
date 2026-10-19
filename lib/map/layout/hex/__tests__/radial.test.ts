@@ -837,3 +837,142 @@ describe("sideways steps, and the loopbacks they cause", () => {
     }
   });
 });
+
+/**
+ * **Two leads on one node** (Greg, 2026-10-19).
+ *
+ * A merge can leave a unit with two leads, and rather than let the one-lead rule
+ * block the gesture Greg allowed the breach and said where the second one goes:
+ * *"just chain them along the same connection line axis, with the more recent
+ * the furthest away."*
+ */
+describe("Law 3 — a second lead stands behind the first", () => {
+  /**
+   * A company, two teams and five people in the first of them. Built here
+   * rather than taken from `treeOf`, because the deep-org fixture's people are
+   * not units — and a doorstep is made of people.
+   */
+  const twoLeads = () => {
+    const crowd = ["p1", "p2", "p3", "p4", "p5"];
+    const tree = buildOrbitalTree(
+      {
+        units: [
+          { id: "co", name: "Company", parentId: null, leadPersonId: null },
+          { id: "team", name: "Team", parentId: "co", leadPersonId: null },
+          { id: "other", name: "Other team", parentId: "co", leadPersonId: null },
+          ...crowd.map((id) => ({ id, name: id.toUpperCase(), parentId: "team", leadPersonId: null })),
+        ],
+        people: [],
+        assignments: [],
+      },
+      { mergePassThroughRoot: false, workCountFor: () => 0 },
+    );
+    return { tree, people: new Set(crowd), parentId: "team", first: "p1", second: "p2" };
+  };
+
+  it("puts the newer lead further from the node than the older one", () => {
+    const { tree, people, parentId, first, second } = twoLeads();
+    const laid = layoutRadial(tree, {
+      people,
+      leads: new Set([first, second]),
+      leadOrder: new Map([[first, 0], [second, 1]]),
+    });
+    const node = laid.cells.get(parentId)!;
+    expect(hexDistance(laid.cells.get(first)!, node)).toBe(1);
+    expect(hexDistance(laid.cells.get(second)!, node))
+      .toBeGreaterThan(hexDistance(laid.cells.get(first)!, node));
+  });
+
+  it("chains the second onto the first, not off somewhere else", () => {
+    const { tree, people, first, second } = twoLeads();
+    const laid = layoutRadial(tree, {
+      people,
+      leads: new Set([first, second]),
+      leadOrder: new Map([[first, 0], [second, 1]]),
+    });
+    // Touching the lead in front of it is what "chained" means; the axis itself
+    // is asserted by the distance from the node, above.
+    expect(hexDistance(laid.cells.get(second)!, laid.cells.get(first)!)).toBe(1);
+    expect(laid.stats.unplaced).toBe(0);
+    expect(laid.stats.tooClose).toBe(0);
+  });
+
+  it("reverses when the other one is the newcomer", () => {
+    const { tree, people, parentId, first, second } = twoLeads();
+    const laid = layoutRadial(tree, {
+      people,
+      leads: new Set([first, second]),
+      leadOrder: new Map([[first, 1], [second, 0]]),
+    });
+    const node = laid.cells.get(parentId)!;
+    expect(hexDistance(laid.cells.get(second)!, node)).toBe(1);
+    expect(hexDistance(laid.cells.get(first)!, node)).toBeGreaterThan(1);
+  });
+
+  it("changes nothing at all when there is only one lead", () => {
+    const { tree, people, first } = twoLeads();
+    const one = layoutRadial(tree, { people, leads: new Set([first]) });
+    const same = layoutRadial(tree, { people, leads: new Set([first]), leadOrder: new Map([[first, 3]]) });
+    for (const [id, cell] of one.cells) expect(cellKey(same.cells.get(id)!)).toBe(cellKey(cell));
+  });
+});
+
+/**
+ * **The hand outranks the spacer** (Greg, 2026-10-19).
+ *
+ * *"If a user insists on placing a node within an existing team spacer zone,
+ * they can do that, but any sibling or descendant nodes should observe the
+ * standing rules around spacing."* So the exemption is one node deep, and the
+ * rule itself is untouched for everybody else.
+ */
+describe("Law 4 — a hand-placed node is exempt, and only it", () => {
+  const sample = () => {
+    const tree = treeOf(1000, 8);
+    const people = new Set([...tree.units.values()].filter((u) => !u.childIds.length).map((u) => u.id));
+    // Two people from *different* teams — the pair the rule has something to
+    // say about. Two from the same team may touch anyway.
+    const { teamFor } = spacerRule(tree, people);
+    const crowd = [...people];
+    const first = crowd[0];
+    const other = crowd.find((id) => teamFor(id) !== teamFor(first));
+    if (!other) throw new Error("fixture has only one team");
+    return { tree, people, strangers: [first, other] as const };
+  };
+
+  it("lets an exempt unit stand against anybody", () => {
+    const { tree, people, strangers } = sample();
+    const [a, b] = strangers;
+    const plain = spacerRule(tree, people);
+    const withHand = spacerRule(tree, people, { exempt: new Set([a]) });
+    expect(plain.mayTouch(a, b)).toBe(false);
+    expect(withHand.mayTouch(a, b)).toBe(true);
+    // Both ways round: it is a property of the pair, like the rest of Law 4.
+    expect(withHand.mayTouch(b, a)).toBe(true);
+    // `apart` is a least distance in cells and 1 is touching, so this is the
+    // smallest it can say: stand right next to them.
+    expect(plain.apart(a, b)).toBeGreaterThan(1);
+    expect(withHand.apart(a, b)).toBe(1);
+  });
+
+  it("holds everybody else to the rule exactly as before", () => {
+    const { tree, people } = sample();
+    const others = [...people].slice(2, 12);
+    const plain = spacerRule(tree, people);
+    const withHand = spacerRule(tree, people, { exempt: new Set([[...people][0]]) });
+    for (const a of others) {
+      for (const b of others) {
+        expect(withHand.mayTouch(a, b)).toBe(plain.mayTouch(a, b));
+        expect(withHand.apart(a, b)).toBe(plain.apart(a, b));
+      }
+    }
+  });
+
+  it("is the plain rule when nothing has been placed by hand", () => {
+    const { tree, people, strangers } = sample();
+    const [a, b] = strangers;
+    const empty = spacerRule(tree, people, { exempt: new Set() });
+    const plain = spacerRule(tree, people);
+    expect(empty.mayTouch(a, b)).toBe(plain.mayTouch(a, b));
+    expect(empty.apart(a, b)).toBe(plain.apart(a, b));
+  });
+});

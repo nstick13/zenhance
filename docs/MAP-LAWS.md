@@ -172,6 +172,18 @@ whatever rung you grabbed. Not a flat team id.
 The split is deliberate: a team lead belongs at their team's door, on the home
 side, so for a person this is a cost and not a wall.
 
+**Two leads chain along one axis, since 2026-10-19.** A merge can leave a unit
+with two of them, and rather than let the one-lead rule block the gesture Greg
+allowed the breach and said where the second one stands: *"this might end up
+with a rule-breaking 'two node leads' situation — and this is fine for now: just
+chain them along the same connection line axis, with the more recent the
+furthest away."* So the first lead takes the door, and every lead after it is
+seated from the lead in front of it on the bearing continuing away from the
+node. They take no slice of the doorstep fan, which is what keeps two people of
+equal standing from reading as shoulder-to-shoulder on a ring that is meant to
+say *this one leads*. `RadialOptions.leadOrder` is the arrival order; without it
+nothing changes, so a map nobody has merged behaves exactly as before.
+
 **Changed 2026-10-17 (evening), from "strictly further from the centre than its
 own parent".** Greg: *"rather than prevent loopbacks, make the space occupied by
 master-centre particularly unappealing the further away a descendant is…
@@ -298,6 +310,24 @@ rungs above team level adds another. `gapFor(tier)` is the ring, `leastApart(a,
 b)` is how far apart two things must sit — one more than the wider of the two
 rings they keep, read from both sides, because a gap belongs to the pair. Nothing
 below team level changes.
+
+**A hand-placed unit is exempt, and only it, since 2026-10-19.** Greg: *"the hand
+outranks everything: if a user insists on placing a node within an existing team
+spacer zone, they can do that, but any sibling or descendant nodes should observe
+the standing rules around spacing."* So this is Law 0 reaching into Law 4, with
+the same interlock as everywhere else: the exemption is **one node deep**.
+
+`spacerRule` takes an `exempt` set — the pinned units — and `mayTouch(a, b)` is
+true whenever either of them is in it. It runs **both ways**, which is the only
+reading consistent with the rest of this law: a hand-placed node may stand in
+somebody's clear ground, and it is owed none of its own, because it chose where
+it is. Everything the engine places is still held to the rule in full, including
+the units that travelled in with it — which is what stops one deliberate breach
+spreading into a general one.
+
+It is expressed in `mayTouch` alone and `apart` inherits it, because `apart` is a
+least distance in cells where **1 is touching**: "may touch" already is the whole
+of the exemption and there is nothing smaller to ask for.
 
 **And a group of teams keeps one of its own** (Greg, 2026-10-18): *"a collection
 of teams with a common parent together gain an additional outline of one

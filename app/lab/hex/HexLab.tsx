@@ -23,6 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
+import { holdActions } from "./questions";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -39,11 +40,9 @@ import {
 import { bubblesFor, groupZones, grow } from "@/lib/map/layout/hex/bubbles";
 import {
   branchOf,
-  dropOutcome,
   hoverGroup,
   outline,
   placeIsland,
-  type DropOutcome,
 } from "@/lib/map/layout/hex/arrange";
 import {
   cellKey, cellToWorld, corners, cornersAt, hexDistance, neighbours, worldToCell,
@@ -216,13 +215,14 @@ function regionOf(units: { id: string; parentId: string | null; depth: number }[
 }
 
 type Pending =
-  | { kind: "reparent"; unitId: string; newParentId: string; cells: Map<string, Cell> }
-  | { kind: "merge"; unitId: string; withUnitId: string }
+  /** `cells` is where the branch would land, or null when there is nowhere for
+   *  it to go — which does not stop the question being asked. */
+  | { kind: "merge"; unitId: string; withUnitId: string; cells: Map<string, Cell> | null }
   | { kind: "blocked"; unitId: string; occupiedBy: string; cells: Map<string, Cell> | null }
   | { kind: "reshape"; unitId: string; cells: Map<string, Cell> };
 
 export default function HexLab({
-  org, companyKey, initialDensity, groups, leads,
+  org, companyKey, initialDensity, groups: rawGroups, leads,
 }: {
   org: LabOrg;
   companyKey: string;
@@ -275,6 +275,8 @@ export default function HexLab({
   /** Units somebody dragged themselves. Tidy up will not move these — it is
    *  what separates "neaten what I have" from "throw it away". */
   const [pinned, setPinned] = useState<Set<string>>(() => new Set());
+  /** Units merged away: the one that went in → the survivor. */
+  const [merges, setMerges] = useState<Map<string, string>>(() => new Map());
   /** 0 = as arranged, 1 = neatened. A second press compresses. */
   const [tidyStage, setTidyStage] = useState(0);
   /**
@@ -297,9 +299,24 @@ export default function HexLab({
     () => buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 }),
     [org],
   );
+  /**
+   * **A merge changes the shape of the company; a reparent does not.**
+   *
+   * Two trees, deliberately. A reparented tile *"stays exactly where it was put
+   * and changes colour"*, so the layout is never asked to run again for one —
+   * which is why `baseAllocation` has always been built from `baseTree`. A
+   * merge cannot work that way: a node has gone and its people now belong to
+   * somebody else, so the ground has to be laid again around the survivor.
+   * `mergedTree` is what the layout sees; `tree` adds the hand's reparents on
+   * top of it for everything that reads the structure.
+   */
+  const mergedTree = useMemo(
+    () => (merges.size ? applyOverrides(baseTree, { unitMerge: merges }) : baseTree),
+    [baseTree, merges],
+  );
   const tree = useMemo(
-    () => (reparents.size ? applyOverrides(baseTree, { unitParent: reparents }) : baseTree),
-    [baseTree, reparents],
+    () => (reparents.size ? applyOverrides(mergedTree, { unitParent: reparents }) : mergedTree),
+    [mergedTree, reparents],
   );
 
   // --- keeping an arrangement -----------------------------------------------
@@ -330,6 +347,7 @@ export default function HexLab({
       const raw = window.localStorage.getItem(storeKey);
       const saved = raw ? (JSON.parse(raw) as {
         moves?: [string, Cell][]; reparents?: [string, string][]; pinned?: string[];
+        merges?: [string, string][];
       }) : null;
       // **Only keep what this company still contains.** An arrangement saved
       // before the fixture's ids became deterministic names units that no
@@ -342,10 +360,14 @@ export default function HexLab({
         (saved?.reparents ?? []).filter(([id, parentId]) => known(id) && known(parentId)),
       ));
       setPinned(new Set((saved?.pinned ?? []).filter(known)));
+      setMerges(new Map(
+        (saved?.merges ?? []).filter(([goneId, intoId]) => known(goneId) && known(intoId)),
+      ));
     } catch {
       setMoves(new Map());
       setReparents(new Map());
       setPinned(new Set());
+      setMerges(new Map());
     }
     setTidyStage(0);
     setLoadedFor(storeKey);
@@ -356,14 +378,15 @@ export default function HexLab({
     // arrangement under another's.
     if (loadedFor !== storeKey) return;
     try {
-      if (!moves.size && !reparents.size) window.localStorage.removeItem(storeKey);
+      if (!moves.size && !reparents.size && !merges.size) window.localStorage.removeItem(storeKey);
       else window.localStorage.setItem(storeKey, JSON.stringify({
         moves: [...moves], reparents: [...reparents], pinned: [...pinned],
+        merges: [...merges],
       }));
     } catch {
       // A browser that will not keep it is not a reason to stop working.
     }
-  }, [storeKey, loadedFor, moves, reparents, pinned]);
+  }, [storeKey, loadedFor, moves, reparents, pinned, merges]);
 
   /**
    * Who is a person rather than a structural node. Greg, 2026-10-03: *"at the
@@ -375,8 +398,54 @@ export default function HexLab({
    * structural node wears a darker border, so the thing that is a *place* is
    * visibly not the thing that is a *human*.
    */
-  const peopleIds = useMemo(() => new Set((groups ?? []).map(([id]) => id)), [groups]);
+  const peopleIds = useMemo(() => new Set((rawGroups ?? []).map(([id]) => id)), [rawGroups]);
+
+  /**
+   * **Who belongs to which team, after any merges.**
+   *
+   * The server hands down the company as it was built, so a person whose team
+   * has since been merged away still points at a unit that no longer exists.
+   * Everything that reads this — the crowd outlines, the drop path's
+   * `groupOf`, and the panel's count of people sitting next to a stranger —
+   * then disagrees with the tree, and the first thing it says is that two
+   * people who have just been put on one team are strangers to each other.
+   */
+  const groups = useMemo(() => {
+    if (!rawGroups?.length || !merges.size) return rawGroups;
+    const survivor = (id: string) => {
+      let at = id;
+      const walked = new Set<string>([at]);
+      while (merges.has(at)) {
+        const next = merges.get(at)!;
+        if (walked.has(next)) break;
+        walked.add(next);
+        at = next;
+      }
+      return at;
+    };
+    return rawGroups.map(([personId, teamId]) => [personId, survivor(teamId)] as const);
+  }, [rawGroups, merges]);
   const leadIds = useMemo(() => new Set(leads ?? []), [leads]);
+
+  /**
+   * **Which lead arrived first, where a merge has left a unit with two.**
+   *
+   * Derived from the order the merges were made rather than held as its own
+   * state: the lead that came in with the nth merge is the nth newcomer, and
+   * the layout chains it that far out along the axis. Nothing to keep in step,
+   * and it survives a reload for free because `merges` does.
+   */
+  const leadOrder = useMemo(() => {
+    const out = new Map<string, number>();
+    let nth = 0;
+    for (const [goneId] of merges) {
+      nth += 1;
+      const gone = baseTree.units.get(goneId);
+      if (!gone) continue;
+      for (const childId of gone.childIds) if (leadIds.has(childId)) out.set(childId, nth);
+    }
+    return out;
+  }, [merges, baseTree, leadIds]);
 
   const groupOf = useMemo(() => {
     if (!groups?.length) return undefined;
@@ -388,8 +457,8 @@ export default function HexLab({
 
 
   const baseAllocation = useMemo(
-    () => allocateByTerritory(baseTree, { leads: leadIds, people: peopleIds, driver, sideways }),
-    [baseTree, leadIds, peopleIds, driver, sideways],
+    () => allocateByTerritory(mergedTree, { leads: leadIds, leadOrder, people: peopleIds, driver, sideways }),
+    [mergedTree, leadIds, leadOrder, peopleIds, driver, sideways],
   );
 
   /**
@@ -454,6 +523,10 @@ export default function HexLab({
     const occupants = new Map<string, string>();
     for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
     for (const [id, cell] of moves) {
+      // A unit that has been merged away still has its old placement saved, and
+      // stamping that on would put a ghost back on the map with nothing behind
+      // it. The layout is the authority on who exists.
+      if (!cells.has(id)) continue;
       const key = cellKey(cell);
       const holder = occupants.get(key);
       if (holder !== undefined && holder !== id) continue;
@@ -896,6 +969,26 @@ export default function HexLab({
 
   // --- drawing -------------------------------------------------------------
 
+  /**
+   * **A clock, and only while the hand is resting on somebody.**
+   *
+   * The neck below grows over the dwell, and nothing else repaints while the
+   * hand is perfectly still — a pointer that has stopped sends no events, so
+   * the arming would freeze half-drawn at exactly the moment it is saying
+   * something. This ticks while `heldOver` is set and stops dead the instant it
+   * is not, which is the only way a loop earns its keep against the iPad in
+   * AGENTS.md.
+   */
+  const [pulse, tick] = useState(0);
+  const holding = drag?.heldOver ?? null;
+  useEffect(() => {
+    if (!holding) return;
+    let raf = 0;
+    const step = () => { tick((n) => n + 1); raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [holding]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1202,7 +1295,10 @@ export default function HexLab({
     }
 
     const proposed = drag?.landing ?? (pending && "cells" in pending ? pending.cells : null);
-    const warn = drag ? drag.reshaped : pending?.kind !== "reparent";
+    // Amber is "this is not going in as you drew it". While a drag is live that
+    // is the reshape flag; the only dialogs left that carry cells — reshape and
+    // blocked — are both saying exactly that, so they are always amber.
+    const warn = drag ? drag.reshaped : true;
     // A tree the hand asked for gets its own colour, so the gesture is visibly
     // a different thing from a landing that had to give up its shape.
     const treeing = drag?.radiated ?? false;
@@ -1217,6 +1313,59 @@ export default function HexLab({
         ctx.strokeStyle = treeing
           ? "rgba(15,118,110,0.95)"
           : warn ? "rgba(180,83,9,0.95)" : "rgba(29,78,216,0.95)";
+        ctx.stroke();
+      }
+    }
+
+    // 3b. **The neck.** Two nodes the hand is pushing together visibly start to
+    //     run into one another, and the shape *stays* while the dwell arms,
+    //     because the question on screen is about those two. Carried over from
+    //     the grow study (2026-09-20), where it was the whole of how a merge
+    //     announced itself; what it had and this does not is a merge animation
+    //     on commit, which belongs with the choreography and not with the
+    //     gesture.
+    //
+    //     It arms over `HOLD_MS` rather than appearing at the end: a shape that
+    //     only exists once the gesture has already succeeded teaches nobody
+    //     that the gesture is there.
+    if (hexScene && drag?.heldOver && drag.anchor) {
+      const here = cellToWorld(drag.anchor, hexSize);
+      const theirCell = hexScene.hex.cells.get(drag.heldOver);
+      if (theirCell) {
+        const there = cellToWorld(theirCell, hexSize);
+        const held = Math.min(1, (performance.now() - drag.holdSince) / HOLD_MS);
+        const dx = there.x - here.x;
+        const dy = there.y - here.y;
+        const span = Math.hypot(dx, dy) || 1;
+        const nx = -dy / span;
+        const ny = dx / span;
+        const midX = (here.x + there.x) / 2;
+        const midY = (here.y + there.y) / 2;
+        /**
+         * **It pinches in the middle**, which is the whole of why a metaball
+         * reads as two things running together rather than as a bar joining
+         * them: the ends flare into each node and the isthmus between is
+         * narrower than either. It swells as the dwell completes — a thread
+         * while you could still be passing through, half a node's width once
+         * the choice is armed.
+         */
+        const flare = hexSize * 0.40;
+        const waist = hexSize * (0.07 + 0.21 * held);
+        // A quadratic sits at (P0 + 2C + P2)/4 halfway along, so this is the
+        // control point that puts the curve exactly on the waist there.
+        const bend = 2 * waist - flare;
+        ctx.beginPath();
+        ctx.moveTo(here.x + nx * flare, here.y + ny * flare);
+        ctx.quadraticCurveTo(midX + nx * bend, midY + ny * bend,
+          there.x + nx * flare, there.y + ny * flare);
+        ctx.lineTo(there.x - nx * flare, there.y - ny * flare);
+        ctx.quadraticCurveTo(midX - nx * bend, midY - ny * bend,
+          here.x - nx * flare, here.y - ny * flare);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(109,40,217,${0.18 + 0.34 * held})`;
+        ctx.fill();
+        ctx.lineWidth = Math.max(0.8, 2 / scale);
+        ctx.strokeStyle = `rgba(91,33,182,${0.35 + 0.5 * held})`;
         ctx.stroke();
       }
     }
@@ -1416,7 +1565,10 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById]);
+    // `pulse` is the dwell clock: it carries no value, it is what makes this
+    // effect run again while the hand is resting on somebody and nothing else
+    // is moving. See the neck, above.
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse]);
 
   // --- input ---------------------------------------------------------------
 
@@ -1544,6 +1696,26 @@ export default function HexLab({
        */
       if (drag.armedAt) {
         const relaid = reLay(drag.unitId, target, drag.afar);
+        /**
+         * **An armed gesture still answers the hand resting on somebody.**
+         *
+         * This said `heldOver: null` outright, and it closed a door that
+         * nothing else opened. Picking a node straight back up is what you do
+         * the moment a move has not come out how you wanted, so the five
+         * seconds after *every* move were five seconds in which no relationship
+         * question could be asked at all. Greg: *"reparenting or making a
+         * change only fires once. That means once I've moved something I can't
+         * manually move it again."*
+         *
+         * It survived until now because adjacency was a second route to a
+         * reparent; deleting that on 2026-10-19 left this as the only one, and
+         * the gap became the whole gesture. **Re-laying a branch and asking
+         * about its parent are different questions**, and holding the hand
+         * still over another node answers the second whatever the first is
+         * doing — so the dwell is read here exactly as it is on the plain path.
+         */
+        const over = allocation.occupants.get(cellKey(target)) ?? null;
+        const stillOver = over !== null && over === drag.heldOver;
         setDrag({
           ...drag, world, target,
           landing: relaid?.cells ?? null,
@@ -1551,8 +1723,9 @@ export default function HexLab({
           reshaped: false,
           radiated: Boolean(relaid),
           deference: relaid?.deference ?? null,
-          heldOver: null,
-          holdAt: world, holdSince: performance.now(),
+          heldOver: over && !drag.members.has(over) ? over : null,
+          holdAt: stillOver && stillHolding ? drag.holdAt : world,
+          holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
         });
         return;
       }
@@ -1586,6 +1759,23 @@ export default function HexLab({
         // that kept every group's shape and only stepped the clashes aside.
         reshaped: landing.kind === "reshaped",
         radiated: landing.kind === "parted",
+        /**
+         * **Any two units arm it. What they are decides the question asked.**
+         *
+         * This briefly required the two to be of the same kind — the grow
+         * study's *"like pairs with like"* — and that was wrong here, because
+         * grow had somewhere else to put the question and hex does not. There,
+         * a person meeting a team was answered by dropping them on the team's
+         * orbit. Hex has no orbit, and the adjacency route was deleted the same
+         * day, so gating the dwell as well left **no way at all** to make a
+         * person report to a team. Greg found it within minutes: *"I was able
+         * to reparent Dune Team 5 into a child of Buff Team 6 (good), but
+         * thereafter unable to reparent or merge."* Two teams are alike; the
+         * pair he tried next was not.
+         *
+         * `alike` still earns its keep one layer up, in the dialog: it is what
+         * chooses between the merge questions and a plain reparent.
+         */
         heldOver: over && !drag.members.has(over) ? over : null,
         holdAt: stillOver && stillHolding ? drag.holdAt : world,
         holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
@@ -1602,39 +1792,58 @@ export default function HexLab({
 
     const heldLongEnough = drag.heldOver && performance.now() - drag.holdSince > HOLD_MS;
 
-    // Nowhere at all is the only reason a drop is refused now.
+    /**
+     * **A deliberate hold is a question about the org, and it is asked first.**
+     *
+     * This used to sit *below* the refusal, and that is the fault Greg hit:
+     * *"reparenting or making a change only fires once… thereafter unable to
+     * reparent or merge."* A branch has to find somewhere for every one of its
+     * cells to land, and on a map a hand has already rearranged — his had 68
+     * placements on it — the ground beside a target runs out. The release then
+     * took the refusal path and said *"your tile can't fit here right now"*,
+     * and the question he had deliberately held for was never asked. The first
+     * gesture of a session works because the map is still roomy; the ones after
+     * it stop working as it fills, which is exactly "only fires once".
+     *
+     * **Neither answer needs the branch to go anywhere.** Reparenting re-lays
+     * it under its new parent and merging dissolves it into the other unit, so
+     * where it would have sat if it had merely been dropped is beside the
+     * point. The landing is carried through for the reparent, which keeps it
+     * where the hand left it when there is room, and is simply null when there
+     * is not.
+     */
+    if (heldLongEnough && drag.heldOver) {
+      setPending({
+        kind: "merge", unitId: drag.unitId, withUnitId: drag.heldOver,
+        cells: drag.landing,
+      });
+      setDrag(null);
+      return;
+    }
+
+    // Nowhere at all is the only reason a plain drop is refused.
     if (!drag.landing || !drag.anchor) {
       setPending({ kind: "blocked", unitId: drag.unitId, occupiedBy: "", cells: null });
       setDrag(null);
       return;
     }
 
-    // `dropOutcome` is asked the question it is for — does this change who
-    // reports to whom — and asked it about where the branch is *actually*
-    // landing, not about the cell under the cursor.
-    const outcome: DropOutcome = dropOutcome(
-      tree, allocation.occupants, drag.unitId, drag.anchor,
-      { heldOver: heldLongEnough ? drag.heldOver : null },
-    );
-
-    if (outcome.kind === "offer-merge") {
-      setPending({ kind: "merge", unitId: drag.unitId, withUnitId: outcome.withUnitId });
-    } else if (drag.reshaped) {
+    /**
+     * **Nothing is left to ask.** With the hold handled above and nearness no
+     * longer meaning anything, a plain release has one meaning: it moved.
+     * `placeIsland` has already resolved any clash into a landing, so there is
+     * nobody to be in the way by the time we get here — which is why
+     * `dropOutcome` is no longer consulted on this path at all. It still
+     * answers the same question for the engine's own tests.
+     */
+    if (drag.reshaped) {
       setPending({ kind: "reshape", unitId: drag.unitId, cells: drag.landing });
-    } else if (outcome.kind === "offer-reparent") {
-      setPending({
-        kind: "reparent", unitId: drag.unitId,
-        newParentId: outcome.newParentId, cells: drag.landing,
-      });
     } else {
       commit(drag.landing, undefined, drag.unitId);
     }
     // This branch is now the one that just moved, so its governing node can be
-    // picked straight back up to tree it. Not after a merge — there is no node
-    // left to pick up.
-    if (outcome.kind !== "offer-merge") {
-      setJustMoved({ unitId: drag.unitId, at: drag.anchor, when: Date.now() });
-    }
+    // picked straight back up to tree it.
+    setJustMoved({ unitId: drag.unitId, at: drag.anchor, when: Date.now() });
     setDrag(null);
   };
 
@@ -1650,8 +1859,12 @@ export default function HexLab({
   const [tidyReport, setTidyReport] = useState<ReturnType<typeof neaten> | null>(null);
   const tidy = useCallback(() => {
     if (!hexScene || tidyStage > 0) {
+      // The second press throws the whole arrangement away, and that has always
+      // included the structure the hand changed as well as where things sit.
+      // Merges go with it for the same reason: there is no other undo here.
       setMoves(new Map());
       setReparents(new Map());
+      setMerges(new Map());
       setPinned(new Set());
       setTidyStage(0);
       setTidyReport(null);
@@ -1906,19 +2119,6 @@ export default function HexLab({
 
       {pending && (
         <Dialog>
-          {pending.kind === "reparent" && (
-            <>
-              <b>Move {nameOf(pending.unitId)} under {nameOf(pending.newParentId)}?</b>
-              <p style={pStyle}>
-                It has come to rest against {nameOf(pending.newParentId)}. Say no and it stays
-                exactly where you put it, keeping its own colour.
-              </p>
-              <Row>
-                <Btn onClick={() => { commit(pending.cells, { id: pending.unitId, parentId: pending.newParentId }, pending.unitId); setPending(null); }} primary>Reparent</Btn>
-                <Btn onClick={() => { commit(pending.cells, undefined, pending.unitId); setPending(null); }}>Just leave it there</Btn>
-              </Row>
-            </>
-          )}
           {pending.kind === "reshape" && (
             <>
               <b>Your shape might change to fit into where you want to put it</b>
@@ -1949,21 +2149,94 @@ export default function HexLab({
               </Row>
             </>
           )}
-          {pending.kind === "merge" && (
-            <>
-              <b>{nameOf(pending.unitId)} and {nameOf(pending.withUnitId)}</b>
-              <p style={pStyle}>
-                You held one over the other. Reparenting moves the whole branch; merging is not
-                wired in the study, exactly as it is not wired on the orbital map — what happens
-                to both units&rsquo; people and who leads the result is undecided.
-              </p>
-              <Row>
-                <Btn onClick={() => { setReparents((p) => new Map(p).set(pending.unitId, pending.withUnitId)); setPending(null); }} primary>Reparent branch</Btn>
-                <Btn disabled>Merge entire branch</Btn>
-                <Btn onClick={() => setPending(null)}>Cancel</Btn>
-              </Row>
-            </>
-          )}
+          {pending.kind === "merge" && (() => {
+            /**
+             * **Two actions, the same two the radial `/org` map offers.**
+             *
+             * Greg, 2026-10-19, having seen a third: *"We need the options to
+             * match exactly what we had on the radial /org version… There
+             * should not be an option that does whatever XOR thing is happening
+             * to the team not being moved."* The third was *give them a shared
+             * parent*, and it moved the unit the hand was **not** holding and
+             * then left the map looking untouched. Gone.
+             *
+             * The confirmation stays, which he asked for twice: *"reparenting
+             * should ask for confirmation, even after it's showing an animation
+             * or visual to demonstrate to the user that it's happening."* The
+             * neck shows what the gesture is about; this is what commits it.
+             */
+            const held = pending.unitId;
+            const over = pending.withUnitId;
+            const actions = holdActions((id) => peopleIds.has(id), held, over);
+
+            // What the hand is actually carrying, in the words `/org` uses: the
+            // places below it, and the people inside the whole branch.
+            const branch = [...branchOf(tree, held)].filter((id) => id !== held);
+            const below = branch.filter((id) => !peopleIds.has(id)).length;
+            const holds = branch.filter((id) => peopleIds.has(id)).length;
+            const count = (n: number, one: string, many: string) =>
+              `${n} ${n === 1 ? one : many}`;
+
+            return (
+              <>
+                <div style={{
+                  fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase",
+                  color: "#6b7280", fontWeight: 700,
+                }}>
+                  Relationship change · nothing has changed
+                </div>
+                <b>Move or merge &ldquo;{nameOf(held)}&rdquo; with &ldquo;{nameOf(over)}&rdquo;?</b>
+                <p style={pStyle}>
+                  {below === 0
+                    ? `${nameOf(held)} has no units below it.`
+                    : `${nameOf(held)} has ${count(below, "unit", "units")} below it.`}
+                  {holds > 0 ? ` It holds ${count(holds, "person", "people")}.` : ""}
+                </p>
+                <p style={pStyle}>
+                  <b>Reparent branch</b> moves {nameOf(held)} and everything below it under{" "}
+                  {nameOf(over)}; it does not combine the two units.
+                </p>
+                {actions.merge ? (
+                  <p style={pStyle}>
+                    <b>Merge entire branch</b> folds everything {nameOf(held)} holds — teams and
+                    people alike — into {nameOf(over)}, and {nameOf(held)} stops existing. Nothing
+                    above either of them changes.
+                  </p>
+                ) : (
+                  <p style={{ ...pStyle, background: "#eef2ff", padding: "10px 12px", borderRadius: 8 }}>
+                    {actions.whyNotMerge}
+                  </p>
+                )}
+                <Row>
+                  <Btn
+                    primary
+                    onClick={() => {
+                      // **It stays where the hand left it.** Greg's objection to
+                      // the option that "snaps back to the layout unchanged"
+                      // applies here too: a gesture that visibly does nothing
+                      // reads as a gesture that failed. Where the branch had
+                      // somewhere to land, that landing is kept; where it had
+                      // none, only the reporting line changes.
+                      if (pending.cells) commit(pending.cells, { id: held, parentId: over }, held);
+                      else setReparents((p) => new Map(p).set(held, over));
+                      setPending(null);
+                    }}
+                  >Reparent branch</Btn>
+                  <Btn
+                    disabled={!actions.merge}
+                    onClick={() => {
+                      if (!actions.merge) return;
+                      setMerges((p) => new Map(p).set(held, over));
+                      // Its saved placement is about to belong to nobody.
+                      setMoves((p) => { const next = new Map(p); next.delete(held); return next; });
+                      setPending(null);
+                    }}
+                  >Merge entire branch</Btn>
+                  <Btn onClick={() => setPending(null)}>Cancel</Btn>
+                </Row>
+              </>
+            );
+          })()}
         </Dialog>
       )}
 

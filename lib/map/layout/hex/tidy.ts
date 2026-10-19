@@ -234,7 +234,12 @@ export function neaten(
   /** The rule, or a rule that forbids nothing when tidy was not told who is a
    *  human — which is how the atlas driver's tidy behaves, unchanged. */
   const { mayTouch } = people
-    ? spacerRule(tree, people)
+    // **Pinned units are exempt** — they are exactly the ones a hand put where
+    // they are, and Greg's rule is that the hand outranks the spacer. Without
+    // this a node somebody deliberately stood in a team's clear ground would go
+    // on enforcing that ground against everybody else, which is the rule being
+    // kept by the one unit that is allowed to break it.
+    ? spacerRule(tree, people, { exempt: pinned })
     : { mayTouch: () => true };
   /**
    * **Law 3, which tidy also has to keep.**

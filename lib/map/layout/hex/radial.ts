@@ -208,6 +208,17 @@ export type RadialOptions = {
   place?: number;
   /** Units that lead the unit they hang from — they take the pick of the arc. */
   leads?: ReadonlySet<string>;
+  /**
+   * **Which lead arrived first, where a unit has more than one.**
+   *
+   * A merge can leave two leads on one node, and Greg allowed it on 2026-10-19
+   * rather than let the rule block the gesture: *"this might end up with a
+   * rule-breaking 'two node leads' situation — and this is fine for now: just
+   * chain them along the same connection line axis, with the more recent the
+   * furthest away."* Lower is earlier. Anything missing is nought, so a map
+   * that has never been merged behaves exactly as before.
+   */
+  leadOrder?: ReadonlyMap<string, number>;
   /** Units that are people rather than structure. A person is never a place. */
   people?: ReadonlySet<string>;
   /**
@@ -297,6 +308,8 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
   const maxGap = options.maxGap ?? MAX_HALO;
   const place = options.place ?? PLACE_SIZE;
   const leads = options.leads ?? new Set<string>();
+  const leadOrder = options.leadOrder ?? new Map<string, number>();
+  const arrived = (id: string) => leadOrder.get(id) ?? 0;
   const people = options.people ?? new Set<string>();
   const thicken = options.thicken ?? DEFAULT_THICKEN;
   const sideways = options.sideways ?? DEFAULT_SIDEWAYS;
@@ -369,6 +382,9 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
       .filter((u): u is UnitNode => !!u)
       .sort((a, b) =>
         Number(leads.has(b.id)) - Number(leads.has(a.id))
+        // Two leads are ordered by when they arrived, so the chain away from
+        // the door is stable and the newcomer is the one at the far end.
+        || (leads.has(a.id) && leads.has(b.id) ? arrived(a.id) - arrived(b.id) : 0)
         || b.totalSeats - a.totalSeats
         || a.name.localeCompare(b.name));
 
@@ -982,12 +998,27 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
      * own clause: *a team lead belongs at their team's door, on the home side.*
      */
     const door = kids.filter((kid) => !isPlace(kid));
+    /**
+     * **A second lead stands behind the first, not beside it.**
+     *
+     * One lead takes the door. A merge can leave two, and fanning the second
+     * into the next slice puts two people of equal standing shoulder to
+     * shoulder on a ring that is meant to say *this one leads*. Greg,
+     * 2026-10-19: *"chain them along the same connection line axis, with the
+     * more recent the furthest away."* So every lead after the first is seated
+     * from the lead in front of it, on the bearing that continues away from
+     * the node — which also keeps them off the fan's weight, since they take no
+     * slice of it.
+     */
+    const chained = door.filter((kid) => leads.has(kid.id)).slice(1);
+    const behind = new Set(chained.map((kid) => kid.id));
+    const fan = door.filter((kid) => !behind.has(kid.id));
     let doorTotal = 0;
-    for (const kid of door) doorTotal += demands.get(kid.id)!.weight;
+    for (const kid of fan) doorTotal += demands.get(kid.id)!.weight;
     const perCell = FULL_TURN / 6;
     let edge = wrap(outward + Math.PI);
     const seatedDoor: UnitNode[] = [];
-    door.forEach((kid, i) => {
+    fan.forEach((kid, i) => {
       const span = FULL_TURN * (demands.get(kid.id)!.weight / Math.max(1, doorTotal));
       // The first slice is centred on the door rather than starting there, so
       // the lead faces home instead of standing a sixth of a turn off it.
@@ -1001,6 +1032,22 @@ export function layoutRadial(tree: OrbitalTree, options: RadialOptions = {}): Te
       land(kid, seated.cell, unit.id === root.id ? kid.id : branchOf.get(unit.id) ?? unit.id);
       seatedDoor.push(kid);
     });
+    // The chain of extra leads, each one further out along the axis the one in
+    // front of it established. A narrow slice keeps it on that axis; if the
+    // colinear cell is taken, `seatNear` falls to the nearest one to it, which
+    // is a kink in the chain rather than a lead adrift.
+    let ahead = cells.get(kids.find((kid) => leads.has(kid.id))?.id ?? "") ?? null;
+    for (const kid of chained) {
+      if (!ahead) break;
+      const away = worldAngle(at, ahead, 1);
+      spacedBy.set(kid.id, 0);
+      const seated = seatNear(ahead, kid.id, away, perCell / 2, !people.has(kid.id));
+      if (!seated) { unplaced.push(kid.id); continue; }
+      if (seated.strayed) strayed.push(kid.id);
+      land(kid, seated.cell, unit.id === root.id ? kid.id : branchOf.get(unit.id) ?? unit.id);
+      seatedDoor.push(kid);
+      ahead = seated.cell;
+    }
     // The whole doorstep is seated before anybody's children are, so a
     // grandchild cannot take a cell a sibling was about to stand in.
     for (const kid of seatedDoor) put(kid);

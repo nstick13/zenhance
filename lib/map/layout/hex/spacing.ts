@@ -203,7 +203,29 @@ export function spacerRule(
    * unit is treated as a team and `apart` is the plain spacer — which is what
    * `tidy` wants when the atlas drew the map.
    */
-  options: { tierOf?: (id: string) => number; rungs?: number } = {},
+  options: {
+    tierOf?: (id: string) => number;
+    rungs?: number;
+    /**
+     * **Units somebody placed by hand, which the rule does not apply to.**
+     *
+     * Greg, 2026-10-19: *"the hand outranks everything: if a user insists on
+     * placing a node within an existing team spacer zone, they can do that, but
+     * any sibling or descendant nodes should observe the standing rules around
+     * spacing."*
+     *
+     * So the exemption is one node deep and it runs **both ways**. A hand-placed
+     * node may stand in somebody's clear ground, and it is owed none of its own
+     * — it chose where it is. Everything the engine places is still held to the
+     * rule in full, including the units that travelled in with it, which is what
+     * stops one deliberate breach spreading into a general one.
+     *
+     * It is expressed in `mayTouch` alone, and `apart` inherits it: `apart` is a
+     * least distance in cells, where 1 *is* touching, so "may touch" already is
+     * the whole of the exemption and there is nothing smaller to ask for.
+     */
+    exempt?: ReadonlySet<string>;
+  } = {},
 ): {
   teamFor: (id: string) => string | null;
   groupFor: (id: string) => string | null;
@@ -224,7 +246,9 @@ export function spacerRule(
     return answer;
   };
 
+  const exempt = options.exempt;
   const mayTouch = (a: string, b: string): boolean => {
+    if (exempt?.has(a) || exempt?.has(b)) return true;
     const aHuman = people.has(a);
     const bHuman = people.has(b);
     if (!aHuman && !bHuman) return false;

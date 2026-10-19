@@ -14,10 +14,12 @@
  * - *"do not allow users to place nodes atop other nodes unless they are
  *   merging or reparenting"* — `dropOutcome` returns `blocked`, with the
  *   nearest free cell to offer instead.
- * - *"they can snap together and change colour to reparent… the user should be
- *   given the option to reparent, else the node just remains adjacent and of a
- *   different colour"* — `dropOutcome` returns `offer-reparent` and names the
- *   family it would join. Declining leaves the tile exactly where it landed.
+ * - *"adjacency shouldn't have much meaning other than visually… if I put
+ *   something near to another thing, it means whatever the user wants that to
+ *   mean"* (Greg, 2026-10-19) — so coming to rest against another family is
+ *   **not** a gesture. `dropOutcome` returns `move`, and the tile keeps its own
+ *   parent and its own colour. Only a deliberate hold over another node asks a
+ *   question. See below.
  * - *"draw a nice chunky outline around the edge of all meta-connected nodes"*
  *   — `outline`, which is exact on a lattice: an edge is on the boundary when
  *   the cell across it is not in the set. No marching squares, no smoothing.
@@ -43,8 +45,6 @@ export type Occupancy = ReadonlyMap<string, string>;
 export type DropOutcome =
   /** Free ground, touching nothing that belongs to anyone else. Just a move. */
   | { kind: "move"; cell: Cell }
-  /** Free ground, but touching another family. Ask before changing anything. */
-  | { kind: "offer-reparent"; cell: Cell; newParentId: string; touching: string[] }
   /** Somebody is already there. Offer the nearest free cell instead. */
   | { kind: "blocked"; occupiedBy: string; nearestFree: Cell | null }
   /** Held over another unit long enough to mean it. */
@@ -124,40 +124,13 @@ export function dropOutcome(
     };
   }
 
-  // Who is this tile now touching that is not its own branch?
-  const unit = tree.units.get(movingId);
-  const currentParent = unit?.parentId ?? null;
-  const touching: string[] = [];
-  for (const n of neighbours(cell)) {
-    const who = occupancy.get(cellKey(n));
-    if (who && !moving.has(who)) touching.push(who);
-  }
-
-  // A tile that has come to rest against somebody else's family is the gesture
-  // that offers a reparent. Touching the parent it already has is not a change,
-  // and neither is touching one of its own siblings.
-  const siblings = new Set(
-    currentParent ? tree.units.get(currentParent)?.childIds ?? [] : [],
-  );
-  const candidates = touching.filter(
-    (id) => id !== currentParent && !siblings.has(id) && !wouldCycle(tree, movingId, id),
-  );
-
-  if (candidates.length > 0) {
-    // **The deepest one.** A tile nestled into a corner touches its new
-    // neighbour, that neighbour's division, and often the company as well, and
-    // "the biggest" then proposes the company almost every time — which is
-    // never what the hand meant. The most specific unit you came to rest
-    // against is the one you were aiming at. Headcount only breaks ties.
-    const newParentId = [...candidates].sort(
-      (a, b) =>
-        (tree.units.get(b)?.depth ?? 0) - (tree.units.get(a)?.depth ?? 0) ||
-        (tree.units.get(b)?.totalSeats ?? 0) - (tree.units.get(a)?.totalSeats ?? 0) ||
-        a.localeCompare(b),
-    )[0];
-    return { kind: "offer-reparent", cell, newParentId, touching };
-  }
-
+  // **Nearness says nothing.** This is where a tile coming to rest against
+  // somebody else's family used to offer a reparent, and on 2026-10-19 Greg
+  // took the meaning out of it: *"if I put something near to another thing, it
+  // means whatever the user wants that to mean — only if they manually reparent
+  // it does the nearness also become meaningful."* So a drop on free ground is
+  // a move, whoever it has landed beside. Adjacency still earns its meaning in
+  // `neaten`, which is a gesture somebody asked for.
   return { kind: "move", cell };
 }
 

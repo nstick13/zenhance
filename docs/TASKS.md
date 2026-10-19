@@ -516,6 +516,76 @@ map ever wants genuine air between regions — a label in the gap, or a region
 grabbable by its margin. The three ideas already spent are node-to-node spacing,
 footprint-as-arc and thickening; the sweep says thickening makes it worse.
 
+### ☐ A merged team presses against its neighbours — *Claude, 2026-10-19*
+
+Two teams can now be merged into one on the hex study: you hold one over the
+other and pick *"make them one team"*, and everything either of them held ends
+up on the survivor. It works, and the map re-lays itself around the bigger team.
+
+**But the bigger team then crowds the one next to it.** On Sparrow Jam, a clean
+load has nought cells pressing against a different top-level group; after one
+merge it has six. Nothing is obviously broken on screen — this is the map's own
+measure of how much elbow room the groups have, and it went from perfect to
+slightly short. The likely reason is simply that the survivor is now twice the
+size and the ground around it was laid out for one team, not two.
+
+Nobody needs to decide anything. It wants somebody to look at whether the
+re-lay is actually giving the merged team the room the spacing rule says it is
+owed, or whether a merge quietly squeezes it.
+
+*For whoever picks it up:* reproduce at `/lab/hex?company=small&strata=people`,
+radial driver — merge Union Team 1 into Everest Team 2 and watch `scatter.touching`
+in the panel. `spacerRule` reads the merged tree, so the rule itself is being
+asked the right question; suspect the ring floors in `layoutRadial`, which are
+measured per rung and may not have grown with the team.
+
+### ☐ The neck ignores a reduced-motion setting — *Claude, 2026-10-19*
+
+Holding one node over another now draws a shape between them that grows over
+half a second, so you can see the question arming before you let go. It is the
+first thing in the hex study that moves on its own.
+
+Our standing rule is that anything that moves respects the browser's *reduce
+motion* setting, for people who find animation uncomfortable or disorienting.
+This does not yet. The fix is small — draw the shape at full strength
+immediately instead of growing it — and it should happen before any of this
+reaches a customer.
+
+*For whoever picks it up:* `app/lab/hex/HexLab.tsx`, the `pulse` clock and the
+neck in the painter. Under `prefers-reduced-motion` skip the `requestAnimationFrame`
+loop entirely and treat `held` as 1.
+
+### ☐ Tapping a node says "your tile can't fit here right now" — *Claude, 2026-10-19*
+
+A plain click on a tile — press and release without moving — brings up a panel
+saying there is nowhere free nearby, on a map with empty ground all around it.
+It is harmless and it looks broken, and it has been there a while; it is not
+something this week's work introduced.
+
+The cause is that a press starts a drag, and a drag that never leaves its own
+cell never works out where it would land, so the release finds no landing and
+refuses. A tap that goes nowhere should do nothing, or select the tile.
+
+*For whoever picks it up:* `onPointerDown` leaves `landing`/`anchor` null unless
+the five-second re-pickup armed; `onPointerUp` reads that as a refusal. Either
+seat the landing at the grabbed cell on pick-up, or treat "never left the cell"
+as a tap before the refusal branch.
+
+### ☐ A merge reshuffles every colour on the map — *Claude, 2026-10-19*
+
+Merging two teams changes the colour of the whole company, not just the two
+teams involved. The map is still correct, but it looks like far more changed
+than did, which is the opposite of what a single deliberate act should feel
+like.
+
+Region hues are handed out by position in the branch order, so removing one unit
+shifts everybody after it along by one. A hue that followed the unit's own
+identity instead would leave the rest of the map alone.
+
+*For whoever picks it up:* `hueById`/`regionOrder` in `app/lab/hex/HexLab.tsx`.
+Keying the hue off a stable id rather than an index is the whole change; check
+it still spreads the hues apart as well as the index did.
+
 ### ☐ A statistic that measures the rule again — *Claude, 2026-10-16*
 
 In the teams view every unit is structural, and the spacer rule forbids two

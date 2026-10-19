@@ -302,6 +302,21 @@ export function unitsAtDepth(tree: OrbitalTree, depth: number): UnitNode[] {
 export type StructureOverrides = {
   unitParent?: Map<string, string>;
   seatUnit?: Map<string, string>;
+  /**
+   * **Units that have been merged away: the one that went in → the survivor.**
+   *
+   * Everything the absorbed unit held — its children, its seats — ends up on
+   * the survivor, and the unit itself stops existing. *"Nothing above either
+   * team changes"*: the survivor keeps its own parent, and the absorbed one's
+   * parent simply loses a child.
+   *
+   * This was left unwired on both maps for a year with one stated reason —
+   * what happens to both units' people and who leads the result was undecided.
+   * Greg settled both on 2026-10-19: the people are children, so they are the
+   * survivor's children; and two leads is allowed, chained along one axis by
+   * the layout (`RadialOptions.leadOrder`).
+   */
+  unitMerge?: Map<string, string>;
 };
 
 function cloneTree(tree: OrbitalTree): OrbitalTree {
@@ -330,8 +345,46 @@ function wouldCycle(tree: OrbitalTree, unitId: string, parentId: string): boolea
  * from an earlier snapshot can never break the map.
  */
 export function applyOverrides(tree: OrbitalTree, overrides: StructureOverrides): OrbitalTree {
-  if (!overrides.unitParent?.size && !overrides.seatUnit?.size) return tree;
+  if (!overrides.unitParent?.size && !overrides.seatUnit?.size && !overrides.unitMerge?.size) return tree;
   const next = cloneTree(tree);
+
+  /**
+   * **Merges run first**, because every later override talks about a tree that
+   * no longer holds the units that went in. A merge into a unit that has itself
+   * since been merged away follows the chain to whoever is still standing, so
+   * three teams merged one after another end up as one and not as a dangling
+   * reference.
+   */
+  for (const [goneId] of overrides.unitMerge ?? []) {
+    const gone = next.units.get(goneId);
+    if (!gone || goneId === next.rootId) continue;
+    let survivorId: string | undefined = overrides.unitMerge?.get(goneId);
+    const walked = new Set<string>([goneId]);
+    while (survivorId && overrides.unitMerge?.has(survivorId) && !walked.has(survivorId)) {
+      walked.add(survivorId);
+      survivorId = overrides.unitMerge.get(survivorId);
+    }
+    const survivor = survivorId ? next.units.get(survivorId) : undefined;
+    // A unit cannot be merged into its own descendant: the survivor would take
+    // the children and then find itself among them.
+    if (!survivor || survivor.id === goneId || wouldCycle(next, goneId, survivor.id)) continue;
+
+    for (const childId of gone.childIds) {
+      const child = next.units.get(childId);
+      if (!child) continue;
+      child.parentId = survivor.id;
+      if (!survivor.childIds.includes(childId)) survivor.childIds.push(childId);
+    }
+    for (const seatId of gone.seatIds) {
+      const seat = next.seats.get(seatId);
+      if (!seat) continue;
+      seat.unitId = survivor.id;
+      if (!survivor.seatIds.includes(seatId)) survivor.seatIds.push(seatId);
+    }
+    const parent = gone.parentId ? next.units.get(gone.parentId) : null;
+    if (parent) parent.childIds = parent.childIds.filter((id) => id !== goneId);
+    next.units.delete(goneId);
+  }
 
   for (const [unitId, parentId] of overrides.unitParent ?? []) {
     const unit = next.units.get(unitId);

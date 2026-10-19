@@ -184,6 +184,7 @@ export function branchShape(args: {
   anchorId: string;
   people?: ReadonlySet<string>;
   leads?: ReadonlySet<string>;
+  leadOrder?: ReadonlyMap<string, number>;
   maxGap?: number;
   sideways?: "allow" | "forbid";
 }): BranchShape {
@@ -194,6 +195,7 @@ export function branchShape(args: {
     // branch *away* from home, and a home due west is a branch due east.
     homeward: { q: -2, r: 1 },
     leads: args.leads,
+    leadOrder: args.leadOrder,
     people: args.people,
     maxGap: args.maxGap,
     driver: "radial",
@@ -239,6 +241,7 @@ export function deferBranch(args: {
   tier?: ReadonlyMap<string, number>;
   people?: ReadonlySet<string>;
   leads?: ReadonlySet<string>;
+  leadOrder?: ReadonlyMap<string, number>;
   taper?: number;
   rungs?: number;
   /** The branch's own shape, from `branchShape`, worked out once when the
@@ -252,7 +255,7 @@ export function deferBranch(args: {
   const anchor = tree.units.get(anchorId);
   const cells = new Map<string, Cell>();
   const afar = args.afar
-    ?? branchShape({ tree, anchorId, people, leads: args.leads });
+    ?? branchShape({ tree, anchorId, people, leads: args.leads, leadOrder: args.leadOrder });
   if (!anchor) return { cells, deference: 1, held: false, afar: { ...afar, turns: 0 } };
 
   // --- the dial ------------------------------------------------------------

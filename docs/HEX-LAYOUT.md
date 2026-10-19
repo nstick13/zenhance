@@ -3170,6 +3170,213 @@ now real ground to show.
 
 ---
 
+## Nearness stops meaning anything, and merging finally works (2026-10-19)
+
+Greg, reviewing what was built before hex and deciding what to carry across:
+
+> *"The existing hex interaction gets it right, and the earlier radial version
+> had it — reparenting should ask for confirmation, even after it's showing an
+> animation or visual to demonstrate to the user that it's happening."*
+>
+> *"Adjacency shouldn't have much meaning other than visually, even in hex. If I
+> put something near to another thing, it means whatever the user wants that to
+> mean — only if they manually reparent it does the nearness also become
+> meaningful."*
+>
+> *"What we do want to pull in from the orbits model is the merge/reparent
+> behaviour. This might end up with a rule-breaking 'two node leads' situation —
+> and this is fine for now: just chain them along the same connection line axis,
+> with the more recent the furthest away."*
+
+Four changes, and the first is a deletion.
+
+### A drop on free ground is a move, whoever it lands beside
+
+`dropOutcome` used to return `offer-reparent` when a tile came to rest against
+somebody else's family, and a dialog then asked whether to join them. That is
+the map inferring intent from where two things happen to sit, which is exactly
+what Greg took the meaning out of. The outcome, its dialog and the test that
+pinned it are gone; `dropOutcome` now has two things to say about a release —
+somebody is in the way, or the hand was held over a node long enough to mean it.
+
+Adjacency still earns its meaning in `neaten`, which is a gesture somebody
+asked for. It is only the drag path that stopped reading it.
+
+### Node on node is the only gesture that means anything
+
+The dwell was already there — 550ms, the orbital map's own, *a pass must not arm
+anything*. What it was missing is everything the grow study learnt about making
+the question visible before the hand lets go:
+
+- **The neck.** Two nodes run visibly into one another while the dwell arms, and
+  the shape stays while you decide, because the question on screen is about
+  those two. It **pinches in the middle** — ends flaring into each node, the
+  isthmus between them narrower than either — which is the whole of why a
+  metaball reads as two things merging rather than as a bar joining them. The
+  first version bulged in the middle and read as a pipe.
+- **Two actions, the same two `/org` offers**: *reparent branch* and *merge
+  entire branch*. `app/lab/hex/questions.ts` holds which are available and
+  nothing else, because getting that wrong shut a door — see below.
+- **The confirmation stays**, which is the part of the plan Greg sent back. The
+  neck shows what the gesture is about; the dialog is still what commits it.
+
+### The merge, which had been disabled on both maps for months
+
+The button carried one stated reason for being dead: *what happens to both
+units' people and who leads the result is undecided*. Both halves are now
+answered — the people are children, so they are the survivor's children; and two
+leads is allowed, chained along one axis (Law 3).
+
+So `applyOverrides` gained `unitMerge`, beside the reparent and seat overrides it
+already held. Merges run **first**, because every later override talks about a
+tree that no longer holds the units that went in, and a merge into a unit that
+has itself been merged away follows the chain to whoever is still standing. A
+unit cannot be merged into its own descendant, and the company cannot be merged
+away.
+
+The lab keeps **two trees** as a result. A reparented tile *"stays exactly where
+it was put and changes colour"*, so the layout is never re-run for one — which
+is why `baseAllocation` has always been built from `baseTree`. A merge cannot
+work that way: a node has gone and its people belong to somebody else, so the
+ground has to be laid again around the survivor. `mergedTree` is what the layout
+sees; `tree` adds the hand's reparents on top of it.
+
+The dialog went through three shapes in a day, and the one that stuck is the one
+`/org` already had.
+
+It first asked the grow study's two questions — *make them one team*, *give them
+a shared parent* — plus *reparent branch*. Greg cut the middle one within the
+hour: *"There's also an uncalled-for option which reparents the thing that isn't
+moving, and snaps back to the layout unchanged… There should not be an option
+that does whatever XOR thing is happening to the team not being moved."* Two
+objections in one, and both are right. **A shared parent moves the unit the hand
+is not holding** — you pick up A, and B changes too. And because a reparent
+moves nothing on the map, the only visible result was a map that looked exactly
+as it had, which reads as the button having done nothing.
+
+> *"We need the options to match exactly what we had on the radial /org version.
+> A node gets dragged, the user hovers, an animation plays, an option is given.
+> The options are reparent the branch or merge the whole thing."*
+
+So the dialog is now `/org`'s, down to the eyebrow that says nothing has
+happened yet: **RELATIONSHIP CHANGE · NOTHING HAS CHANGED**, the title *Move or
+merge "A" with "B"?*, a line of fact about what the hand is carrying (*"Granite
+Division has 2 units below it. It holds 20 people."*), a sentence for each
+action, and three buttons.
+
+**The difference from `/org` is that merging is switched on.** That map's
+*Merge entire branch* has always been disabled, with the explanation printed in
+the dialog: *what happens to both units' own people, and who leads the merged
+unit, still need deciding*. Greg decided both on 2026-10-19, so here the button
+works. It is disabled in one case only — when either side is a **person** —
+because folding a person into something else means everything they hold moves
+across and then they stop existing, and that is deleting somebody rather than
+restructuring. The dialog says so in the same note box `/org` used.
+
+### The door this shut, within an hour of Greg opening the page
+
+The dwell was built with the grow study's rule — *"like pairs with like"*, two
+teams or two people — and that rule does not survive the journey. In grow a
+person meeting a *team* was answered somewhere else: you dropped them on the
+team's orbit. Hex has no orbit, and the adjacency route was deleted the same
+afternoon, on purpose. Gating the dwell as well left **no gesture at all** for
+making a person report to a team.
+
+Greg found it on his second try: *"I was able to reparent Dune Team 5 into a
+child of Buff Team 6 (good), but thereafter unable to reparent or merge."* Two
+teams are alike, so the first worked; the pair he reached for next was not, and
+the map silently did nothing.
+
+**Neither half was wrong on its own, and together they were.** That is the thing
+worth keeping: a deletion and a narrowing, landed in one change, each defensible
+and jointly a dead end. The dwell now arms for any two units that are not
+already one inside the other. `holdActions` is a short pure function with its
+own test, and the test that matters is not that each pair gets the *right*
+offer; it is that **every pair can be reparented** — so no combination of two
+units is a gesture that quietly does nothing.
+
+### "Only fires once" — two more doors, and how the first search missed them
+
+Greg, after the above was fixed: *"reparenting or making a change only fires
+once. That means once I've moved something I can't manually move it again. I
+want to be able to change parenting indefinitely."*
+
+The first search for this **failed, and the way it failed is the lesson**. The
+gesture was driven from a script that reparented the same unit three times in a
+row and concluded the fault did not reproduce. It did not reproduce because the
+script paused between gestures and used coordinates captured before anything
+moved — it was not doing what a hand does. Driving it back to back, from
+positions found fresh each time, reproduced it immediately. **A reproduction
+that skips the rhythm of the real gesture is not a reproduction.**
+
+Two causes, both of which shut the gesture for the same five seconds.
+
+**The armed re-pickup never read the dwell.** Picking the same node straight
+back up within five seconds arms the "tree it" gesture, and that path set
+`heldOver: null` outright — so for five seconds after *every* move, no
+relationship question could be asked at all. Picking a node straight back up is
+exactly what you do when a move has not come out how you wanted, so this is the
+common case rather than an edge. It had survived since 2026-10-02 because
+adjacency was a second route to a reparent; deleting that the same afternoon
+left this as the only route, and the gap became the whole gesture. Re-laying a
+branch and asking about its parent are different questions, and the hand resting
+on another node answers the second whatever the first is doing.
+
+**The refusal was asked before the question.** A branch has to find room for
+every one of its cells, and `onPointerUp` checked that *first*: no room, and the
+release said *"your tile can't fit here right now"* and threw the hold away. On
+a map a hand has rearranged — Greg's had 104 placements on it — the ground
+beside a target runs out, which is why it worsens as a session goes on. **Neither
+answer needs the branch to go anywhere**: reparenting re-lays it under its new
+parent and merging dissolves it. So a deliberate hold is now answered before
+anything is refused, and the landing is carried through for the reparent, which
+keeps the branch where the hand left it when there was room.
+
+**And the reparent now commits where it landed.** It used to set the new parent
+and let the branch snap back to its calculated cell, which is the same objection
+Greg raised about the shared-parent option: *"snaps back to the layout
+unchanged."* A gesture that visibly does nothing reads as a gesture that failed.
+
+### Two faults the browser found, both worth keeping
+
+**A person's team does not follow a merge on its own.** The company comes down
+from the server as it was built, so after a merge a person still pointed at a
+team that no longer existed. The first thing the panel then said was that two
+people who had just been put on one team were strangers to each other — *6 of
+22 people sit next to somebody from another team*, on a map where the right
+answer was nought. The person→team map is now resolved through the merge chain
+before anything reads it, and the figure is back to nought.
+
+**A stale hand placement can resurrect a unit.** The placement overlay stamps
+saved cells on top of the layout and only checked that the target cell was free.
+A unit merged away still had its placement saved, so it went back on the map as
+a cell with nothing behind it. The overlay now takes the layout as the authority
+on who exists.
+
+### Measured
+
+| | before | after |
+| --- | ---: | ---: |
+| tests across the suite | 1,671 | **1,716** (45 new) |
+| dialogs a drop can raise | 4 | **3** |
+| `dropOutcome` outcomes | 4 | **3** |
+| actions on the hold dialog | 3, one dead | **2, both live** |
+| seconds after a move with no relationship gesture | 5 | **0** |
+| pairs of units with no reparent route | 0 | **0** (briefly: every mixed pair) |
+
+### What was deliberately not built
+
+Boundaries deciding a parent, and severing. The plan sent to Greg had the
+innermost bubble you are inside choose your new parent, and a node dropped
+outside every bubble severing itself. He declined both: *"you'll note regions
+around teams — these aren't meaningful YET — only the nodes themselves (rather
+than the spacing around them) create interactions such as merge or reparent."*
+On the company's own bubble: *"yes, technically everything is in the company
+bubble. If something is 'outside' of that bubble, that's meaningful, but I don't
+know what meaning yet. We'll cross that bridge when we come to it."*
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and
@@ -3213,8 +3420,31 @@ coloured places with their divisions named, against the archipelago's scatter.
 under it; and the orbits mode beside it. The numbers in the table above are from
 the test suite, not from the browser.
 
+**Verified in a browser on 2026-10-19**, on Sparrow Jam and Digital Tailoring
+with people as the smallest unit: a drop against another family is a plain move
+and raises no dialog; the dwell draws the neck and it pinches; two people get
+*"Do these two work together?"* and the reparent lands; a person held over a
+team offers the reparent with merging greyed out and its reason shown, and the
+reparent lands; the same person was reparented three times running to three
+different parents; and a merge from the dialog takes the company from 27 units
+to 26 and survives a reload. **Four gestures back to back with no pauses** —
+three reparents of one person onto three different parents, then a merge — each
+one raising its dialog and changing what it said it would. Checked on `:3001`,
+the server Greg is actually looking at, on Sparrow Jam, on Digital Tailoring
+against his own saved arrangement without disturbing it (104 moves and 1
+reparent, unchanged after), and on the 1,000-person company; two teams get all three
+choices, with the shared parent named and correctly disabled when they already
+have one; a merge removes the unit, re-lays the ground around the survivor, and
+survives a reload; and the survivor's two leads chain one behind the other along
+a single axis. Console clean. **Not checked in the browser:** the atlas driver
+beside this, Northwind, and whether the merged crowd keeps the spacer at scale —
+after one merge the panel reports **6 cells pressing against a different
+top-level group** where a clean load reports nought (see TASKS.md).
+
 **Not verified:** touch and pinch (the page handles pointer events, but no
-real device was used); `prefers-reduced-motion` (there is no motion in the
-study); anything on a five-year-old iPad; and frame rate under load — the
+real device was used); `prefers-reduced-motion` — **there is now one motion in
+the study**, the neck arming over the dwell, and it does not yet respect the
+setting (see TASKS.md); anything on a five-year-old iPad; and frame rate under
+load — the
 browser pane throttles `requestAnimationFrame` when hidden, so the numbers I
 could take were meaningless and none are quoted.

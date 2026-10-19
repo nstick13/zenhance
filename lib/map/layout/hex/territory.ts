@@ -581,6 +581,10 @@ export function layoutTerritories(
     maxGap?: number;
     place?: number;
     leads?: ReadonlySet<string>;
+    /** Which lead arrived first, where a merge left a unit with two. The atlas
+     *  only orders them; chaining them along one axis is the radial driver's,
+     *  which is where the work is. See `RadialOptions.leadOrder`. */
+    leadOrder?: ReadonlyMap<string, number>;
     /**
      * Units that are **people** rather than structure.
      *
@@ -663,6 +667,8 @@ export function layoutTerritories(
         // The unit's own lead first — it is the one child allowed through the
         // halo, and it should have the pick of the ground inside it.
         Number(leads.has(b.id)) - Number(leads.has(a.id))
+        || (leads.has(a.id) && leads.has(b.id)
+          ? (options.leadOrder?.get(a.id) ?? 0) - (options.leadOrder?.get(b.id) ?? 0) : 0)
         || b.totalSeats - a.totalSeats
         || a.name.localeCompare(b.name));
 
@@ -938,6 +944,7 @@ export function relayBranch(options: {
   /** Where the branch's own parent sits, so it grows away rather than round. */
   homeward?: Cell | null;
   leads?: ReadonlySet<string>;
+  leadOrder?: ReadonlyMap<string, number>;
   people?: ReadonlySet<string>;
   maxGap?: number;
   /** Radial only: whether a rung may step sideways. A branch re-laid on a map
@@ -959,7 +966,7 @@ export function relayBranch(options: {
    *  way it always faced — see `compass` on `layoutTerritories`. */
   compass?: ReadonlyMap<string, number>;
 }): { cells: Map<string, Cell>; radius: number } | null {
-  const { tree, anchorId, homeward, leads, people, maxGap, compass, driver, sideways } = options;
+  const { tree, anchorId, homeward, leads, leadOrder, people, maxGap, compass, driver, sideways } = options;
   if (!tree.units.get(anchorId)) return null;
 
   /**
@@ -973,7 +980,7 @@ export function relayBranch(options: {
   const laid = lay(
     { ...tree, rootId: anchorId },
     {
-      leads, people, maxGap, compass, sideways,
+      leads, leadOrder, people, maxGap, compass, sideways,
       // Away from home, over the same half-turn every other rung fans across.
       // Without this the branch spreads all the way round the node the hand is
       // holding, which puts half of it behind the unit it reports to.
@@ -1076,6 +1083,9 @@ export function allocateByTerritory(
   options: {
     maxGap?: number; place?: number;
     leads?: ReadonlySet<string>; people?: ReadonlySet<string>;
+    /** Which lead arrived first, where a merge left a unit with two. See
+     *  `RadialOptions.leadOrder`. */
+    leadOrder?: ReadonlyMap<string, number>;
     driver?: HexDriver;
     /** Radial only: how many rings a crowded rung may push its regions out. */
     thicken?: number;

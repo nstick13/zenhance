@@ -92,37 +92,28 @@ describe("a tile cannot be dropped on another tile", () => {
   });
 });
 
-describe("coming to rest against another family offers a reparent", () => {
-  it("offers it, and names who would become the parent", () => {
-    // (-1,1) touches eng (0,1), web (-1,2) and the company (0,0).
+describe("coming to rest against another family means nothing", () => {
+  it("is a plain move, whoever it has landed against", () => {
+    // (-1,1) touches eng (0,1), web (-1,2) and the company (0,0). Before
+    // 2026-10-19 that offered web as a new parent; Greg took the meaning out of
+    // nearness, so the tile keeps the parent it arrived with.
     const out = dropOutcome(tree, occupancy, "north", at(-1, 1));
-    expect(out.kind).toBe("offer-reparent");
-    if (out.kind !== "offer-reparent") return;
-    expect(out.touching.sort()).toEqual(["company", "eng", "web"]);
-    // The deepest of them — the one the hand actually nestled against. Picking
-    // the biggest instead proposed "company", which is never what was meant.
-    expect(out.newParentId).toBe("web");
+    expect(out.kind).toBe("move");
   });
 
-  it("does not offer anything for touching the parent it already has", () => {
-    // (1,1) touches sales (1,0), which is north's parent already.
+  it("is a plain move against the parent it already has", () => {
     const out = dropOutcome(tree, occupancy, "north", at(1, 1));
-    if (out.kind === "offer-reparent") {
-      expect(out.newParentId).not.toBe("sales");
-    }
+    expect(out.kind).toBe("move");
   });
 
-  it("never offers a parent that would make a loop", () => {
-    // sales dropped against its own child north must not adopt it.
-    const out = dropOutcome(tree, occupancy, "sales", at(3, 0));
-    if (out.kind === "offer-reparent") {
-      expect(wouldCycle(tree, "sales", out.newParentId)).toBe(false);
-    }
-  });
-
-  it("is plain movement out in open ground", () => {
+  it("is a plain move out in open ground", () => {
     const out = dropOutcome(tree, occupancy, "north", at(8, -4));
     expect(out.kind).toBe("move");
+  });
+
+  it("still refuses to make a loop, which is the merge path's guard", () => {
+    expect(wouldCycle(tree, "sales", "north")).toBe(true);
+    expect(wouldCycle(tree, "north", "web")).toBe(false);
   });
 });
 
