@@ -231,8 +231,9 @@ engine, so the pattern is proved cheaply. **Growth** late: biggest, riskiest, an
 it needs the other five steady underneath it. **Layout** last only because it is
 already done — what remains is a move, not a refactor.
 
-One engine per branch, squash-merged to `next`. The map must never be broken for
-longer than a single merge.
+One engine at a time, committed to `lab` and promoted to `next` once it stands
+up — there are no per-story branches (see AGENTS.md). The map must never be
+broken for longer than a single merge.
 
 ## Currently unreferenced, kept on purpose
 

@@ -405,7 +405,7 @@ Still wanted, still the documented moat, and it now has a home as the *Reporting
 ---
 
 ## Working agreements
-- **Branch per story** (`<feature>-<slug>`, e.g. `func-double-tap`), squash-merge to `main`. Patch-bump `package.json` per merge; minor bump (→ 0.2.0) when a Feature completes.
+- **Four branches, no story branches** — `lab`, `next`, `release`, `main`. Work on `lab` and ask for a promotion; nobody commits to `main` but Greg or Nate. Patch-bump `package.json` per promotion; minor bump (→ 0.2.0) when a Feature completes. See [AGENTS.md](../AGENTS.md).
 - **Deploy:** Vercel preview per branch push; promote to prod after a Feature lands or for a demo.
 - **Verification:** Nate eyeballs UI himself — no preview-screenshot loops. `npx tsc --noEmit` + tests are the cheap gate.
 - **Analytics work is gated on a design discussion** — don't code it cold.

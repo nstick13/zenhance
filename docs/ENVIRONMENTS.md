@@ -44,7 +44,8 @@ well" — asking that too early kills ideas that deserved a chance.
 An idea that earned its place gets built properly: typed, tested, working on
 both demo companies, living inside the engines rather than beside them.
 
-This is the trunk. Stories branch from here and squash-merge back.
+This is the trunk. Nothing branches off it: work lands on `lab`, and a human
+says when it is promoted here.
 
 **Lab code isn't promoted by copy-paste.** What crosses is the *idea*; what
 lands is an implementation that belongs here. Usually a rewrite, and that
@@ -130,7 +131,7 @@ people over real ones with no undo, and only `northwind` had that guard before
 
 ```
 npm run stage           what's checked out, on what port, and what's unsaved
-npm run stage lab       run lab on :3001  (creates the checkout the first time)
+npm run stage lab       run lab on :3001  (from this folder — lab lives here)
 npm run stage next      run next on :3002
 npm run stage:clean     remove the extra checkouts
 ```
@@ -146,6 +147,10 @@ Two windows, two ports, the same company on each. **That is the only honest
 way to judge whether one version of an engine feels better than another** —
 the thing you are judging often lives in the half-second of moving between
 them, which you cannot feel by rebuilding.
+
+**`lab` is checked out in the repo folder itself** (since 2026-10-19), so it
+needs no second copy and `npm run stage lab` serves it from here. The other
+three are made on demand.
 
 **This is also why you don't need four copies of the codebase.** Each stage is
 a *git worktree*: a second working copy on a different branch, sharing one
@@ -185,15 +190,24 @@ switch nobody understands.
 
 ## Starting work
 
-**An idea, feel unproven** → branch from `lab`, merge back to `lab`. Study goes
-under `app/lab/<name>/`, verdict in LAB.md.
+**There are four branches and that is all.** Greg, 2026-10-19: *"We should not
+be spinning up new branches aside from the above — the above is intended as an
+eventual deployment pipeline."* So nothing below says "branch" any more.
 
-**A known thing to build** → branch from `next` (`<feature>-<slug>`, no agent
-prefix), squash-merge back to `next`.
+**An idea, feel unproven** → commit it to `lab`. Study goes under
+`app/lab/<name>/`, verdict in LAB.md.
 
-**A fix for something staged** → branch from `release`, merge to `release`,
-and **get it back onto `next` too** — a fix that only exists on `release`
-disappears at the next promotion.
+**A known thing to build** → build it on `lab` as well, to the `next` bar
+(typed, tested, both demo companies, inside the engines), and ask for it to be
+promoted.
+
+**A fix for something staged** → commit it to `release`, and **get it onto
+`lab` and `next` too** — a fix that only exists on `release` disappears at the
+next promotion.
+
+**Something that genuinely seems to need its own branch** → that is a question
+for Greg, not a `git checkout -b`. If one is ever agreed, it is archived as
+`archive/<name>` and deleted the moment it lands.
 
 ---
 

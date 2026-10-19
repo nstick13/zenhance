@@ -18,7 +18,7 @@ Multi-tenant SaaS, live in production on Vercel (Neon Postgres + Clerk auth). **
 Speed comes first (rule 2), but never across these.
 - **A company's data is theirs, and nobody else can see it — not other companies, and not us.** The aim is for it to live encrypted on the customer's own systems. We may one day ask for abstractions, but never anything that ties a datapoint to a person or a decision. *This is the principle, not yet the build: org data currently sits in Zenhance's own database. Don't build anything that makes it harder to get there.*
 - **Demo mode uses invented data only.** No real people in fixtures, seeds, screenshots or commits.
-- **`main` is production, and only Greg or Nate put work there.** It deploys straight to production on push, so it shows customers only what is ready. Agents never merge to `main`. Work goes to **`next`** (see *Two branches*).
+- **`main` is production, and only Greg or Nate put work there.** It deploys straight to production on push, so it shows customers only what is ready. Agents never merge to `main`. Work goes to **`next`** (see *Four stages*).
 - **Nothing irreversible without a human's yes** — rewriting history on `main` or `next`, deleting data, changing the production database.
 
 ## How agents work here
@@ -37,7 +37,7 @@ west    for real before live
 - **Ask which stage before you start. Every time.** *"Lab, next, or release?"* It decides what the work may be, what bar it clears, and who sees it — guessing wrong means doing it twice. If the answer isn't obvious from the request, ask; a one-line question is cheaper than a branch in the wrong place.
 - **Moving between stages needs a human's yes. That is the whole gate** — not a checklist, not a robot. Greg or Nate says "promote it", and it moves.
 - **`lab`** — trying an idea. Break it freely; half-finished is normal. Answers *does this feel right*, nothing else.
-- **`next`** — the trunk. A proven idea built properly: typed, tested, on both demo companies, inside the engines. Branch from here for a story, squash-merge back.
+- **`next`** — the trunk. A proven idea built properly: typed, tested, on both demo companies, inside the engines. Nothing branches off it: work lands on `lab` and is promoted here.
 - **`release`** — the last stop. **Assume everything here is going to production**, and that **migrations get rehearsed here first**. Only fixes land on it; new work waits for the next promotion.
 - **`main`** — production, deployed on push. **Only Greg or Nate, only from `release`.** Never an agent, never directly.
 - **Only `main` is for the public.** Every other stage runs on a real URL that is not for online users — non-production is `noindex`, and the `/lab` pages 404 in production.
@@ -45,7 +45,7 @@ west    for real before live
 - **Nothing is ever lost.** Retired branches live on as `archive/*` tags — `git tag -l 'archive/*'`, then `git show <tag>` or `git checkout -b recover <tag>`. Clean up freely; the history is there.
 
 ### Working alongside other agents
-- **One repo, one trunk, no agent's private corner.** Greg (2026-09-24): *"There shouldn't be differing branches for Codex or Claude — I want you to read and edit as much Codex-written stuff as Codex does yours."* So: **no `codex/` or `claude/` branch prefixes.** Branches are named for the work (`<feature>-<slug>`), whoever does it, and any agent may read, edit, critique or fix any file regardless of who wrote it.
+- **Four branches, one repo, no agent's private corner.** Greg (2026-09-24): *"There shouldn't be differing branches for Codex or Claude — I want you to read and edit as much Codex-written stuff as Codex does yours."* Greg again (2026-10-19): *"We should not be spinning up new branches aside from the above — the above is intended as an eventual deployment pipeline."* So: **the only branches are `lab`, `next`, `release` and `main`.** No `codex/` or `claude/` prefixes, and no per-story branches at all — an experiment is committed straight to `lab`. Any agent may read, edit, critique or fix any file regardless of who wrote it.
 - **The repo is the only shared channel.** Agents can't see each other's chats or private memory. Decisions and their reasons go in the docs under *Where things live* — including approaches tried and abandoned, so nobody spends a day rediscovering a dead end. Commit messages say *why*, not just what.
 - **Noticed something you shouldn't fix here? Write it in [docs/TASKS.md](docs/TASKS.md).** Fixing an unrelated thing inside someone else's change hides it; leaving it in a chat window loses it. Claim a task by marking it `▶` with your name **and pushing that** before you start, so two agents don't do the same work.
 - **Write for Greg and Nate first.** They don't code, and a task list in shorthand is a task list only you can read. Every entry in TASKS.md opens with a plain-English paragraph — what it is, why it matters, what is being asked — before any file path or symbol. *If you can't write that part, you don't understand the task well enough yet.* The same goes for a commit's first line and for anything you bring them for a decision.
@@ -84,11 +84,11 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 - **Durable facts** (running locally, gotchas) belong in `docs/`, where every agent can read them — not in any one agent's private memory. *Some still live only in Nate's Claude memory (`~/.claude/projects/-Users-natetgreat-zenhance/memory/`); Nate's agent should move them into `docs/`.*
 
 ## House rules
-- **Branch per story** (`<feature>-<slug>`, no agent prefix), squash-merge to the stage you branched from — `next` for real work, `lab` for experiments. Patch-bump `package.json` per merge; minor bump when a Feature completes.
+- **Four branches, and no more** — `lab`, `next`, `release`, `main`. Experiment and refine by committing to `lab`; moving between stages is a merge a human asked for. Patch-bump `package.json` per promotion; minor bump when a Feature completes. If a change seems to need a branch of its own, ask Greg before making one.
 - **Never seed a hosted database.** Every seeder refuses a non-local `DATABASE_URL` (`requireLocalDatabase` in `lib/env.ts`). A seeder writes invented people over real ones and there is no undo.
 - **Make every commit on `next` a step someone could go back to.** Greg and Nate use the git log to step back, so one coherent change per commit, with a first line they can read in plain English.
-- **Delete a branch once it's merged or abandoned** — locally and on the remote. Don't delete a branch you didn't create unless it's merged, or its owner has said it's finished.
-- **Compare two stages side by side:** `npm run stage` lists what's checked out and what's unsaved in each; `npm run stage <lab|next|release|main>` runs one on its own port (3001–3004). Each is a git worktree sharing this history — about 1GB each, so `npm run stage:clean` when you're done. See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md).
+- **Anything outside the four gets archived and deleted** — tag it `archive/<name>`, push the tag, then delete the branch locally and on the remote. Three went that way on 2026-10-19: `archive/hex-fan-chains`, `archive/hex-drop-bugs`, `archive/hex-lazy-interiors` (the last holds unfinished work — lazy team interiors — that never reached `lab`). Don't delete someone else's branch unless it's merged, or its owner has said it's finished.
+- **Compare two stages side by side:** `npm run stage` lists what's checked out and what's unsaved in each; `npm run stage <lab|next|release|main>` runs one on its own port (3001–3004). `lab` is checked out in the repo folder itself, so that one runs from here on :3001 with no extra copy; the others are git worktrees sharing this history — about 1GB each, so `npm run stage:clean` when you're done. See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md).
 - **Verification:** neither Greg nor Nate can QA code, so agents check their own work — including looking at UI changes in a browser on Sparrow Jam and Digital Tailoring, plus running the large-org layout fixture where relevant. Cheap checks (`npx tsc --noEmit`, tests) still come first.
 - Commit/push only when asked.
 
