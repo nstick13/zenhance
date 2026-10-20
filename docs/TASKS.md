@@ -516,6 +516,111 @@ map ever wants genuine air between regions — a label in the gap, or a region
 grabbable by its margin. The three ideas already spent are node-to-node spacing,
 footprint-as-arc and thickening; the sweep says thickening makes it worse.
 
+### ⏸ Canvas interactions: double-click to make things — *Greg, 2026-10-19/20*
+
+**The brief, in Greg's words:** *"We're going to need some canvas interactions,
+rather like Miro — pan, zoom, double-click, right click options. I think the
+next model needs a double-click thing, and depending on what you click, you get
+options."*
+
+This is the interaction model that **phase two of Grow** will be built on, in
+place of the hover-the-ring idea phase one was planned against. It is parked
+deliberately: Greg, 2026-10-20 — *"no need to code now since we're at usage
+limits; just take a note of these and then we'll get back to it later."* So
+this entry exists to be picked up cold, not to be started from.
+
+#### The gesture, as proposed
+
+| where you double-click | what happens |
+| --- | --- |
+| **anywhere on empty paper** | a callout offering to create a new node or human |
+| **in the grey zone around a node or team** | creates inside that team by default — *"can drag it out later"* |
+| **on a node** | other options, still to be settled |
+
+**The grey zone is the strongest part of this**, and it is better than the
+hover-a-ring affordance that was planned for phase two. The spacer zone already
+*means* "this unit's own space": it is drawn, it is grey, Greg designed it, and
+it needs no explaining. Creating there answers *what does this new thing belong
+to* **positionally**, rather than by asking — which is the grow study's own
+lesson, that a team is discovered from where you act.
+
+**Grey zones nest**, so this needs a tie-break: a person's clear hexagon sits
+inside their team's ground, which sits inside the bubble round a group of teams.
+The proposal on the table is **innermost wins**.
+
+> ⚠️ **This makes regions mean something, and that is a change of position.**
+> Greg, 2026-10-19: *"you'll note regions around teams — these aren't meaningful
+> YET."* Creating in a zone makes them meaningful — but for a narrower and
+> safer purpose than the one he rejected. He rejected *inferring a relationship
+> from where something was dropped*; this is *answering where you deliberately
+> chose to create*. A drop is ambiguous, a double-click is a statement of
+> intent, and the two readings can hold at the same time without contradiction.
+
+#### Greg's decisions, 2026-10-20
+
+**1. Single click is fine as it is.** Click-and-hold on a node drags it;
+click-and-hold on empty space pans. *"Potentially we will later replace this
+behaviour: single click-and-drag on any non-occupied zone starts a marquee that
+can capture a number of nodes, rather like Miro or Adobe or even a mac desktop.
+But not now. Shift+click can gather many nodes too. We'll get to all this
+shortly."* So **marquee selection and shift+click multi-select are coming**, and
+whatever is built here should not make them harder.
+
+**2. Touch and mouse are allowed to differ.** The app *"would need to know what
+it's dealing with: a mouse or a touchscreen."* On a touchscreen **double-tap
+stays zoom**, and **pinch stays zoom** — the create gesture does not take them.
+Greg accepts the resulting inconsistency between the two, and points at
+Apple and Miro for how to handle it. Not a blocker: it can be done in isolation
+later.
+
+**3. A press must move before it counts as a drag or a pan.** Agreed, with the
+threshold left to whoever builds it. **This also closes a standing fault for
+free** — see *"Tapping a node says 'your tile can't fit here right now'"* below.
+A tap that never moves would no longer start a drag at all, which is the whole
+cause of that dialog.
+
+**4. Undo, properly.** A button in the interface **and** `ctrl+z` / `cmd+z`.
+One step back per press, with **about ten steps of history — or five if it turns
+out to be heavy**. This matters more than it looks: once a node can be made in
+two clicks, people will make them by accident, and today the only undo is tidy's
+second press, which throws the whole arrangement away.
+
+**5. Show where it is going.** *"A faint outline or other colour change/pulse
+animation should play when the user clicks in a vacant tile."* Double-click is
+fast and invisible; without this a node appears and nobody knows why it appeared
+*there*.
+
+**6. One behaviour at every scale — no build mode.** Asked whether
+double-clicking empty paper should mean something different on a 2,500-person
+map than on an empty one: *"as of right now, double click should work
+consistently across scales. If a user wants something to happen at that
+location, they double click. The gesture will eventually bring up a short menu,
+hold the location as highlighted, and potentially provide wider options via a
+menu elsewhere."*
+
+So the shape of it is: **short menu at the point of action, the location stays
+lit while you choose, and anything longer lives somewhere else.**
+
+#### Still open
+
+- **What the menu offers.** Greg's words were *"a new node or human of any
+  level"*. The counter-proposal, not yet answered: hex has no rungs in a user's
+  sense — the engine knows a **person** and a **place**, and "level" is just how
+  deep something sits. The grow study's menu was **relational** rather than
+  ranked — *a person here, a team here, something above this, a separate
+  island* — which may read better because it says what the new thing is **to the
+  thing you clicked**.
+- **What double-clicking a node offers.** Greg: *"some other options TBC."* The
+  suggestion on the table is that double-click **describes** it (the commonest
+  thing, and what Miro does), with the structural and destructive options behind
+  right-click / long-press.
+- **"Something above it" is the one creation that cannot be done by pointing.**
+  A child goes in a cell; a parent is a rung, not a direction, so it has nowhere
+  spatial to live. That is the strongest argument for the node menu existing at
+  all, and it is probably what decides its contents.
+- **Delete.** Undo covers the accident; nothing yet covers deliberately removing
+  something.
+
 ### ⏸ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19*
 
 Two things were being tracked separately and Greg has merged them: **making the
@@ -604,6 +709,12 @@ something this week's work introduced.
 The cause is that a press starts a drag, and a drag that never leaves its own
 cell never works out where it would land, so the release finds no landing and
 refuses. A tap that goes nowhere should do nothing, or select the tile.
+
+**Likely fixed for free by the movement threshold** Greg agreed to on
+2026-10-20 — see *Canvas interactions: double-click to make things* above. If a
+press has to move before it counts as a drag, a tap never starts one. Worth
+doing as part of that rather than on its own, and worth re-checking rather than
+assumed.
 
 *For whoever picks it up:* `onPointerDown` leaves `landing`/`anchor` null unless
 the five-second re-pickup armed; `onPointerUp` reads that as a refusal. Either
