@@ -2269,28 +2269,15 @@ export default function HexLab({
   const pointerKind = useRef<string>("mouse");
 
   const onPointerDown = (e: React.PointerEvent) => {
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    // Capture keeps the gesture with the canvas when the hand leaves it. It
+    // throws where there is no live pointer to capture, and a gesture that
+    // cannot be captured still works — it is the rest of this handler that
+    // matters.
+    try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch { /* no live pointer */ }
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     const world = worldAt(e.clientX, e.clientY, rect);
     const hit = unitAtPointer(world);
     pointerKind.current = e.pointerType || "mouse";
-
-    /**
-     * **A node that is asking for something answers a tap, not a drag.**
-     *
-     * While anything is breathing it is the only thing on the map asking for
-     * attention, so a press on it opens its wizard rather than picking it up.
-     * Everything else about dragging is untouched — including dragging that
-     * same node, once it has been described.
-     */
-    if (hit && unfinished.has(hit) && !pending) {
-      const node = born.find((b) => b.id === hit);
-      if (node) {
-        const at = stillNeeds(node) === "Needs a name" ? 0 : 1;
-        setWizard({ id: hit, step: at });
-        return;
-      }
-    }
 
     // A menu is about the place it opened on. Touching the map anywhere is
     // enough to mean "not that, then".
@@ -2510,12 +2497,35 @@ export default function HexLab({
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* never had it */ }
     pan.current = null;
-    // A press that never travelled was a click, and a click is not this
-    // handler's business. Letting it fall through would be a drag of zero
-    // length asking the map to find room for a branch that never left.
+    // A press that never travelled is a click rather than a drag: `press` is
+    // still set, because nothing converted it.
+    const tapped = press.current;
     press.current = null;
+
+    /**
+     * **A node that is asking for something answers a tap** by opening its
+     * wizard. That is the invitation on blank paper: a breathing node is the
+     * only thing on the map asking for attention.
+     *
+     * **It used to answer a press**, which was the same thing while the only
+     * breathing nodes were the two the grow sequence made. Once anything could
+     * be made anywhere, it stopped being the same thing: a node you had not
+     * described yet could not be picked up at all, so it could not be moved,
+     * and it could not be reparented — Greg, 2026-10-21: *"I can double click
+     * to create a thing on the whitespace, but I can't then reparent it."*
+     *
+     * A tap and a drag are now different gestures, so this is a tap.
+     */
+    if (tapped?.hit && !pending && unfinished.has(tapped.hit)) {
+      const node = born.find((b) => b.id === tapped.hit);
+      if (node) {
+        setWizard({ id: tapped.hit, step: stillNeeds(node) === "Needs a name" ? 0 : 1 });
+        setDrag(null);
+        return;
+      }
+    }
     if (!drag || !hexScene) { setDrag(null); return; }
 
     const heldLongEnough = drag.heldOver && performance.now() - drag.holdSince > HOLD_MS;
