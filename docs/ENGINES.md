@@ -52,7 +52,7 @@ lib/map/
     hex/    coords · territory (the atlas) · radial (ragged
             rings) · spacing · compass · bubbles · arrange
             defer (the hand) · tidy · route · people
-            scene                                            ~5,700 lines · 251 tests
+            ground (whose grey is this?) · scene                                            ~5,700 lines · 251 tests
   camera/   viewport · focusStack · focus · lod · detail        741 lines ·  90 tests
   runtime/  motion · visibility · avatar                        346 lines ·  15 tests
   growth/   drop · insertion · relationship                     876 lines ·  57 tests

@@ -516,7 +516,7 @@ map ever wants genuine air between regions — a label in the gap, or a region
 grabbable by its margin. The three ideas already spent are node-to-node spacing,
 footprint-as-arc and thickening; the sweep says thickening makes it worse.
 
-### ⏸ Canvas interactions: double-click to make things — *Greg, 2026-10-19/20*
+### ☑ Canvas interactions: double-click to make things — *Greg, 2026-10-19/20; built 2026-10-21*
 
 **The brief, in Greg's words:** *"We're going to need some canvas interactions,
 rather like Miro — pan, zoom, double-click, right click options. I think the
@@ -524,10 +524,11 @@ next model needs a double-click thing, and depending on what you click, you get
 options."*
 
 This is the interaction model that **phase two of Grow** will be built on, in
-place of the hover-the-ring idea phase one was planned against. It is parked
-deliberately: Greg, 2026-10-20 — *"no need to code now since we're at usage
-limits; just take a note of these and then we'll get back to it later."* So
-this entry exists to be picked up cold, not to be started from.
+place of the hover-the-ring idea phase one was planned against. It was parked
+deliberately — Greg, 2026-10-20: *"no need to code now since we're at usage
+limits"* — and picked up on 2026-10-21, when he asked for it to be designed and
+built. **Everything below is what was asked for; what was built is at the
+bottom.**
 
 #### The gesture, as proposed
 
@@ -620,6 +621,63 @@ lit while you choose, and anything longer lives somewhere else.**
   all, and it is probably what decides its contents.
 - **Delete.** Undo covers the accident; nothing yet covers deliberately removing
   something.
+
+#### Answered, 2026-10-21, and built
+
+Greg chose all three recommendations, and delete with them.
+
+- **The menu is relational, not ranked** — *a person in Dune Team*, *a team in
+  Dune Team*, *something on its own*. Hex has no rungs in a user's sense, so a
+  menu offering "division" would invent a vocabulary the model does not have.
+- **A node gets a short menu**, describe first: *describe · someone under ·
+  something above · remove*. "Something above" is the one creation that cannot
+  be done by pointing, which is what the node menu is for.
+- **Remove was built now rather than left to undo.** A node takes its whole
+  branch, behind a confirm, and undo brings it back. Once making something
+  costs two clicks, a map with no way to unmake one fills up with accidents.
+- **The grey decides what a new thing belongs to**, innermost zone first, and a
+  person's ground resolves to their team.
+
+What landed: `lib/map/layout/hex/ground.ts` (whose grey is this cell),
+`app/lab/hex/menu.ts` (what the menu offers — the companion to `questions.ts`),
+the gesture and the two menus in `HexLab.tsx`, the four-pixel movement
+threshold, the lit tile, ten-step undo with `⌘z`, and removing a branch. 21 new
+tests. Written up in [HEX-LAYOUT.md](HEX-LAYOUT.md) § *Double-click to make
+things*.
+
+**Still not done:** right-click, marquee and shift+click multi-select (Greg:
+*"we'll get to all this shortly"*), and touch, which is held to a mouse by
+`pointerType` and could not be driven on this machine.
+
+---
+
+### ☐ Adding one node re-lays a small company — *Claude, 2026-10-21*
+
+Make a node anywhere on Sparrow Jam and the whole map grows: **2,814 × 2,837
+world units becomes 4,452 × 4,098**, and the existing teams move. The thing you
+made stays where you put it — Law 0 — but everything else answers to the engine
+again, and the result reads as though the map flinched.
+
+**It is not about what you made.** A person and a team give the identical
+4,452 × 4,098, so it is the rung schedule reacting to one more unit rather than
+anything about people or grouping.
+
+**It is a small-company effect.** The same gesture on Northwind takes 54,679 ×
+62,410 to 54,679 × 62,725 — half a percent, invisible. One unit added to a
+five-unit company is a fifth of the company, so there is an argument that a
+visible re-lay is honest. There is also an argument that a map which jumps when
+you add one person is a map people will stop trusting.
+
+**The question for Greg:** should making something leave the rest of the map
+where it is until the next tidy? That is a change to the governing rules, which
+he asked to leave alone on 2026-10-18 — hence a question rather than a fix.
+
+*For whoever picks it up:* the extent comes from `allocateByTerritory` →
+`layoutRadial`'s floor schedule (`floors[d] = floors[d-1] + 1 + max(keep)`),
+recomputed from the tree on every change. `npm run hex:zoning` measures the
+map; the figures above are from the panel readout on `/lab/hex`.
+
+---
 
 ### ⏸ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19*
 

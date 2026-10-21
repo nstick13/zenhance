@@ -75,6 +75,9 @@ const ENGINE_OF: Record<string, Engine> = {
   // answers to the company's own centre, and how it lays itself out when it
   // stops. See docs/MAP-LAWS.md Law 0 and Law 3.
   "lib/map/layout/hex/defer.ts": "layout",
+  // Whose grey a vacant cell is standing in — the spacing rules read back, so
+  // a gesture can ask what a place belongs to without being told.
+  "lib/map/layout/hex/ground.ts": "layout",
 
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
   "lib/map/camera/focus.ts": "camera",

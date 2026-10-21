@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { holdActions } from "./questions";
+import { menuFor, type MenuAction } from "./menu";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -38,6 +39,7 @@ import {
   type HexDriver,
 } from "@/lib/map/layout/hex/territory";
 import { bubblesFor, groupZones, grow } from "@/lib/map/layout/hex/bubbles";
+import { groundAt, holderOf } from "@/lib/map/layout/hex/ground";
 import {
   branchOf,
   hoverGroup,
@@ -45,7 +47,7 @@ import {
   placeIsland,
 } from "@/lib/map/layout/hex/arrange";
 import {
-  cellKey, cellToWorld, corners, cornersAt, hexDistance, neighbours, worldToCell,
+  cellKey, cellToWorld, corners, cornersAt, hexDistance, neighbours, ring, worldToCell,
   type Cell,
 } from "@/lib/map/layout/hex/coords";
 import {
@@ -147,6 +149,67 @@ const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 const HOLD_SLACK = 0.25;
 
 /**
+ * **How far the hand must travel before a press is a drag or a pan**, in
+ * screen pixels. Greg, 2026-10-20, agreeing to it and leaving the number here:
+ * *"a press must move before it counts as a drag or a pan."*
+ *
+ * It is what makes a **click** a thing of its own on this map, which the
+ * double-click gesture needs: until now a pointer going down on a node picked
+ * the node up there and then, so every tap was a one-pixel drag that had to
+ * find somewhere for the whole branch to land. On a map with placements all
+ * over it there often is nowhere, and the release then said *"your tile can't
+ * fit here right now"* about a gesture nobody made — the standing fault this
+ * closes for free.
+ *
+ * Four pixels is the usual slop for this (it is what a browser's own `click`
+ * allows between `pointerdown` and `pointerup`), and it is short enough that
+ * a deliberate drag still starts under the finger.
+ */
+const MOVE_SLOP_PX = 4;
+
+/** How many steps back the page keeps. Greg, 2026-10-20: *"about ten steps of
+ *  history — or five if it turns out to be heavy."* Each step is six
+ *  references to state that was being replaced anyway, so ten is not heavy. */
+const UNDO_DEPTH = 10;
+
+/**
+ * **What a double-click opened, and where.**
+ *
+ * Greg, 2026-10-20: *"The gesture will eventually bring up a short menu, hold
+ * the location as highlighted, and potentially provide wider options via a
+ * menu elsewhere."* So the menu is short, it opens at the point of action, and
+ * the cell it is about stays lit while it is open — `cell` is both of those at
+ * once.
+ */
+type Menu = {
+  /** Where to draw it, in pixels inside the canvas. */
+  at: { x: number; y: number };
+  /** The cell the gesture was about: lit while the menu is open, and where
+   *  anything made here lands. */
+  cell: Cell;
+} & (
+  | {
+      kind: "make";
+      /** Whose ground it is, or null on open paper. */
+      holder: string | null;
+      ring: 1 | 2 | null;
+    }
+  | { kind: "node"; unitId: string }
+);
+
+/** Everything a hand can do to this page, in one object. */
+type Snapshot = {
+  moves: Map<string, Cell>;
+  reparents: Map<string, string>;
+  pinned: Set<string>;
+  merges: Map<string, string>;
+  born: Born[];
+  removed: Set<string>;
+  renames: Map<string, string>;
+  tidyStage: number;
+};
+
+/**
  * Colour, by Greg's rule of 2026-09-30: **hue says which part of the company,
  * lightness says how deep.** *"Deep/dark red is 'CFO'; lightest wash purple is
  * 'marketing interns'."*
@@ -240,7 +303,9 @@ type Pending =
    *  it to go — which does not stop the question being asked. */
   | { kind: "merge"; unitId: string; withUnitId: string; cells: Map<string, Cell> | null }
   | { kind: "blocked"; unitId: string; occupiedBy: string; cells: Map<string, Cell> | null }
-  | { kind: "reshape"; unitId: string; cells: Map<string, Cell> };
+  | { kind: "reshape"; unitId: string; cells: Map<string, Cell> }
+  /** Taking a node off the map, and everything under it with it. */
+  | { kind: "remove"; unitId: string; count: number };
 
 /**
  * **A node somebody made, rather than one the fixture came with.**
@@ -340,6 +405,29 @@ export default function HexLab({
   const [merges, setMerges] = useState<Map<string, string>>(() => new Map());
   /** Units somebody made on this page, in the order they arrived. */
   const [born, setBorn] = useState<Born[]>(() => []);
+  /**
+   * **Units somebody took off the map**, them and everything under them.
+   *
+   * Greg, 2026-10-21, on whether removing should wait: *build it now*. Once a
+   * node costs two clicks to make, a map with no way to unmake one fills up
+   * with accidents, and undo only reaches back ten steps.
+   *
+   * It is a lab-side filter rather than an override in `lib/map`, because
+   * nothing in the engine should learn that units can be deleted: the tree is
+   * built from the company it is handed, and this decides what it is handed.
+   */
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  /**
+   * **What somebody called a node that came with the company.**
+   *
+   * A node made here is described through its own wizard, which knows about
+   * roles and purposes because it made the thing. A node the fixture handed
+   * down already has all of that; the only thing left to say about it is what
+   * it should be called. So describing one is a rename, and it is kept apart
+   * from `born` for the same reason the ids are: these units exist whether or
+   * not anybody touches them.
+   */
+  const [renames, setRenames] = useState<Map<string, string>>(() => new Map());
   /** 0 = as arranged, 1 = neatened. A second press compresses. */
   const [tidyStage, setTidyStage] = useState(0);
   /**
@@ -357,6 +445,10 @@ export default function HexLab({
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const loaded = loadedFor !== null;
   const [pending, setPending] = useState<Pending | null>(null);
+  /** The short menu a double-click opened. One at a time, like a dialog. */
+  const [menu, setMenu] = useState<Menu | null>(null);
+  /** The node being renamed, and what has been typed so far. */
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
 
 
 
@@ -370,26 +462,41 @@ export default function HexLab({
    * built to.
    */
   const orgWithBorn = useMemo<LabOrg>(() => {
-    if (!born.length) return org;
+    if (!born.length && !removed.size && !renames.size) return org;
+    const units = [
+      ...org.units,
+      ...born.map((b) => ({
+        id: b.id,
+        // An unnamed node still needs something to sort by; what the map
+        // *draws* for it is decided by `nameOf`, not by this.
+        name: b.name?.trim() || "",
+        parentId: b.parentId,
+        leadPersonId: null,
+      })),
+    ];
+    const named = renames.size
+      ? units.map((u) => (renames.has(u.id) ? { ...u, name: renames.get(u.id)! } : u))
+      : units;
+    if (!removed.size) return { ...org, units: named };
     return {
       ...org,
-      units: [
-        ...org.units,
-        ...born.map((b) => ({
-          id: b.id,
-          // An unnamed node still needs something to sort by; what the map
-          // *draws* for it is decided by `nameOf`, not by this.
-          name: b.name?.trim() || "",
-          parentId: b.parentId,
-          leadPersonId: null,
-        })),
-      ],
+      units: named.filter((u) => !removed.has(u.id)),
+      // An assignment outlives the unit it points at, and a seat hanging off
+      // nothing is a person the map has nowhere to draw.
+      assignments: org.assignments.filter((a) => !removed.has(a.orgUnitId)),
     };
-  }, [org, born]);
+  }, [org, born, removed, renames]);
 
   const baseTree = useMemo(
     () => buildOrbitalTree(orgWithBorn, { mergePassThroughRoot: false, workCountFor: () => 6 }),
     [orgWithBorn],
+  );
+  /** True when the root is the tree builder's own, rather than a unit of the
+   *  company: a blank page has one, and so does any company with more than one
+   *  thing at the top. */
+  const syntheticRoot = useMemo(
+    () => !orgWithBorn.units.some((u) => u.id === baseTree.rootId),
+    [orgWithBorn, baseTree],
   );
   /** The tree as it stands, for effects that must read it without depending
    *  on it. See the arrangement loader below. Written in an effect rather than
@@ -444,7 +551,8 @@ export default function HexLab({
       const raw = window.localStorage.getItem(storeKey);
       const saved = raw ? (JSON.parse(raw) as {
         moves?: [string, Cell][]; reparents?: [string, string][]; pinned?: string[];
-        merges?: [string, string][]; born?: Born[];
+        merges?: [string, string][]; born?: Born[]; removed?: string[];
+        renames?: [string, string][];
       }) : null;
       // **Only keep what this company still contains.** An arrangement saved
       // before the fixture's ids became deterministic names units that no
@@ -466,12 +574,19 @@ export default function HexLab({
       setMerges(new Map(
         (saved?.merges ?? []).filter(([goneId, intoId]) => known(goneId) && known(intoId)),
       ));
+      // **Removals are not filtered against the tree**, because the tree is
+      // what they act on: an id is only still in it while it has not been
+      // taken off the map. Filtering here would undo every removal on reload.
+      setRemoved(new Set(saved?.removed ?? []));
+      setRenames(new Map((saved?.renames ?? []).filter(([id]) => known(id))));
     } catch {
       setMoves(new Map());
       setReparents(new Map());
       setPinned(new Set());
       setMerges(new Map());
       setBorn([]);
+      setRemoved(new Set());
+      setRenames(new Map());
     }
     setTidyStage(0);
     setLoadedFor(storeKey);
@@ -493,18 +608,18 @@ export default function HexLab({
     // arrangement under another's.
     if (loadedFor !== storeKey) return;
     try {
-      if (!moves.size && !reparents.size && !merges.size && !born.length) {
+      if (!moves.size && !reparents.size && !merges.size && !born.length && !removed.size && !renames.size) {
         window.localStorage.removeItem(storeKey);
       } else {
         window.localStorage.setItem(storeKey, JSON.stringify({
           moves: [...moves], reparents: [...reparents], pinned: [...pinned],
-          merges: [...merges], born,
+          merges: [...merges], born, removed: [...removed], renames: [...renames],
         }));
       }
     } catch {
       // A browser that will not keep it is not a reason to stop working.
     }
-  }, [storeKey, loadedFor, moves, reparents, pinned, merges, born]);
+  }, [storeKey, loadedFor, moves, reparents, pinned, merges, born, removed, renames]);
 
   /**
    * Who is a person rather than a structural node. Greg, 2026-10-03: *"at the
@@ -957,10 +1072,20 @@ export default function HexLab({
    * so a grown company would otherwise appear off-screen at whatever zoom the
    * last gesture left behind. Capped so that one node does not fill the glass.
    */
-  const stepBack = useRef(false);
+  /**
+   * **Look again** — set when something is made on blank paper and the view
+   * has to be re-framed around it.
+   *
+   * State rather than a ref, although a ref is all the mechanism needs: the
+   * menu's handlers are created while the component renders, and a function
+   * that writes a ref cannot be called from there. One extra render for a
+   * gesture that happens once per company is a fair price for the rule
+   * holding everywhere else.
+   */
+  const [lookAgain, setLookAgain] = useState(false);
   useEffect(() => {
-    if (!stepBack.current || !scene.bounds) return;
-    stepBack.current = false;
+    if (!lookAgain || !scene.bounds) return;
+    setLookAgain(false);
     /**
      * **Frame the ground, not just the nodes.** Fitting a one-node company to
      * its own bounds puts a single cell across the whole glass, which reads as
@@ -978,7 +1103,7 @@ export default function HexLab({
       clear,
       { min: floor, max: 2.2 },
     ));
-  }, [scene, hexScene, size, floor]);
+  }, [lookAgain, scene, hexScene, size, floor]);
 
   const fittedFor = useRef("");
   useEffect(() => {
@@ -1071,11 +1196,79 @@ export default function HexLab({
     return () => clearTimeout(t);
   }, [justMoved]);
 
+  /* --- one step back ------------------------------------------------------ */
+
+  /**
+   * **Undo.** Greg, 2026-10-20: *"A button in the interface **and** ctrl+z /
+   * cmd+z. One step back per press, with about ten steps of history."*
+   *
+   * *"This matters more than it looks: once a node can be made in two clicks,
+   * people will make them by accident"* — and until now the only way back was
+   * tidy's second press, which throws the whole arrangement away.
+   *
+   * Everything a hand can do on this page lives in six pieces of state, all of
+   * them replaced rather than mutated, so a step back is just keeping the old
+   * ones. No diffing, nothing to keep in step, and the cost of a step is six
+   * references.
+   *
+   * **Naming is not a step.** The wizard writes on every keystroke, and ten
+   * steps of history would otherwise be ten letters of somebody's name. The
+   * step is the thing that was *made*; undoing it takes the node with it.
+   */
+  const [past, setPast] = useState<Snapshot[]>([]);
+  const canUndo = past.length > 0;
+
+  /**
+   * Call this **before** changing anything, from the gesture that changes it.
+   * What it keeps is the state of the render the gesture was created in, which
+   * is the state before the change — no refs, and nothing to keep in step.
+   */
+  const remember = useCallback(() => {
+    setPast((p) => [
+      ...p.slice(-(UNDO_DEPTH - 1)),
+      { moves, reparents, pinned, merges, born, removed, renames, tidyStage },
+    ]);
+  }, [moves, reparents, pinned, merges, born, removed, renames, tidyStage]);
+
+  const undo = useCallback(() => {
+    const last = past[past.length - 1];
+    if (!last) return;
+    setPast(past.slice(0, -1));
+    setMoves(last.moves);
+    setReparents(last.reparents);
+    setPinned(last.pinned);
+    setMerges(last.merges);
+    setBorn(last.born);
+    setRemoved(last.removed);
+    setRenames(last.renames);
+    setTidyStage(last.tidyStage);
+    // A question about something that may no longer be there is not a question.
+    setPending(null);
+    setMenu(null);
+  }, [past]);
+
+  /**
+   * `ctrl+z` / `cmd+z`, except while somebody is typing — a name half entered
+   * in the wizard is the browser's own undo to give back, not ours.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      const on = e.target as HTMLElement | null;
+      if (on && (on.tagName === "INPUT" || on.tagName === "TEXTAREA" || on.isContentEditable)) return;
+      e.preventDefault();
+      undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo]);
+
   const commit = useCallback((
     cells: Map<string, Cell>,
     newParent?: { id: string; parentId: string },
     anchorId?: string,
   ) => {
+    remember();
     setMoves((prev) => {
       const next = new Map(prev);
       for (const [id, cell] of cells) next.set(id, cell);
@@ -1086,7 +1279,7 @@ export default function HexLab({
       setReparents((prev) => new Map(prev).set(newParent.id, newParent.parentId));
     }
     setTidyStage(0); // a hand has been in it again
-  }, []);
+  }, [remember]);
 
   /* --- growing a company from nothing ------------------------------------ */
 
@@ -1099,12 +1292,18 @@ export default function HexLab({
    */
   const growing = org.units.length === 0;
 
-  const seq = useRef(0);
+  /**
+   * A new id. It used to count from a ref, which was one shared mutable thing
+   * more than this needs — and a ref read from anything the menu touches is
+   * enough for the compiler's rules to call the whole menu a render-time ref
+   * access. The clock and five random characters are unique enough for ids
+   * that live in one browser tab.
+   */
   const makeId = useCallback((kind: Born["kind"]) => {
-    seq.current += 1;
     // People keep the fixture's own prefix so nothing downstream has to learn
     // that there are two ways to be a person.
-    return `${kind === "person" ? "person" : "place"}:born-${seq.current}-${Math.random().toString(36).slice(2, 7)}`;
+    const stamp = Date.now().toString(36);
+    return `${kind === "person" ? "person" : "place"}:born-${stamp}-${Math.random().toString(36).slice(2, 7)}`;
   }, []);
 
   /**
@@ -1122,12 +1321,13 @@ export default function HexLab({
 
   /** The first click on blank paper makes a **human** — not a company. */
   const seedPerson = useCallback(() => {
+    remember();
     const id = makeId("person");
     setBorn((b) => [...b, { id, kind: "person", name: null, role: null, purpose: null, parentId: null }]);
     placeBorn(id, ORIGIN);
     setWizard({ id, step: 0 });
-    stepBack.current = true;
-  }, [makeId, placeBorn]);
+    setLookAgain(true);
+  }, [makeId, placeBorn, remember]);
 
   const describe = useCallback((id: string, patch: Partial<Born>) => {
     setBorn((b) => b.map((n) => (n.id === id ? { ...n, ...patch } : n)));
@@ -1151,6 +1351,7 @@ export default function HexLab({
   const formTeam = useCallback(() => {
     const lone = born.find((b) => b.kind === "person" && b.parentId === null);
     if (!lone) return;
+    remember();
     const at = moves.get(lone.id) ?? ORIGIN;
     const teamId = makeId("place");
     const mateId = makeId("person");
@@ -1167,8 +1368,114 @@ export default function HexLab({
     // Both arrivals are still asking for something, so neither gets a wizard
     // opened on it: the breathing nodes are the invitation.
     setWizard(null);
-    stepBack.current = true;
-  }, [born, moves, makeId]);
+    setLookAgain(true);
+  }, [born, moves, makeId, remember]);
+
+  /* --- making things ------------------------------------------------------ */
+
+  /**
+   * **Somewhere to stand**, next to `from` and as near `toward` as the ground
+   * allows. A new node has to arrive on a free cell, and the direction it
+   * prefers is the whole difference between a parent and a child: Law 3 puts
+   * children outward, so a child aims away from the centre and a new parent
+   * aims back towards it.
+   */
+  const freeNear = useCallback((from: Cell, toward: Cell | null): Cell | null => {
+    const free = (c: Cell) => !allocation.occupants.has(cellKey(c));
+    const sorted = (cells: Cell[]) =>
+      toward ? [...cells].sort((a, b) => hexDistance(a, toward) - hexDistance(b, toward)) : cells;
+    for (let radius = 1; radius <= 8; radius++) {
+      for (const c of sorted(ring(from, radius))) if (free(c)) return c;
+    }
+    return null;
+  }, [allocation]);
+
+  /**
+   * **A node, made where somebody pointed.**
+   *
+   * The whole of the grow study's lesson, on a lattice: *the cell you point at
+   * is the position*. It is born in the hand's layer like everything else that
+   * is made here, so no driver has standing to move it, and its wizard opens
+   * straight away because a node nobody has described is not yet anything.
+   */
+  const makeNode = useCallback((kind: Born["kind"], parentId: string | null, cell: Cell) => {
+    remember();
+    const id = makeId(kind);
+    setBorn((b) => [...b, { id, kind, name: null, role: null, purpose: null, parentId }]);
+    placeBorn(id, cell);
+    setWizard({ id, step: 0 });
+    setMenu(null);
+    // **The first thing on blank paper re-frames the view**, exactly as the
+    // seed button does. Until something exists the whole screen is inside one
+    // cell, because a map with nothing on it has nothing to set a scale by —
+    // so the node that arrives is drawn the size of the glass until the camera
+    // is told to look again.
+    //
+    // **Only there.** On a company that already has something on it the camera
+    // stays put: moving the view out from under somebody who is building is
+    // worse than anything it would fix, and the first version of this re-framed
+    // the whole of Sparrow Jam the moment one person was added to a team.
+    if (growing && !born.length) setLookAgain(true);
+  }, [growing, born, makeId, placeBorn, remember]);
+
+  /**
+   * **Something above a node** — the one creation that cannot be done by
+   * pointing, and the reason the node menu exists at all.
+   *
+   * A child goes in a cell; a parent is a rung. There is nowhere spatial to
+   * say *above*, so it is said here instead: the new place takes the node's
+   * own parent, and the node becomes its child. The reparent goes through the
+   * same override every other reparent uses, so nothing downstream learns a
+   * second way for a parent to change.
+   */
+  const makeAbove = useCallback((unitId: string) => {
+    const at = hexScene?.hex.cells.get(unitId);
+    if (!at || unitId === tree.rootId) return;
+    const cell = freeNear(at, ORIGIN);
+    if (!cell) return;
+    remember();
+    const id = makeId("place");
+    const parentId = tree.units.get(unitId)?.parentId ?? null;
+    setBorn((b) => [...b, { id, kind: "place", name: null, role: null, purpose: null, parentId }]);
+    placeBorn(id, cell);
+    setReparents((r) => new Map(r).set(unitId, id));
+    setWizard({ id, step: 0 });
+    setMenu(null);
+  }, [hexScene, tree, freeNear, makeId, placeBorn, remember]);
+
+  /**
+   * **Taking a node off the map**, and everything under it with it.
+   *
+   * Greg, 2026-10-21, choosing to build this now rather than leave it to undo:
+   * a map where making something costs two clicks and unmaking it costs
+   * nothing but luck fills up with accidents. It asks first, like a merge
+   * does, because a branch is a lot to lose by mistake — and undo brings it
+   * all back, which is what the dialog says.
+   *
+   * The hand's own layers are cleaned out at the same time. A placement left
+   * behind for a unit that no longer exists is only waiting to be stamped onto
+   * somebody else's cell if that id ever comes back.
+   */
+  const removeBranch = useCallback((unitId: string) => {
+    const ids = branchOf(tree, unitId);
+    remember();
+    setRemoved((prev) => new Set([...prev, ...ids]));
+    setBorn((b) => b.filter((n) => !ids.has(n.id)));
+    const without = <T,>(map: Map<string, T>) => {
+      const next = new Map(map);
+      for (const id of ids) next.delete(id);
+      return next;
+    };
+    setMoves(without);
+    setReparents(without);
+    setPinned((p) => {
+      const next = new Set(p);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    setPending(null);
+    setMenu(null);
+  }, [tree, remember]);
 
   /**
    * **One place decides where a picked-up branch's children go.**
@@ -1270,7 +1577,7 @@ export default function HexLab({
   const holding = drag?.heldOver ?? null;
   /** The clock runs while the hand rests on somebody, or while anything is
    *  still asking to be described — and stops dead otherwise. */
-  const beating = Boolean(holding) || unfinished.size > 0;
+  const beating = Boolean(holding) || unfinished.size > 0 || menu !== null;
   useEffect(() => {
     if (!beating || still) return;
     let raf = 0;
@@ -1886,10 +2193,39 @@ export default function HexLab({
       ctx.fillStyle = "#0f172a";
       ctx.fillText(unit.name, sx, ly);
     }
+    /**
+     * **The tile the menu is about stays lit.** Greg, 2026-10-20: *"a faint
+     * outline or other colour change/pulse animation should play when the user
+     * clicks in a vacant tile."*
+     *
+     * Without it the gesture is invisible: a double-click is fast, the menu
+     * opens beside the pointer rather than on it, and a node then appears
+     * somewhere nobody was looking. The outline is the sentence *here, this
+     * one* — and it holds while you choose, which is the second half of what
+     * he asked for.
+     *
+     * Drawn last, in screen space, so it sits over everything including the
+     * labels. It breathes unless the machine has been asked not to animate.
+     */
+    if (menu && hexScene) {
+      const lit = corners(menu.cell, hexScene.hex.size)
+        .map((pt) => ({ x: pt.x * scale + camera.x, y: pt.y * scale + camera.y }));
+      ctx.beginPath();
+      ctx.moveTo(lit[0].x, lit[0].y);
+      for (let i = 1; i < 6; i++) ctx.lineTo(lit[i].x, lit[i].y);
+      ctx.closePath();
+      const beat = still ? 0.55 : 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(performance.now() / 420));
+      ctx.fillStyle = `rgba(37,99,235,${beat * 0.14})`;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(37,99,235,${beat})`;
+      ctx.stroke();
+    }
+
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
 
   // --- input ---------------------------------------------------------------
 
@@ -1913,11 +2249,31 @@ export default function HexLab({
     return best;
   }, [hexScene, allocation, scene, camera.scale]);
 
+  /**
+   * **The hand is down, and nothing has been decided yet.**
+   *
+   * A press used to be a drag from its first pixel. It is now held here until
+   * it either travels `MOVE_SLOP_PX` — and becomes a drag or a pan — or lets
+   * go without travelling, which is a click and belongs to the gestures that
+   * are made of clicks.
+   */
+  const press = useRef<{
+    x: number; y: number;
+    world: { x: number; y: number };
+    hit: string | null;
+    cam: Camera;
+  } | null>(null);
+
+  /** What put the pointer down last — a mouse, a pen or a finger. Touch keeps
+   *  double-tap for zoom, so the create gesture has to know. */
+  const pointerKind = useRef<string>("mouse");
+
   const onPointerDown = (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     const world = worldAt(e.clientX, e.clientY, rect);
     const hit = unitAtPointer(world);
+    pointerKind.current = e.pointerType || "mouse";
 
     /**
      * **A node that is asking for something answers a tap, not a drag.**
@@ -1936,7 +2292,21 @@ export default function HexLab({
       }
     }
 
-    if (hexScene && hit && hit !== tree.rootId && !pending) {
+    // A menu is about the place it opened on. Touching the map anywhere is
+    // enough to mean "not that, then".
+    if (menu) setMenu(null);
+    press.current = { x: e.clientX, y: e.clientY, world, hit, cam: camera };
+  };
+
+  /**
+   * **Picking a branch up**, once the hand has travelled far enough to mean
+   * it. Everything here is what `onPointerDown` used to do on the first pixel;
+   * the only change is when it runs. Answers whether it took the gesture, so
+   * a press on open paper — or on the one node nobody may carry — falls
+   * through to panning.
+   */
+  const beginDrag = (hit: string, world: { x: number; y: number }): boolean => {
+    if (hexScene && hit !== tree.rootId && !pending) {
       // A tile travels with its branch, so one gesture moves a single team or a
       // whole island — Greg's rules 5 and 7 are the same drag.
       const members = new Map<string, Cell>();
@@ -1990,13 +2360,28 @@ export default function HexLab({
         afar: shape,
         heldOver: null, holdAt: world, holdSince: performance.now(),
       });
-      return;
+      return true;
     }
-    pan.current = { x: e.clientX, y: e.clientY, cam: camera };
+    return false;
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const rect = (e.target as HTMLElement).getBoundingClientRect();
+
+    /**
+     * **The moment a press becomes a gesture.** Travel decides which one: a
+     * node under the hand is picked up, anything else pans. The pan is
+     * anchored where the hand went *down* rather than where it is now, so
+     * crossing the threshold does not jump the map by four pixels.
+     */
+    const held = press.current;
+    if (held && !drag && !pan.current) {
+      if (Math.hypot(e.clientX - held.x, e.clientY - held.y) <= MOVE_SLOP_PX) return;
+      press.current = null;
+      if (held.hit && beginDrag(held.hit, held.world)) return;
+      pan.current = { x: held.x, y: held.y, cam: held.cam };
+    }
+
     if (pan.current) {
       const p = pan.current;
       setCamera({ scale: p.cam.scale, x: p.cam.x + (e.clientX - p.x), y: p.cam.y + (e.clientY - p.y) });
@@ -2127,6 +2512,10 @@ export default function HexLab({
   const onPointerUp = (e: React.PointerEvent) => {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     pan.current = null;
+    // A press that never travelled was a click, and a click is not this
+    // handler's business. Letting it fall through would be a drag of zero
+    // length asking the map to find room for a branch that never left.
+    press.current = null;
     if (!drag || !hexScene) { setDrag(null); return; }
 
     const heldLongEnough = drag.heldOver && performance.now() - drag.holdSince > HOLD_MS;
@@ -2187,6 +2576,67 @@ export default function HexLab({
   };
 
   /**
+   * **Double-click is how things get made.**
+   *
+   * Greg, 2026-10-19: *"I think the next model needs a double-click thing, and
+   * depending on what you click, you get options."* What you clicked is
+   * answered in two places — `allocation.occupants` for *somebody is standing
+   * here*, and `groundAt` for *this is somebody's space* — and the menu that
+   * opens is the only difference between them.
+   *
+   * **Touch is left alone.** Greg, 2026-10-20: on a touchscreen *"double-tap
+   * stays zoom, and pinch stays zoom"*. He accepts that the two inputs then
+   * differ, and points at Apple and Miro for doing the same.
+   *
+   * **The same at every scale.** *"As of right now, double click should work
+   * consistently across scales."* There is no build mode and no gate on the
+   * size of the company: an empty page and a 2,562-person one answer a
+   * double-click the same way.
+   */
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (pointerKind.current === "touch") return;
+    if (!hexScene || pending) { setMenu(null); return; }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const world = worldAt(e.clientX, e.clientY, rect);
+    const cell = worldToCell(world, hexScene.hex.size);
+    const at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+    /**
+     * **A root nobody made is not a node to click on.**
+     *
+     * A company with several top-level units — and a blank page, which has
+     * none — gets a root synthesised by the tree builder so everything has one
+     * ancestor. It stands on a cell like anything else, and on blank paper
+     * that cell is the whole screen, so every double-click landed on it and
+     * the only menu anybody could reach was *describe the Organisation*.
+     * It is not in the company and nobody can point at it, so here it is not
+     * standing anywhere.
+     */
+    const occupants = syntheticRoot
+      ? new Map([...allocation.occupants].filter(([, id]) => id !== tree.rootId))
+      : allocation.occupants;
+
+    const standing = occupants.get(cellKey(cell)) ?? null;
+    if (standing) {
+      setMenu({ kind: "node", unitId: standing, at, cell });
+      return;
+    }
+    const ground = groundAt({
+      cell,
+      occupants,
+      depthOf: (id) => tree.units.get(id)?.depth ?? 0,
+    });
+    const holder = ground
+      ? holderOf({
+          ground,
+          parentOf: (id) => tree.units.get(id)?.parentId ?? null,
+          isPerson: (id) => peopleIds.has(id),
+        })
+      : null;
+    setMenu({ kind: "make", holder, ring: ground?.ring ?? null, at, cell });
+  };
+
+  /**
    * Greg's two presses, 2026-09-30.
    *
    * The first neatens what is there: stragglers travel back to their families
@@ -2197,6 +2647,9 @@ export default function HexLab({
    */
   const [tidyReport, setTidyReport] = useState<ReturnType<typeof neaten> | null>(null);
   const tidy = useCallback(() => {
+    // Both presses are a step back from, including the one that throws the
+    // arrangement away — which until undo existed was itself the only way back.
+    remember();
     if (!hexScene || tidyStage > 0) {
       // The second press throws the whole arrangement away, and that has always
       // included the structure the hand changed as well as where things sit.
@@ -2225,7 +2678,7 @@ export default function HexLab({
     setMoves(new Map(result.cells));
     setTidyReport(result);
     setTidyStage(1);
-  }, [driver, peopleIds, hexScene, tidyStage, tree, allocation, pinned]);
+  }, [driver, peopleIds, hexScene, tidyStage, tree, allocation, pinned, remember]);
 
   /**
    * Two units on one cell would make one of them impossible to point at, since
@@ -2498,6 +2951,7 @@ export default function HexLab({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onDoubleClick={onDoubleClick}
         style={{ display: "block", cursor: drag ? "grabbing" : "grab", touchAction: "none" }}
       />
 
@@ -2586,8 +3040,155 @@ export default function HexLab({
         </div>
       )}
 
+      {/**
+        * **The short menu**, at the point of action. Greg, 2026-10-20: *"the
+        * gesture will eventually bring up a short menu, hold the location as
+        * highlighted, and potentially provide wider options via a menu
+        * elsewhere."* Three items at most, so it is read rather than scanned,
+        * and the cell it is about stays lit underneath it.
+        *
+        * The wording is **relational**, not ranked. Hex has no rungs in a
+        * user's sense — the engine knows a person and a place, and "level" is
+        * only how deep something happens to sit — so the menu says what the
+        * new thing would be *to the place you clicked*, which is the grow
+        * study's own lesson about a team being discovered rather than
+        * declared.
+        */}
+      {menu && !pending && !renaming && (() => {
+        const held = menu.kind === "node" ? menu.unitId : null;
+        const at = hexScene && held ? hexScene.hex.cells.get(held) ?? null : null;
+        // Outward is away from the centre: the far side of the node, which the
+        // nearest-free search then aims at.
+        const outward = at ? { q: at.q * 2, r: at.r * 2 } : null;
+        const room = at && outward ? freeNear(at, outward) : null;
+        // On blank paper there is no company to belong to, and the first
+        // person is a root — which is what opens the teammates question. Every
+        // other company has one, and a thing "on its own" is its child rather
+        // than a second root with nothing above it.
+        const islandParent = org.units.length ? tree.rootId : null;
+
+        const items = menuFor(
+          held
+            ? {
+                kind: "node", unitId: held,
+                isRoot: held === tree.rootId,
+                isBorn: born.some((b) => b.id === held),
+                hasRoom: room !== null,
+              }
+            : { kind: "make", holder: menu.kind === "make" ? menu.holder : null },
+          nameOf,
+        );
+
+        const run = (action: MenuAction) => {
+          if (action.do === "make") {
+            const parentId = action.where === "holder" && menu.kind === "make"
+              ? menu.holder ?? islandParent
+              : islandParent;
+            makeNode(action.kind, parentId, menu.cell);
+            return;
+          }
+          if (!held) return;
+          if (action.do === "describe") { setWizard({ id: held, step: 0 }); setMenu(null); return; }
+          if (action.do === "rename") { setRenaming({ id: held, value: nameOf(held) }); setMenu(null); return; }
+          if (action.do === "under") { if (room) makeNode("person", held, room); return; }
+          if (action.do === "above") { makeAbove(held); return; }
+          setPending({ kind: "remove", unitId: held, count: branchOf(tree, held).size });
+          setMenu(null);
+        };
+
+        const wide = 232;
+        const left = Math.min(Math.max(8, menu.at.x + 10), Math.max(8, size.width - wide - 8));
+        const top = Math.min(Math.max(8, menu.at.y + 10), Math.max(8, size.height - 60 - items.length * 32));
+        return (
+          <div
+            style={{
+              position: "absolute", left, top, zIndex: 22, width: wide, padding: 6,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
+              boxShadow: "0 18px 48px rgba(15,23,42,0.18)",
+              fontFamily: "ui-sans-serif, system-ui", fontSize: 13, color: "#0f172a",
+              display: "flex", flexDirection: "column", gap: 2,
+            }}
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => run(item.action)}
+                style={{
+                  textAlign: "left", padding: item.danger ? "10px 9px 7px" : "7px 9px",
+                  borderRadius: 8, cursor: "pointer", font: "inherit",
+                  border: "none", borderTop: item.danger ? "1px solid #f1f5f9" : undefined,
+                  marginTop: item.danger ? 4 : undefined,
+                  background: "transparent",
+                  color: item.danger ? "#b91c1c" : "#0f172a",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = item.danger ? "#fef2f2" : "#f8fafc"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >{item.label}</button>
+            ))}
+            <Small style={{ padding: "2px 9px 4px" }}>
+              {menu.kind === "make"
+                ? menu.holder ? `This ground is ${nameOf(menu.holder)}'s.` : "Open ground."
+                : "Double-click the map to make something."}
+            </Small>
+          </div>
+        );
+      })()}
+
+      {/** Describing a node the company came with: the one thing left to say
+        * about it is what it should be called. */}
+      {renaming && (() => {
+        const save = () => {
+          const value = renaming.value.trim();
+          if (value) {
+            remember();
+            setRenames((r) => new Map(r).set(renaming.id, value));
+          }
+          setRenaming(null);
+        };
+        return (
+          <Dialog>
+            <b>What should this be called?</b>
+            <input
+              autoFocus
+              value={renaming.value}
+              onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save();
+                if (e.key === "Escape") setRenaming(null);
+              }}
+              style={{
+                width: "100%", marginTop: 10, padding: "8px 10px", fontSize: 13,
+                border: "1px solid #e2e8f0", borderRadius: 9, outline: "none",
+              }}
+            />
+            <Row>
+              <div style={{ marginTop: 12, display: "flex", gap: 6 }}>
+                <Btn primary onClick={save} disabled={!renaming.value.trim()}>Rename</Btn>
+                <Btn onClick={() => setRenaming(null)}>Cancel</Btn>
+              </div>
+            </Row>
+          </Dialog>
+        );
+      })()}
+
       {pending && (
         <Dialog>
+          {pending.kind === "remove" && (
+            <>
+              <b>Remove {nameOf(pending.unitId)}?</b>
+              <p style={pStyle}>
+                {pending.count > 1
+                  ? `It and the ${pending.count - 1} nodes under it come off the map. `
+                  : "It comes off the map. "}
+                Undo brings it back.
+              </p>
+              <Row>
+                <Btn primary onClick={() => removeBranch(pending.unitId)}>Remove</Btn>
+                <Btn onClick={() => setPending(null)}>Keep it</Btn>
+              </Row>
+            </>
+          )}
+
           {pending.kind === "reshape" && (
             <>
               <b>Your shape might change to fit into where you want to put it</b>
@@ -2687,7 +3288,7 @@ export default function HexLab({
                       // somewhere to land, that landing is kept; where it had
                       // none, only the reporting line changes.
                       if (pending.cells) commit(pending.cells, { id: held, parentId: over }, held);
-                      else setReparents((p) => new Map(p).set(held, over));
+                      else { remember(); setReparents((p) => new Map(p).set(held, over)); }
                       setPending(null);
                     }}
                   >Reparent branch</Btn>
@@ -2695,6 +3296,7 @@ export default function HexLab({
                     disabled={!actions.merge}
                     onClick={() => {
                       if (!actions.merge) return;
+                      remember();
                       setMerges((p) => new Map(p).set(held, over));
                       // Its saved placement is about to belong to nobody.
                       setMoves((p) => { const next = new Map(p); next.delete(held); return next; });
@@ -2752,6 +3354,12 @@ export default function HexLab({
             <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
           ))}
           <Btn small onClick={fit}>fit</Btn>
+          {/** Greg, 2026-10-20: *"a button in the interface **and** ctrl+z /
+            * cmd+z"*. It sits with the other things you press rather than
+            * floating over the map, and it is always here once there is
+            * something to go back to — including on a company nobody has
+            * made anything on, because a drag is a step too. */}
+          <Btn small onClick={undo} disabled={!canUndo}>undo</Btn>
         </Row>
         {loaded && (moves.size > 0 || reparents.size > 0) && (
           <>

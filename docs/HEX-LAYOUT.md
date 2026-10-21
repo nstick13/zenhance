@@ -3489,6 +3489,117 @@ placement that scores sides against the other nodes rather than picking one.
 
 ---
 
+## Double-click to make things (2026-10-21)
+
+Greg, 2026-10-19: *"We're going to need some canvas interactions, rather like
+Miro — pan, zoom, double-click, right click options. I think the next model
+needs a double-click thing, and depending on what you click, you get options."*
+Written down on the 20th, built on the 21st against his six decisions and three
+answers he gave before any of it was written.
+
+### The grey already said it
+
+The strongest part of the gesture is not the double-click; it is **where** you
+double-click. Every unit keeps a clear hexagon around itself and every group of
+teams keeps a second one outside that, and both are drawn grey because the
+colour rule says *colour is for what is there, grey is for the room around it*.
+That space already means **this is somebody's own space**. So creating in it
+does not have to ask what the new thing belongs to — the ground answers, and
+the menu says whose it is: *a person in Dune Team*.
+
+`ground.ts` is that reading, and it is 40 lines: the six cells around you, then
+the twelve beyond them, deepest unit first. **The zones nest and the innermost
+wins** — a person's hexagon sits inside their team's ground, which sits inside
+the ring their group keeps — and a person's space resolves to their *team*,
+because a person is not a place for anything to live inside. Putting somebody
+**under** a person is what double-clicking the person is for.
+
+> ⚠️ **This gives a region a meaning it deliberately did not have.** Greg,
+> 2026-10-19: *"regions around teams — these aren't meaningful YET."* That is
+> about a **drop**, and it still holds: a tile comes to rest beside something
+> for all sorts of reasons, so reading intent out of where it landed is reading
+> something nobody said. A double-click is somebody pointing at a spot and
+> asking for something there. Nothing in the drag path reads `ground.ts`.
+
+### Relational, not ranked
+
+Greg's first words for the menu were *"a new node or human of any level"*.
+Level is the part that does not survive contact with this map: the engine knows
+a **person** and a **place**, and depth is a consequence of who you report to,
+not something anybody chooses. A menu offering *"division"* would invent a
+vocabulary the model does not have and then have to keep it true.
+
+So each item says what the new thing would be **to the place you clicked**, and
+`menu.ts` holds that and nothing else — the companion to `questions.ts`, which
+holds what holding one node over another offers. Both exist so a decision about
+what the map offers is somewhere a test can reach.
+
+| where | what it offers |
+| --- | --- |
+| open paper | *A person* · *A team* |
+| somebody's ground | *A person in X* · *A team in X* · *Something on its own* |
+| a node | *Describe X…* · *Someone under X* · *Something above X* · **Remove X** |
+| the company itself | *Describe…* · *Someone under…* — nothing above it, and it cannot be removed |
+
+**"Something above" is the one creation that cannot be done by pointing**, and
+it is the reason the node menu exists at all. A child goes in a cell and you can
+point at the cell; a parent is a rung. The new place takes the node's own
+parent, the node becomes its child through the same reparent override every
+other reparent uses, and it is seated on the free cell nearest the centre —
+Law 3 says children sit outward, so a parent belongs inward.
+
+### A press must move before it is a drag
+
+A pointer going down on a node used to pick it up on the first pixel, which
+made every tap a drag of zero length that then had to find somewhere for a
+whole branch to land. On a map with placements on it there often is nowhere,
+and the release said *"your tile can't fit here right now"* about a gesture
+nobody made. Four pixels of travel now separate a click from a drag, and that
+closes the standing fault as a side effect of making the click mean something.
+
+### Undo, and the things that are steps
+
+Ten steps, and a step is six references to state that was being replaced
+anyway — `moves`, `reparents`, `pinned`, `merges`, `born`, `removed`, and which
+tidy press you are on. **Naming is not a step**: the wizard writes on every
+keystroke, and ten steps of history would otherwise be ten letters of somebody's
+name. The step is the thing that was *made*, and undoing it takes the node with
+it.
+
+### What it cost, measured
+
+| | before | after |
+| --- | --- | --- |
+| Northwind, 395 units | 54,679 × 62,410 | **54,679 × 62,725** with one node added |
+| Digital Tailoring, 13 units | 7,728 × 5,043 | unchanged by a parent inserted above a team |
+| Sparrow Jam, 5 units | 2,814 × 2,837 | **4,452 × 4,098** with one node added |
+
+**Adding a node re-lays the company**, because the layout is a function of the
+tree and the tree changed. At scale that is 0.5% of the extent and invisible. On
+a five-unit company one more unit is a fifth of the company, and the map visibly
+grows — the same 4,452 × 4,098 whether the new node is a person or a team, so it
+is the rung schedule reacting to one more unit rather than anything about
+grouping. Logged in TASKS.md rather than fixed: the governing rules are Greg's
+to change.
+
+### Driven in a browser, on four companies
+
+Blank paper: double-click, *A person*, the wizard, and the camera re-framing —
+which it must do there and must **not** do anywhere else, because moving the
+view out from under somebody who is building is worse than a node off-centre.
+Sparrow Jam: the grey ring round a team naming that team. Northwind: open paper
+and the inside of a business unit, both at 2,562 people. Digital Tailoring: the
+node menu, a parent inserted above Trident Group, undo by button and by `⌘z`,
+removing a branch of twelve and bringing it back, a tap doing nothing, and a
+drag still carrying a whole branch.
+
+**Touch is not verified.** Greg, 2026-10-20: on a touchscreen *"double-tap stays
+zoom, and pinch stays zoom"*, and the code holds the create gesture to a mouse
+by reading `pointerType`. There is no touchscreen on this machine, so that line
+is reasoned, not driven.
+
+---
+
 ## Verified, and not
 
 **Verified by tests** (71 new; 188 across the hex engine and the engine boundaries, all passing): ring and
