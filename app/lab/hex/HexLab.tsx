@@ -655,17 +655,27 @@ export default function HexLab({
      * — the same reading `spacerRule` uses, and for the same reason: in a
      * people-as-units model a person's parent is usually their manager, and a
      * manager is not a team.
+     *
+     * **Asked of the tree, not of the record of what was made.** It used to
+     * walk `born`'s own `parentId`, which is where a node *started*; a
+     * reparent is an override on top of that and never touched it. So moving
+     * somebody to another team moved their line and left everything that reads
+     * this — their colour, the outline round their crowd, which neighbours
+     * count as strangers — still pointing at the team they came from. Greg,
+     * 2026-10-21: *"tried to reparent her to another team. The animation
+     * fires, the result does not."* His own rule for this gesture is that the
+     * tile stays where it was and **changes colour**, and the colour was the
+     * part that could not change.
+     *
+     * The tree has every override applied, so merges come with it for free.
      */
-    const bornById = new Map(born.map((b) => [b.id, b]));
     const teamOfBorn = (id: string): string | null => {
-      const walked = new Set<string>();
-      let at: string | null = bornById.get(id)?.parentId ?? null;
+      const walked = new Set<string>([id]);
+      let at: string | null = tree.units.get(id)?.parentId ?? null;
       while (at && !walked.has(at)) {
         walked.add(at);
-        const up = bornById.get(at);
-        if (!up) return at; // a fixture unit: that is the team
-        if (up.kind === "place") return up.id;
-        at = up.parentId;
+        if (!peopleIds.has(at)) return at;
+        at = tree.units.get(at)?.parentId ?? null;
       }
       return null;
     };
@@ -691,7 +701,7 @@ export default function HexLab({
     };
     return [...(rawGroups ?? []), ...bornPairs]
       .map(([personId, teamId]) => [personId, survivor(teamId)] as const);
-  }, [rawGroups, merges, born]);
+  }, [rawGroups, merges, born, tree, peopleIds]);
   const leadIds = useMemo(() => new Set(leads ?? []), [leads]);
 
   /**
