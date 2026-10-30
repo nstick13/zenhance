@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { holdActions } from "./questions";
 import { menuFor, type MenuAction } from "./menu";
+import { applyHand, settle } from "./hand";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -137,16 +138,69 @@ const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
 
 /**
- * How far the hand may drift and still be holding, as a share of a cell.
+ * **How far the hand may drift and still be holding — in pixels of screen.**
  *
- * Without this the clock ran from the moment the pointer entered a tile and
- * kept running while the hand was still moving, so dragging a branch slowly
- * across the map armed a merge on whatever it happened to be over — Greg,
- * 2026-10-01: *"pulling a family far away results in the reparent dialog
+ * Without a budget at all the clock ran from the moment the pointer entered a
+ * tile and kept running while the hand was still moving, so dragging a branch
+ * slowly across the map armed a merge on whatever it happened to be over —
+ * Greg, 2026-10-01: *"pulling a family far away results in the reparent dialog
  * appearing."* The orbital map learned the same lesson on 2026-09-23. **A
  * dwell is a hold**: travel restarts the clock.
+ *
+ * **It was a share of a cell until 2026-10-30, and that was the bug.** A cell
+ * is a distance in the world, and the world shrinks as you zoom out, so the
+ * budget shrank with it while the hand kept wobbling in pixels. A quarter of a
+ * cell is 27 px of allowance on Sparrow Jam at 0.30× and **0.9 px** on the
+ * 1,000-person company at the 0.01× it opens on — less than one pixel, for
+ * 550 ms, while dragging. The hold then never completed: the neck animation
+ * fired, because that is drawn the moment the pointer is over somebody, and
+ * the dialog never came, because the clock had restarted on the last twitch.
+ * Greg found it on the 1,000-person company: *"I could only reparent to Quartz
+ * Team 50 — while the animation fired, the dialog offering reparent did not."*
+ * Whether it worked was luck, which is why it looked like *"only fires once"*.
+ *
+ * Measured in the browser with the handler instrumented: a 40 px wobble at
+ * 0.30× put 267 world units against a 91-unit budget and reset the clock to
+ * 71 ms on every move.
+ *
+ * Six times `MOVE_SLOP_PX`, deliberately: the travel that means *this is a
+ * gesture rather than a click* is 4 px, and a hold tolerates six times that
+ * before it counts as the hand moving on. Both are now read in the same units
+ * as the hand that makes them.
  */
-const HOLD_SLACK = 0.25;
+export const HOLD_SLACK_PX = 24;
+
+/**
+ * **Who the hold is about, once it is about somebody.**
+ *
+ * The question *what am I holding over* is answered by the cell under the
+ * pointer, and a cell is a distance in the world: at the 0.01–0.02× a whole
+ * company is seen at, it is **fifteen pixels across**. So a hand that wobbles
+ * three or four pixels keeps stepping off the target onto the empty ground
+ * beside it, `heldOver` goes back to null, and whether the dialog appears
+ * comes down to which cell the pointer happened to be in at the instant it was
+ * released. Caught in the browser on the 1,000-person company, 2026-10-30:
+ * two moves before the release had Union Team 82 held, and the release itself
+ * had `heldOver: null`.
+ *
+ * That is the other half of Greg's *"while the animation fired, the dialog
+ * offering reparent did not"* — and of why it seemed to work once and then
+ * never again. It was never *once*; it was a coin toss at every release.
+ *
+ * So: **empty ground beside the thing you are holding over does not end the
+ * hold.** Another unit does, because you are now asking about that one, and so
+ * does travelling further than `HOLD_SLACK_PX`, which is already what *the
+ * hand has moved on* means. Nothing here weakens the dwell — the clock is
+ * untouched — it only stops the subject flickering under a steady hand.
+ */
+export function heldSubject(
+  current: string | null,
+  under: string | null,
+  stillHolding: boolean,
+): string | null {
+  if (under) return under;
+  return stillHolding ? current : null;
+}
 
 /**
  * **How far the hand must travel before a press is a drag or a pan**, in
@@ -777,42 +831,9 @@ export default function HexLab({
    *  where it was put and changes colour, so the cells are the person's. */
   const allocation = useMemo(() => {
     if (!moves.size) return baseAllocation;
-    /**
-     * **A hand placement only lands if its cell is still free.**
-     *
-     * Hand placements live in this browser and the engine changes underneath
-     * them — a new rule, a different shape, a fix to the packer — and the cell
-     * somebody put a tile on last week now belongs to somebody else. Applying
-     * them blindly put two units on one cell: Greg, 2026-10-03, replaying 1,258
-     * saved placements, *"72 units sharing a cell with another — they cannot be
-     * pointed at."* Measured on a saved arrangement from the other shape, 1,479
-     * placements produced 66 of them.
-     *
-     * Checking as we go keeps the map **injective at every step**, which is the
-     * property that matters: the layout starts with one unit per cell, a
-     * placement is only taken when its target is free, and taking it frees the
-     * cell that unit came from. So the invariant cannot be broken by any
-     * sequence of placements, however stale. Anything refused simply stays
-     * where the engine put it, which is the honest answer to "that cell is not
-     * yours any more".
-     */
-    const cells = new Map(baseAllocation.cells);
-    const occupants = new Map<string, string>();
-    for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
-    for (const [id, cell] of moves) {
-      // A unit that has been merged away still has its old placement saved, and
-      // stamping that on would put a ghost back on the map with nothing behind
-      // it. The layout is the authority on who exists.
-      if (!cells.has(id)) continue;
-      const key = cellKey(cell);
-      const holder = occupants.get(key);
-      if (holder !== undefined && holder !== id) continue;
-      const had = cells.get(id);
-      if (had) occupants.delete(cellKey(had));
-      cells.set(id, cell);
-      occupants.set(key, id);
-    }
-    return { ...baseAllocation, cells, occupants };
+    // `applyHand` carries the whole rule, and why a stale placement is refused
+    // rather than stamped on.
+    return { ...baseAllocation, ...applyHand(baseAllocation.cells, moves) };
   }, [baseAllocation, moves]);
 
   const { scene, hexScene, ms } = useMemo(() => {
@@ -1057,7 +1078,38 @@ export default function HexLab({
     return [...weight.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
   }, [scene, regions]);
-  const maxDepth = useMemo(() => scene.units.reduce((m, u) => Math.max(m, u.depth), 0), [scene]);
+  /**
+   * **How many strata the company has**, which grades every node's size and
+   * every wash's tone — Greg, 2026-09-30: *"each step calculated based on how
+   * many strata there are."*
+   *
+   * **Counted over the company the engine laid, not the hand's sketch on top
+   * of it.** The second half of the flinch, and the one the original write-up
+   * missed: making a person inside a team adds a rung, every step in the
+   * grading gets shorter, and the whole map re-sizes and re-shades around a
+   * node nobody has even named yet. Measured on Sparrow Jam on 2026-10-30:
+   * nothing moved a pixel and Granite Division still swelled by about a third.
+   *
+   * It skips the nodes **made here and placed by hand**, which is the same
+   * rule `settle` keeps for cells — **tidy is where the engine gets its say
+   * back**, and its second press clears the placements, at which point a grown
+   * rung counts like any other.
+   *
+   * Not `pinned` on its own, which was this code's first mistake: `commit`
+   * pins *any* unit a hand has dragged, so reading it alone would have taken a
+   * dragged team out of the company's own count of its rungs. A node the
+   * company came with is a rung whoever moved it.
+   *
+   * On blank paper every node is the hand's, so there is no company to count
+   * and it falls back to counting them: a company grown from nothing grades
+   * itself as it deepens, exactly as it did before this.
+   */
+  const maxDepth = useMemo(() => {
+    const made = new Set(born.filter((b) => pinned.has(b.id)).map((b) => b.id));
+    const deepest = (us: typeof scene.units) => us.reduce((m, u) => Math.max(m, u.depth), 0);
+    const laid = made.size ? scene.units.filter((u) => !made.has(u.id)) : scene.units;
+    return deepest(laid.length ? laid : scene.units);
+  }, [scene, pinned, born]);
 
   const floor = useMemo(
     () => minScaleFor(scene.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 }, size),
@@ -1321,11 +1373,16 @@ export default function HexLab({
    * its id into `pinned`, which is what makes Greg's instruction true without
    * suspending a law: under Law 0 the engine may not move either, so no driver
    * has an opinion about where a grown company sits.
+   *
+   * **And everything already on the map stays where it is** — `settle`, which
+   * carries the reasoning. Without it, making one node on a five-unit company
+   * re-laid four of them, because the layout is a pure function of the whole
+   * tree and one more unit is a different tree. Tidy is the way back.
    */
   const placeBorn = useCallback((id: string, cell: Cell) => {
-    setMoves((m) => new Map(m).set(id, cell));
+    setMoves((m) => settle(allocation.cells, m, syntheticRoot ? tree.rootId : null).set(id, cell));
     setPinned((p) => new Set(p).add(id));
-  }, []);
+  }, [allocation, syntheticRoot, tree]);
 
   const [wizard, setWizard] = useState<{ id: string; step: number } | null>(null);
 
@@ -1476,7 +1533,11 @@ export default function HexLab({
       for (const id of ids) next.delete(id);
       return next;
     };
-    setMoves(without);
+    // Taking a branch off the map is a different tree too, so the rest of the
+    // company would re-lay around the hole exactly as it does when something
+    // is made — see `settle`. It stays where it is instead, and the hole
+    // closes on the next tidy.
+    setMoves((m) => without(settle(allocation.cells, m, syntheticRoot ? tree.rootId : null)));
     setReparents(without);
     setPinned((p) => {
       const next = new Set(p);
@@ -1485,7 +1546,7 @@ export default function HexLab({
     });
     setPending(null);
     setMenu(null);
-  }, [tree, remember]);
+  }, [tree, allocation, syntheticRoot, remember]);
 
   /**
    * **One place decides where a picked-up branch's children go.**
@@ -2278,6 +2339,28 @@ export default function HexLab({
    *  double-tap for zoom, so the create gesture has to know. */
   const pointerKind = useRef<string>("mouse");
 
+  /**
+   * **The dwell, in a ref, because a clock read from React state is not a
+   * clock.**
+   *
+   * `heldOver` / `holdAt` / `holdSince` live on the drag's state as well — the
+   * neck animation is drawn from them, and a frame late is invisible there.
+   * The *decision* may not be a frame late. Every pointer event reads the drag
+   * its last **render** produced, so on a heavy map, where a render costs more
+   * than the gap between two moves, the handler is reading a hold from a
+   * second ago: measured on 2026-10-30, `performance.now() - holdSince` came
+   * back as a flat ~1,000 ms on every move of a drag that was still arriving,
+   * which is to say the clock was measuring how far behind the renderer was.
+   *
+   * Both halves of the gesture now read this instead: it is written
+   * synchronously inside the move handler and read synchronously on release,
+   * so what the release decides is what the hand actually did. The state copy
+   * is for drawing only.
+   */
+  const hold = useRef<{ over: string | null; at: { x: number; y: number }; since: number }>({
+    over: null, at: { x: 0, y: 0 }, since: 0,
+  });
+
   const onPointerDown = (e: React.PointerEvent) => {
     // Capture keeps the gesture with the canvas when the hand leaves it. It
     // throws where there is no live pointer to capture, and a gesture that
@@ -2346,6 +2429,7 @@ export default function HexLab({
        * landing and refused the drop — *"there is nowhere free nearby"* — on a
        * map that was nearly empty.
        */
+      hold.current = { over: null, at: world, since: performance.now() };
       setDrag({
         unitId: hit, members, grabbed: grabbedAt,
         from: world, world, target: grabbedAt,
@@ -2389,13 +2473,27 @@ export default function HexLab({
       const target = worldToCell(world, hexScene.hex.size);
 
       // A hold is a hold. If the hand has travelled, the clock starts again —
-      // even when it has not left the tile it is over.
-      const travelled = Math.hypot(world.x - drag.holdAt.x, world.y - drag.holdAt.y);
-      const stillHolding = travelled <= hexScene.hex.size * HOLD_SLACK;
+      // even when it has not left the tile it is over. Measured on the screen,
+      // where the hand is (`HOLD_SLACK_PX`), and against the ref rather than
+      // the rendered state (`hold`), so the clock cannot be a render behind.
+      const travelled = Math.hypot(world.x - hold.current.at.x, world.y - hold.current.at.y) * camera.scale;
+      const stillHolding = travelled <= HOLD_SLACK_PX;
+      /** Writes the dwell down, synchronously. The clock restarts unless the
+       *  hand is still *and* still asking about the same unit. */
+      const keep = (subject: string | null) => {
+        const same = subject !== null && subject === hold.current.over;
+        hold.current = {
+          over: subject,
+          at: same && stillHolding ? hold.current.at : world,
+          since: same && stillHolding ? hold.current.since : performance.now(),
+        };
+        return hold.current;
+      };
 
       if (cellKey(target) === cellKey(drag.target)) {
         if (!stillHolding) {
-          setDrag({ ...drag, world, holdAt: world, holdSince: performance.now() });
+          const now = keep(hold.current.over);
+          setDrag({ ...drag, world, holdAt: now.at, holdSince: now.since });
         }
         return;
       }
@@ -2435,8 +2533,9 @@ export default function HexLab({
          * still over another node answers the second whatever the first is
          * doing — so the dwell is read here exactly as it is on the plain path.
          */
-        const over = allocation.occupants.get(cellKey(target)) ?? null;
-        const stillOver = over !== null && over === drag.heldOver;
+        const under = allocation.occupants.get(cellKey(target)) ?? null;
+        const over = heldSubject(hold.current.over, under, stillHolding);
+        const now = keep(over && !drag.members.has(over) ? over : null);
         setDrag({
           ...drag, world, target,
           landing: relaid?.cells ?? null,
@@ -2444,9 +2543,9 @@ export default function HexLab({
           reshaped: false,
           radiated: Boolean(relaid),
           deference: relaid?.deference ?? null,
-          heldOver: over && !drag.members.has(over) ? over : null,
-          holdAt: stillOver && stillHolding ? drag.holdAt : world,
-          holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
+          heldOver: now.over,
+          holdAt: now.at,
+          holdSince: now.since,
         });
         return;
       }
@@ -2469,8 +2568,9 @@ export default function HexLab({
         // proposed deleting both; see `app/lab/hex/confetti.test.ts`.
         groupOf,
       );
-      const over = allocation.occupants.get(cellKey(target)) ?? null;
-      const stillOver = over && over === drag.heldOver;
+      const under = allocation.occupants.get(cellKey(target)) ?? null;
+      const over = heldSubject(hold.current.over, under, stillHolding);
+      const now = keep(over && !drag.members.has(over) ? over : null);
       setDrag({
         ...drag, world, target,
         landing: landing.kind === "no-room" ? null : landing.cells,
@@ -2497,9 +2597,9 @@ export default function HexLab({
          * `alike` still earns its keep one layer up, in the dialog: it is what
          * chooses between the merge questions and a plain reparent.
          */
-        heldOver: over && !drag.members.has(over) ? over : null,
-        holdAt: stillOver && stillHolding ? drag.holdAt : world,
-        holdSince: stillOver && stillHolding ? drag.holdSince : performance.now(),
+        heldOver: now.over,
+        holdAt: now.at,
+        holdSince: now.since,
       });
       return;
     }
@@ -2538,7 +2638,11 @@ export default function HexLab({
     }
     if (!drag || !hexScene) { setDrag(null); return; }
 
-    const heldLongEnough = drag.heldOver && performance.now() - drag.holdSince > HOLD_MS;
+    // Read off `hold`, not off the rendered drag: on a heavy map the state is
+    // a render behind the hand, and a dwell decided from it is a measure of
+    // the renderer rather than of the gesture. See `hold`.
+    const heldOver = hold.current.over;
+    const heldLongEnough = heldOver !== null && performance.now() - hold.current.since > HOLD_MS;
 
     /**
      * **A deliberate hold is a question about the org, and it is asked first.**
@@ -2560,9 +2664,9 @@ export default function HexLab({
      * where the hand left it when there is room, and is simply null when there
      * is not.
      */
-    if (heldLongEnough && drag.heldOver) {
+    if (heldLongEnough && heldOver) {
       setPending({
-        kind: "merge", unitId: drag.unitId, withUnitId: drag.heldOver,
+        kind: "merge", unitId: drag.unitId, withUnitId: heldOver,
         cells: drag.landing,
       });
       setDrag(null);
@@ -3387,8 +3491,14 @@ export default function HexLab({
               <Btn small onClick={tidy}>
                 {tidyStage === 0 ? "tidy up" : "tidy up again — compress"}
               </Btn>
+              {/** **"held", not "moved", since 2026-10-30.** Making something
+                * settles the whole map into the hand's layer — see `settle`
+                * in `hand.ts` — so this counts what the hand is holding and
+                * what tidy would hand back to the engine, not how many tiles
+                * anybody has dragged. Saying "moved" of a map nobody had
+                * dragged was the readout telling a small lie. */}
               <span style={{ color: "#94a3b8", fontSize: 11 }}>
-                {moves.size} moved · {reparents.size} reparented
+                {moves.size} held · {reparents.size} reparented
               </span>
             </Row>
             {tidyReport && (

@@ -651,7 +651,52 @@ things*.
 
 ---
 
-### ☐ Adding one node re-lays a small company — *Claude, 2026-10-21*
+### ☑ You could only reparent once, and only sometimes — *Greg, 2026-10-30; found and fixed the same day*
+
+**What Greg saw, on the 1,000-person company:** *"I can reparent a team from
+Quartz Programme to the Everest Function to become Aurora Team 60 … once. I
+can't then reparent. And I could only reparent to Quartz Team 50 — while the
+animation fired, the dialog offering reparent did not."*
+
+**What it was.** Holding one node over another is how you move a team under a
+new parent. The gesture has two halves: the map works out *who you are holding
+over*, and *how long you have held still*. Both were being measured in the
+distances of the drawn world rather than in pixels of screen — so both shrank
+as you zoomed out, and on a company big enough that you have to zoom out to
+see it, they shrank to nothing. You had to hold inside **one pixel** for half a
+second. The neck animation still drew, because that only needs the pointer to
+be over somebody, so it looked like the map had understood and then ignored
+you.
+
+**And a third thing underneath both**, which is why it felt random rather than
+merely hard: the decision read the clock off React state, and on a heavy map
+that state is a frame or more behind the hand. Measured on the day: the clock
+reported a flat ~1,000 ms on every move of a drag that was still arriving — it
+was measuring how far behind the renderer was, not how long you had held. So
+**whether the dialog appeared depended on how busy the frame was**. That is
+"works once, then never".
+
+**All three are fixed, and the gesture is driven on the company Greg found it
+on**: at the zoom the 1,000-person map opens at, a 4-pixel hand tremor now
+holds, and a pair that failed every single time — Trident Team 83 onto Union
+Team 82 — reparents. Carrying a branch across the map still arms nothing,
+which was the rule from 2026-10-01 and is the thing a looser hold could easily
+have broken.
+
+*For whoever picks it up:* `HOLD_SLACK_PX` (24 px of screen, six times
+`MOVE_SLOP_PX`), `heldSubject` and the `hold` ref, all in `HexLab.tsx`, with
+the reasoning and the measurements beside each. Six tests in `hold.test.ts`,
+including a guard that the budget cannot go back to being a share of a cell.
+Written up in [HEX-LAYOUT.md](HEX-LAYOUT.md) § *Hold-to-reparent did not work
+at scale*.
+
+**Worth someone's eye:** the orbital map's dwell was written from the same idea
+on 2026-09-23 and has not been looked at. If it measures stillness in world
+units too, `/org` has this bug as well.
+
+---
+
+### ☑ Adding one node re-lays a small company — *Claude, 2026-10-21; Greg decided and it was fixed 2026-10-30*
 
 Make a node anywhere on Sparrow Jam and the whole map grows: **2,814 × 2,837
 world units becomes 4,452 × 4,098**, and the existing teams move. The thing you
@@ -672,10 +717,35 @@ you add one person is a map people will stop trusting.
 where it is until the next tidy? That is a change to the governing rules, which
 he asked to leave alone on 2026-10-18 — hence a question rather than a fix.
 
-*For whoever picks it up:* the extent comes from `allocateByTerritory` →
-`layoutRadial`'s floor schedule (`floors[d] = floors[d-1] + 1 + max(keep)`),
-recomputed from the tree on every change. `npm run hex:zoning` measures the
-map; the figures above are from the panel readout on `/lab/hex`.
+#### Answered 2026-10-30: yes. *"Fix the re-lay bug."*
+
+**What changed, in plain English.** Make something and the rest of the map now
+stays exactly where it is. Nothing is re-calculated, nothing slides, nothing
+re-sizes. **Press *tidy up* when you want the engine's opinion back** — its
+first press lays the company out again with the new thing in it, and its second
+throws your arrangement away entirely. That is the whole deal: the map is yours
+while you are building, and the engine's when you ask for it.
+
+**There were two flinches, and the write-up above only caught one.** The second
+is that a map grades every tile's size and shade by how many rungs the company
+has — so making a *person inside a team* added a rung and swelled every tile on
+the screen by up to a third, without anything moving an inch. Both are fixed,
+by the same rule: what a hand makes does not restate the company until tidy.
+
+*For whoever picks it up:* `app/lab/hex/hand.ts` is new and carries the
+reasoning — `settle` (the map becomes the hand's when you make or remove
+something) and `applyHand` (lifted out of `HexLab.tsx` unchanged, so the whole
+thing can be driven by a test). `maxDepth` in `HexLab.tsx` now skips `pinned`.
+Ten tests in `hand.test.ts`, including one that holds the *engine's* own
+behaviour still — it is supposed to re-derive the map, which is why the fix is
+not in `lib/map/`. Seven browser runs are written up in
+[HEX-LAYOUT.md](HEX-LAYOUT.md) § *The map no longer flinches*, with what was
+not checked. The old diagnosis stands and is still worth reading: the extent
+came from `allocateByTerritory` → `layoutRadial`'s floor schedule
+(`floors[d] = floors[d-1] + 1 + max(keep)`), recomputed from the tree on every
+change, which on Sparrow Jam went from `[0,2]` to `[0,3,5]`. `npm run
+hex:zoning` measures the map; the figures above are from the panel readout on
+`/lab/hex`.
 
 ---
 

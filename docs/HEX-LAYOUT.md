@@ -3579,8 +3579,112 @@ tree and the tree changed. At scale that is 0.5% of the extent and invisible. On
 a five-unit company one more unit is a fifth of the company, and the map visibly
 grows — the same 4,452 × 4,098 whether the new node is a person or a team, so it
 is the rung schedule reacting to one more unit rather than anything about
-grouping. Logged in TASKS.md rather than fixed: the governing rules are Greg's
-to change.
+grouping. Logged in TASKS.md rather than fixed at the time: the governing rules
+are Greg's to change — and on 2026-10-30 he changed them. See below.
+
+### The map no longer flinches (2026-10-30)
+
+Greg: *"fix the re-lay bug."* The answer is not a better schedule — a layout
+that is a pure function of the tree will always re-derive the map when the tree
+changes, and on a five-unit company that is a fifth of the company. So the map
+simply stops being asked.
+
+**Where everything stands becomes the hand's answer at the moment you make
+something.** `settle` in `app/lab/hex/hand.ts` writes every unit's cell into
+`moves` as the new node is placed, so nothing is left for the engine to decide;
+removing a branch settles the same way, because a hole is a different tree too.
+**Tidy is the way back** — its first press asks the engine to lay the company
+again with the new node in it, and its second throws the arrangement away
+entirely. No new mechanism: `moves` already meant *a cell a hand decided*, and
+tidy already re-laid over the top of it. The only new idea is **when** it is
+written.
+
+**Two mechanisms were flinching, not one.** The write-up above measured the
+extent and what moved, and missed the second: how many strata a company has
+grades every node's size and every wash's tone (Greg, 2026-09-30, *"each step
+calculated based on how many strata there are"*). Making a *person inside a
+team* adds a rung, every step in the grading gets shorter, and the whole map
+re-sizes and re-shades around a node nobody has named yet. Measured on Sparrow
+Jam with the cells already held still: nothing moved a pixel, and Granite
+Division still swelled by about a third. So `maxDepth` is now counted over the
+company the engine laid, skipping `pinned` — the nodes a hand made and placed —
+and falling back to counting them on blank paper, where the hand's sketch *is*
+the company. Same rule as the cells, same release valve.
+
+The panel's readout says **"14 held"** where it used to say "14 moved": after a
+settle the map really is all in the hand's layer, and saying *moved* of tiles
+nobody had dragged was the readout telling a small lie.
+
+| | before the fix | after |
+| --- | --- | --- |
+| Sparrow Jam, a person under a division | 4 of 5 units move, up to 5 cells | **nothing moves**, extent unchanged at 2,814 × 2,837 |
+| Sparrow Jam, a person inside a team | every tile re-sizes and re-shades | **every node's centre pixel byte-identical** |
+| Digital Tailoring, a team made in Trident Group's grey | — | 6,310 of 6,326 label pixels identical (16 antialiasing), 7,728 × 5,043 unchanged |
+
+**Driven in a browser on 2026-10-30**, seven runs on `:3100`: the two gestures
+above on Sparrow Jam before and after the sizing half of the fix; a team made in
+a grey zone on Digital Tailoring; both tidy presses, where the first is a no-op
+and the second hands the map back to the engine, which re-places the made team
+above Trident Group; growing a company from blank paper, which still grades
+itself as it deepens; and undo, which returns the map to the engine's own layout
+and clears the saved arrangement. Measured by reading the canvas back pixel by
+pixel rather than by eye — of 6,805 dark label and mark pixels, **3 differed**
+after a create-then-undo, all antialiasing.
+
+**Not checked:** Northwind at 2,562 (the effect there was half a percent before
+the fix and is nothing now); touch; the atlas driver; people as the smallest
+unit, since the runs above were all on the teams strata and blank paper. The
+engine still lays the whole tree, so tidy is handed the same `spacedBy` it
+always was — nothing there changed.
+
+**One consequence worth knowing.** A merge re-lays the ground around the
+survivor; after you have made something, every unit is in the hand's layer, so
+that re-lay is kept only where the hand has nothing to say. In practice a
+merged-away team's people stay where they are and change colour, which is
+Greg's own rule for a reparent — but it has not been driven, and it is the one
+place where settling changes what another gesture does.
+
+### Hold-to-reparent did not work at scale, for three reasons (2026-10-30)
+
+Greg, on the 1,000-person company: *"I can reparent a team … once. I can't
+then reparent. And I could only reparent to Quartz Team 50 — while the
+animation fired, the dialog offering reparent did not."*
+
+**The gesture was being measured in the world, and the hand moves in pixels.**
+Everything below was found by instrumenting the handler and reading the numbers
+out of a real drag, not by reasoning about the code.
+
+| | what it was | why it fails as you zoom out | now |
+| --- | --- | --- | --- |
+| **How still the hand must be** | a quarter of a cell, in world units | 27 px of allowance on Sparrow Jam at 0.30×, **0.9 px** on the 1,000-person company at the 0.01× it opens on | `HOLD_SLACK_PX`, 24 px of screen, at every zoom |
+| **Who the hold is about** | the cell under the pointer, re-decided every move | a cell is **15 px across** at that zoom, so a 4 px wobble steps onto the empty ground beside the target and `heldOver` goes back to null | `heldSubject`: empty ground beside the target does not end the hold; another unit, or travelling, does |
+| **When the clock started** | `holdSince` on the drag's React state | the handler reads the drag its last *render* produced; on a heavy map that is a second behind the hand. Measured: `now - holdSince` came back a flat ~1,000 ms on every move of a drag still arriving | a ref, written and read synchronously; the state copy is for drawing the neck only |
+
+The third is the one that made it look random. The release was deciding from a
+clock that measured how far behind the renderer was, so **whether the dialog
+appeared depended on how busy the frame was** — which is why it fired once and
+then not again, and why it was the big company it happened on.
+
+**Measured, before and after, by driving real pointer events and reading the
+handler's own numbers:**
+
+- Sparrow Jam at 0.30×, a 40 px wobble: `travelled` 267 world units against a
+  91-unit budget, the clock reset to 71 ms on every move, no dialog. That is
+  the bug in one line — and 40 px is not a tremor, it is a sweep.
+- Sparrow Jam at 0.06×, where the budget was 5.5 px: a 6 px and a 12 px tremor
+  now hold; they could not before.
+- The 1,000-person company at 0.02×, where the budget was 1.8 px: a 4 px tremor
+  now holds, and **Trident Team 83 → Union Team 82 reparents** — a pair that
+  failed every time before, including as the very first thing done on a clean
+  map.
+- The dwell still refuses a sweep: the same 40 px wobble at 0.30× raises
+  nothing, with the clock restarting at ~71 ms on every move. Greg's
+  2026-10-01 rule — *"pulling a family far away results in the reparent dialog
+  appearing"* — is intact, and is now intact for the right reason.
+
+**Not checked:** touch; the atlas driver; whether the same three faults are in
+the orbital map's own dwell, which was written from the same idea and is the
+obvious next place to look.
 
 ### Driven in a browser, on four companies
 
