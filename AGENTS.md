@@ -34,7 +34,7 @@ lab ──▶ next ──▶ release ──▶ main
 wild    build    last stop    live
 west    for real before live
 ```
-- **Ask which stage before you start. Every time.** *"Lab, next, or release?"* It decides what the work may be, what bar it clears, and who sees it — guessing wrong means doing it twice. If the answer isn't obvious from the request, ask; a one-line question is cheaper than a branch in the wrong place.
+- **`lab`, unless you are told otherwise.** Greg, 2026-11-04: *"we'll always work on lab until otherwise stated."* So don't open every session by asking which stage — assume `lab` and get on with it. The stage still decides what the work may be, what bar it clears and who sees it, which is why the standing answer only covers `lab`: **work that has to touch `next`, `release` or `main` is a question to ask before you start it**, not after.
 - **Moving between stages needs a human's yes. That is the whole gate** — not a checklist, not a robot. Greg or Nate says "promote it", and it moves.
 - **`lab`** — trying an idea. Break it freely; half-finished is normal. Answers *does this feel right*, nothing else.
 - **`next`** — the trunk. A proven idea built properly: typed, tested, on both demo companies, inside the engines. Nothing branches off it: work lands on `lab` and is promoted here.

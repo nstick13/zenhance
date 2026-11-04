@@ -68,6 +68,23 @@ ALTER TABLE "orbital_nodes" ADD COLUMN "distance" numeric(12, 3);
 
 ---
 
+## ⏸ Parked by Greg
+
+### ⏸ Touch — *parked by Greg, 2026-11-04: "ignore touch for now"*
+
+Nothing on the hex map has been driven by a finger. The create gesture is held
+to a mouse by `pointerType`, the double-click/dwell gestures are reasoned
+rather than tested, and both of the 2026-10-30 fixes (the map holding still
+when you build on it, and hold-to-reparent at any zoom) are mouse-only
+findings. There is no touchscreen on this machine either way.
+
+**Don't spend time on it until Greg says.** Greg's own position from
+2026-10-20 still stands for when it comes back: on a touchscreen **double-tap
+stays zoom and pinch stays zoom**, so the create gesture does not take them,
+and the two inputs are allowed to differ.
+
+---
+
 ## 🟡 Waiting on a decision
 
 Agents should not settle these alone. Each changes how the product feels or
