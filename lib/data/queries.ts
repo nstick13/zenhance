@@ -23,6 +23,7 @@ import { requireWorkspace, listWorkspaces } from "@/lib/auth/workspace";
 import { isDevAuthEnabled } from "@/lib/auth/currentUser";
 import { isSampleWorkFixtureName } from "@/lib/demoCompanies";
 import { normalizeLens, type Lens } from "@/lib/canvas/lens";
+import { isMissingColumn } from "@/lib/data/missingColumn";
 import { normalizeVocabulary, type Vocabulary } from "@/lib/vocabulary";
 import {
   resolveFindingsPolicy,
@@ -227,10 +228,46 @@ export async function listWorkspaceOptions(
  *  where round it. Absent rows simply fall back to the computed layout. */
 export async function getOrbitalNodes(boardId = "default"): Promise<OrbitalNodeRow[]> {
   const { workspace } = await requireWorkspace();
-  return db
-    .select()
-    .from(orbitalNodes)
-    .where(and(eq(orbitalNodes.workspaceId, workspace.id), eq(orbitalNodes.boardId, boardId)));
+  const mine = and(eq(orbitalNodes.workspaceId, workspace.id), eq(orbitalNodes.boardId, boardId));
+  try {
+    return await db.select().from(orbitalNodes).where(mine);
+  } catch (error) {
+    /**
+     * **The map outlives a migration that has not been run yet.**
+     *
+     * `db.select()` asks for every column Drizzle knows about, so the day the
+     * code knows about a column the database does not, this throws and `/org`
+     * is an error page for everybody — see `isMissingColumn` for why that is
+     * worth a seatbelt and why it is not a licence to ship in that order.
+     *
+     * `distance` is the one column `/org` can do without: it is already
+     * nullable, and `position.ts` falls back to the calculated orbit when it
+     * is absent, which is what every unit anybody has never dragged does. So
+     * the map draws, the arrangement is read back as far as it can be, and the
+     * migration lands whenever a human gets to it. **A column added after this
+     * one joins the list below**, or this stops being a seatbelt.
+     */
+    if (!isMissingColumn(error)) throw error;
+    console.warn(
+      "[getOrbitalNodes] the database has no `distance` column yet — "
+      + "drawing the map without saved distances. Apply migration 0009.",
+    );
+    const rows = await db
+      .select({
+        id: orbitalNodes.id,
+        workspaceId: orbitalNodes.workspaceId,
+        boardId: orbitalNodes.boardId,
+        nodeType: orbitalNodes.nodeType,
+        nodeId: orbitalNodes.nodeId,
+        angle: orbitalNodes.angle,
+        parentId: orbitalNodes.parentId,
+        createdAt: orbitalNodes.createdAt,
+        updatedAt: orbitalNodes.updatedAt,
+      })
+      .from(orbitalNodes)
+      .where(mine);
+    return rows.map((row) => ({ ...row, distance: null }));
+  }
 }
 
 export async function getOrgUnit(id: string): Promise<OrgUnit | null> {

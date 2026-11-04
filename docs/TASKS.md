@@ -31,9 +31,9 @@ Status: `☐` open · `▶` in progress · `☑` done · `⏸` parked deliberate
 
 ---
 
-## 🔴 Blocking a release
+## 🟠 Waiting on Greg or Nate
 
-### ☐ Tell the database about the new column before anything goes live
+### ☐ Tell the database about the new column — *no longer takes the map down, 2026-11-04*
 
 The app keeps its data in a database, hosted by a company called Neon. When we
 add a new *kind* of information, the database has to be told about it first.
@@ -42,16 +42,26 @@ That instruction is called a **migration**.
 We added one: every node on the map can now remember **how far it sits from
 its parent**. The code that uses it is ready. The database has not been told.
 
-**If we release before telling it, the map page breaks** — anyone opening
-`/org` gets an error page instead of their company. The rest of the app keeps
-working; it is the map, not the whole site.
+**It used to be that releasing before telling it broke the map page** —
+anyone opening `/org` got an error page instead of their company. Greg asked
+for that fixed on 2026-11-04, and it is: the map now notices the column is
+missing and draws without it, so what you lose is the *memory of how far from
+its parent you dropped something*, not the page. See `isMissingColumn` and
+`getOrbitalNodes`.
+
+**It still needs doing.** Until it is run, anybody's careful arrangement is
+being half-read back on a map that cannot say so, and the console carries a
+warning nobody is watching. It is a minute of work; it just no longer has a
+release waiting behind it.
 
 The fix takes about a minute: paste one line into Neon's web console. It has
 to be Greg or Nate, because it touches the real customer database and that is
 never an agent's call.
 
 > **This has bitten us before.** In ROADMAP.md, migration `0005` went out in
-> the wrong order and took every page down, not just one.
+> the wrong order and took every page down, not just one. That is the class of
+> mistake the seatbelt is for — **it is not a licence to ship in that order**.
+> Migration first, code second, still.
 
 *For whoever picks it up:* `lib/db/migrations/0009_mute_longshot.sql` is on
 `next`, not on `main`; it arrived in `151810d`. `getOrbitalNodes` in
