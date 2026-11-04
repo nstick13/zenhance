@@ -81,6 +81,7 @@ This is a small repo, but `components/viz/orbital/OrbitalMap.tsx` alone is ~3,60
 - **The six engines** (layout · growth · work · signal · camera · basket), what each owns, and the import rule a test enforces: **[docs/ENGINES.md](docs/ENGINES.md)**. Read it before moving code between them or adding a file to `lib/map/`.
 - **Design sandboxes (feel studies) + archive convention:** [docs/LAB.md](docs/LAB.md).
 - **Customer feedback:** [docs/FEEDBACK.md](docs/FEEDBACK.md).
+- **Picking up cold, or coming back after a gap:** the newest `docs/HANDOVER-*.md` — what the last stretch of work was, what is waiting on a human, and what the next conversation is about. Current: [docs/HANDOVER-2026-11-04.md](docs/HANDOVER-2026-11-04.md) (hex aesthetics next).
 - **Durable facts** (running locally, gotchas) belong in `docs/`, where every agent can read them — not in any one agent's private memory. *Some still live only in Nate's Claude memory (`~/.claude/projects/-Users-natetgreat-zenhance/memory/`); Nate's agent should move them into `docs/`.*
 
 ## House rules
