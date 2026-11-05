@@ -136,6 +136,44 @@ const BEHIND_ALPHA = 0.18;
  */
 const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
+/**
+ * **The seed, and why it is a hexagon.** The first press on blank paper is the
+ * only thing on this page that is not a cell, and until now it was a circle —
+ * ported straight from the orbital grow study, where everything is round. On a
+ * lattice that reads as some other kind of object arriving. What it actually
+ * is is the first cell: the thing you are about to make, in the shape it will
+ * be the moment you press it.
+ *
+ * Flat-top, taken from the engine's own `cornersAt` rather than written out as
+ * a path, so the invitation cannot drift out of orientation if the lattice
+ * ever turns. `SEED_R` is a circumradius: it makes a hexagon about as tall as
+ * the 148px circle it replaced, which is a little wider, because a hexagon of
+ * the same width reads lighter than the circle round it.
+ */
+const SEED_R = 86;
+/**
+ * How far the breath pushes past the resting edge. The circle's pulse was a
+ * 16px `box-shadow` spread on a 74px radius — 1.22× — and the same ratio on a
+ * hexagon loses the reading at the flats, where the edge is nearest the
+ * middle, so this pushes a little further.
+ */
+const SEED_BEAT = 1.3;
+/** The square the hexagon and its breath are drawn in, centred on (0, 0). */
+const SEED_BOX = Math.ceil(2 * SEED_R * SEED_BEAT);
+const SEED_CORNERS = cornersAt({ x: 0, y: 0 }, SEED_R);
+/** The hexagon, in the drawing's own units. */
+const SEED_POINTS = SEED_CORNERS.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+/**
+ * The same hexagon as a `clip-path`, so **the hit area is the shape**. The
+ * breath needs room to grow into, which means the button's box is half again
+ * as big as the hexagon in it; a square button would take presses from blank
+ * paper well outside the invitation, and on this page that is a click doing
+ * something other than what it looks like it will.
+ */
+const SEED_CLIP = SEED_CORNERS
+  .map((c) => `${(50 + (100 * c.x) / SEED_BOX).toFixed(2)}% ${(50 + (100 * c.y) / SEED_BOX).toFixed(2)}%`)
+  .join(", ");
+
 
 /**
  * **How far the hand may drift and still be holding — in pixels of screen.**
@@ -3065,9 +3103,16 @@ export default function HexLab({
 
   return (
     <>
+      {/**
+        * The seed's breath. It was a `box-shadow` spread, which a browser
+        * always rounds off to the border radius — so the pulse round a
+        * hexagon would have been a circle whatever shape the button was.
+        * A hexagon growing out from behind the resting one says the same
+        * thing and says it in the map's own shape.
+        */}
       <style>{`@keyframes zen-breathe {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0.35); }
-        50% { box-shadow: 0 0 0 16px rgba(148,163,184,0); }
+        0%, 100% { transform: scale(1); opacity: 0.38; }
+        50% { transform: scale(${SEED_BEAT}); opacity: 0; }
       }`}</style>
       <canvas
         ref={canvasRef}
@@ -3085,21 +3130,57 @@ export default function HexLab({
         * create a **human** — not a company, not a value stream.
         */}
       {growing && born.length === 0 && (
-        <button
-          onClick={seedPerson}
+        <div
           style={{
             position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)",
-            zIndex: 20, width: 148, height: 148, borderRadius: "50%", cursor: "pointer",
-            border: "2px dashed #94a3b8", background: "#fff", color: "#0f172a",
-            fontFamily: "ui-sans-serif, system-ui", display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center", gap: 4,
-            animation: still ? undefined : "zen-breathe 2.6s ease-in-out infinite",
+            zIndex: 20, width: SEED_BOX, height: SEED_BOX,
+            // The box is only the room the breath needs. Everything in it that
+            // is not the hexagon has to let presses through to the canvas.
+            pointerEvents: "none",
           }}
         >
-          <span style={{ fontSize: 34, lineHeight: 1, fontWeight: 300 }}>+</span>
-          <span style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>Start here</span>
-          <span style={{ fontSize: 12, color: "#64748b" }}>Add the first person</span>
-        </button>
+          <svg
+            viewBox={`${-SEED_BOX / 2} ${-SEED_BOX / 2} ${SEED_BOX} ${SEED_BOX}`}
+            width={SEED_BOX}
+            height={SEED_BOX}
+            style={{ display: "block", overflow: "visible" }}
+            aria-hidden
+          >
+            {!still && (
+              <polygon
+                points={SEED_POINTS}
+                fill="rgba(148,163,184,0.38)"
+                style={{
+                  // The hexagon is centred on the drawing's origin, so the
+                  // breath grows about its own middle without a measurement.
+                  transformBox: "view-box", transformOrigin: "0 0",
+                  animation: "zen-breathe 2.6s ease-in-out infinite",
+                }}
+              />
+            )}
+            <polygon
+              points={SEED_POINTS}
+              fill="#ffffff"
+              stroke="#94a3b8"
+              strokeWidth={2}
+              strokeDasharray="7 6"
+            />
+          </svg>
+          <button
+            onClick={seedPerson}
+            style={{
+              position: "absolute", inset: 0, cursor: "pointer", pointerEvents: "auto",
+              clipPath: `polygon(${SEED_CLIP})`,
+              border: "none", padding: 0, background: "transparent", color: "#0f172a",
+              fontFamily: "ui-sans-serif, system-ui", display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center", gap: 4,
+            }}
+          >
+            <span style={{ fontSize: 34, lineHeight: 1, fontWeight: 300 }}>+</span>
+            <span style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>Start here</span>
+            <span style={{ fontSize: 12, color: "#64748b" }}>Add the first person</span>
+          </button>
+        </div>
       )}
 
       {/* The wizard. One question at a time, beside the node it is about. */}
