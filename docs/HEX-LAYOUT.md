@@ -37,6 +37,35 @@ about `/org` has changed.
 
 ---
 
+## Two words for the two kinds of hexagon (Greg, 2026-11-05)
+
+There are two sorts of hexagon on this map, and until now neither had a name,
+so every conversation about the look of it had to describe them again. Greg
+settled it:
+
+> *"From now on I'm going to refer to all human and node hexagons as **active**
+> hexagons, and their background/area delineations as **area** hexagons."*
+
+- **Active hexagons** are the things that are *there*: a person, a team, a
+  division, the company — plus anything drawn as part of one, such as the
+  coloured border behind it, the white hover bands, and the "Start here" seed
+  on blank paper, which is the shape of the person it is about to become.
+- **Area hexagons** are the room around them: the lattice itself, the clear
+  hexagon a team keeps, the ring round a group, the cell a dragged branch
+  would land on.
+
+It lines up with the rule Greg set on 2026-10-18 — **colour is for what is
+there, grey is for the room around it** — and that is the test when something
+is ambiguous. The territory wash is drawn at the full size of a cell, so by
+size alone it looks like an area hexagon; but it takes the colour of whoever
+stands on it, so it is **active**, and it is rounded with the node it sits
+behind. If it were grey it would be area.
+
+In the code the split is two path builders in `HexLab.tsx`: `nodePath` and
+`washPath` are active (both go through `roundedHex`), `hexPath` is area.
+
+---
+
 ## What Greg asked for
 
 > *"Let's shoot for a hexagon based layout. The base hexagon can be a team —
@@ -3701,6 +3730,83 @@ drag still carrying a whole branch.
 zoom, and pinch stays zoom"*, and the code holds the create gesture to a mouse
 by reading `pointerType`. There is no touchscreen on this machine, so that line
 is reasoned, not driven.
+
+---
+
+## The corners came off (2026-11-05)
+
+**Greg: *"let's make this whole thing a bit easier on the eye … round the
+edges of all hexagons to, say, 25% of the length of the vertex."* Colours left
+alone; active hexagons first, area hexagons explicitly not — those tile, and
+rounding a tile opens a gap at every seam, which is a different job.**
+
+One constant, `NODE_CORNER` in `HexLab.tsx`, and one builder, `roundedHex`.
+The useful thing about expressing it as a **fraction of an edge** is that a
+regular hexagon's side is exactly its circumradius, so the same number is a
+fraction of whatever radius a thing is drawn at. Nodes are graded by rung, so
+a fixed distance would have gone blunt on the small ones; a fraction keeps the
+corner the same share of the edge on a division and on a person.
+
+**The range is 0 to 0.866, and it is the whole dial between hexagon and
+circle.** It is the radius of the circle tucked into the corner, which meets
+each edge `r / tan(60°)` back from the point. At `0.866` the tangent points
+meet at the edge midpoints and the tile has become its own inscribed circle.
+Greg asked for `0.25`, looked at it, and took it to **`0.5`** — about 42% of
+every edge still dead straight.
+
+Drawn with `arcTo` from the edge *midpoints*: `arcTo` works out the tangents
+itself, so the straight part of each edge is whatever the rounding leaves
+rather than a number anybody guessed, and a midpoint is always far enough from
+the corner that the path cannot overshoot itself however small the node gets.
+The one place drawn in SVG rather than on canvas — the seed on blank paper —
+builds the same shape as a path string in `roundedHexD`, because a path `d`
+has no `arcTo`.
+
+**The coloured border was the second half, and it took a probe to identify.**
+Greg: *"the active hexagons have a border that is not currently rounded … a
+hexagon layer sitting behind the active hexagon."* Reading the code it could
+have been any of four layers; switching the territory wash off for one frame
+settled it in a minute. It is the wash — the whole cell, filled in the unit's
+own hue, fading out as you zoom in. It now has its own `washPath`, rounded.
+
+**What that means where cells touch.** The wash is cell-sized, so rounding it
+stops adjacent occupied cells meeting flush. In `teams` the spacer rule keeps
+cells apart and nothing changes; in `strata=people`, where 85% of people sit
+next to their family, neighbouring washes now meet at the edge midpoints and
+pinch at the corners. Looked at on Sparrow Jam: it reads as people beside each
+other rather than one merged blob, which is better, but it is a real change
+and somebody else may disagree.
+
+**The hover outline followed, and it is the interesting one.** Greg: *"when I
+hover, the on-hover outlines should also have a matching rounding to the
+corners."* The white bands on the focus, its siblings and children were
+already rounded — they ride on `nodePath`. The chunky dark one round the whole
+family was not, and it is the only active shape on the map that is **not a
+hexagon**: it is a boundary round a *set* of cells, so where a family's cells
+touch it wraps several of them and has corners that bite inward as well as
+corners that stick out.
+
+That took a stitcher, `boundaryLoops` in `app/lab/hex/loops.ts`. `outline`
+hands back the boundary as unordered segments, which is all a straight line
+needs — draw each one and the shape appears — but a rounded corner is a fact
+about *two* segments meeting, so the path has to know which comes next.
+Segments are matched end to end on a key quantised to a ten-thousandth of a
+cell: far finer than any gap the lattice has, far coarser than the error in a
+`cos`. It is its own module with its own test for the reason `hand.ts` is —
+there is a walk in it that could go wrong quietly, and a test can drive it
+where a canvas cannot. Seven tests, including that it does not hang on a
+boundary that cannot close.
+
+Drawing it needed nothing new: `roundedHex` became a special case of
+`roundedLoop`, which takes any closed loop. `arcTo` rounds whichever way the
+path turns, so the inward corners came for free and at the same weight.
+
+**Not done, and deliberately:** the area hexagons, and the three cell-sized
+layers that ride on an active hexagon during a gesture — the orange dashed
+halo on a node still waiting to be described, the dashed ring offering a
+branch back, and the cells a drag would land on. All three are still
+square-cornered, so an active hexagon mid-gesture is a rounded tile inside a
+sharp outline. Nobody has looked at whether that is right.
 
 ---
 

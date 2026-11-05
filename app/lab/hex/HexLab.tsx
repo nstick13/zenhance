@@ -26,6 +26,7 @@ import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layou
 import { holdActions } from "./questions";
 import { menuFor, type MenuAction } from "./menu";
 import { applyHand, settle } from "./hand";
+import { boundaryLoops } from "./loops";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -49,7 +50,7 @@ import {
 } from "@/lib/map/layout/hex/arrange";
 import {
   cellKey, cellToWorld, corners, cornersAt, hexDistance, neighbours, ring, worldToCell,
-  type Cell,
+  type Cell, type Point,
 } from "@/lib/map/layout/hex/coords";
 import {
   cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
@@ -137,6 +138,62 @@ const BEHIND_ALPHA = 0.18;
 const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
 /**
+ * **How much of a corner comes off a node's hexagon.** Greg asked for a
+ * quarter on 2026-11-05 — *"round the edges of all hexagons to, say, 25% of
+ * the length of the vertex"* — looked at it on the map and took it to **half**
+ * the same day. A regular hexagon's side is exactly its circumradius, so this
+ * is also a straight fraction of the radius each node is drawn at — which
+ * means the corner stays the same share of the edge at every rung, as the
+ * nodes change size by depth, instead of looking blunter the smaller a node
+ * gets.
+ *
+ * It is the radius of the circle tucked into the corner, and that circle
+ * meets each edge `r / tan(60°)` back from the point. **The useful range is
+ * 0 to 0.866**: at nothing it is the bare hexagon, at a half about 42% of
+ * every edge is still dead straight, and at 0.866 the tangent points meet at
+ * the edge midpoints and the tile has become its own inscribed circle. So
+ * this one number is the whole dial between hexagon and circle.
+ *
+ * **Nodes only, for now.** The lattice underneath — the cell a node stands
+ * in, the territory wash, a landing cell — is still square-cornered, because
+ * those hexagons *tile*, and rounding a tile opens a gap at every seam. Greg
+ * has that as a separate job needing a different approach.
+ */
+const NODE_CORNER = 0.5;
+
+/**
+ * The same rounded hexagon as a path string, for the one place that is drawn
+ * in SVG rather than on the canvas. The canvas uses `arcTo`, which takes the
+ * corner and the radius and works the tangents out itself; there is no such
+ * primitive in a path `d`, so the tangent points are worked out here. Both
+ * describe the same thing — a circle of radius `r` tucked into the corner,
+ * touching both edges — so the two renderings agree by construction.
+ */
+function roundedHexD(pts: Point[], radius: number): string {
+  const n = pts.length;
+  // Distance from the point back to where the circle meets the edge. The
+  // interior angle of a regular hexagon is 120°, so this is r / tan(60°).
+  const back = radius / Math.sqrt(3);
+  const along = (from: Point, to: Point, by: number): Point => {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: from.x + (dx / len) * by, y: from.y + (dy / len) * by };
+  };
+  const at = (i: number) => pts[(i + n) % n];
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const inTo = along(at(i), at(i - 1), back);  // where the arc starts
+    const outOf = along(at(i), at(i + 1), back); // where it leaves
+    parts.push(`${i === 0 ? "M" : "L"} ${inTo.x.toFixed(2)} ${inTo.y.toFixed(2)}`);
+    // Corners come off `cornersAt` anticlockwise in maths, which is clockwise
+    // on a screen whose y grows downward — hence the sweep flag.
+    parts.push(`A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 0 1 ${outOf.x.toFixed(2)} ${outOf.y.toFixed(2)}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+/**
  * **The seed, and why it is a hexagon.** The first press on blank paper is the
  * only thing on this page that is not a cell, and until now it was a circle —
  * ported straight from the orbital grow study, where everything is round. On a
@@ -161,8 +218,14 @@ const SEED_BEAT = 1.3;
 /** The square the hexagon and its breath are drawn in, centred on (0, 0). */
 const SEED_BOX = Math.ceil(2 * SEED_R * SEED_BEAT);
 const SEED_CORNERS = cornersAt({ x: 0, y: 0 }, SEED_R);
-/** The hexagon, in the drawing's own units. */
-const SEED_POINTS = SEED_CORNERS.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+/**
+ * The hexagon, in the drawing's own units — and rounded by the same
+ * `NODE_CORNER` as a node, because that is what it is about to become. Press
+ * it and the dashed seed turns into the person's own tile in the same place
+ * and nearly the same size; square corners here would make that a swap rather
+ * than the one thing becoming the other.
+ */
+const SEED_D = roundedHexD(SEED_CORNERS, SEED_R * NODE_CORNER);
 /**
  * The same hexagon as a `clip-path`, so **the hit area is the shape**. The
  * breath needs room to grow into, which means the button's box is half again
@@ -1743,16 +1806,61 @@ export default function HexLab({
      * except for a person, who is always the base size, because depth grades a
      * structure and a person is not one.
      */
-    const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
-      const pts = cornersAt(
-        cellToWorld(cell, hexSize),
-        hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink,
-      );
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < 6; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    /**
+     * **A hexagon with its corners rounded by `NODE_CORNER` of an edge** —
+     * the shape of everything *active*, whatever size it is drawn at.
+     *
+     * Walking the edge *midpoints* and letting `arcTo` cut each corner is
+     * what keeps this honest: `arcTo` runs a line to where the corner's
+     * circle first touches the edge and then the arc, so the straight part of
+     * every edge is whatever the rounding leaves, never guessed. A midpoint is
+     * always at least the tangent distance from the corner while the radius
+     * stays under `0.866` of an edge, so the path cannot overshoot itself
+     * however small the thing is drawn.
+     */
+    const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+    /**
+     * The corner-rounding, for any closed loop of points rather than only a
+     * hexagon — which is what the hover outline round a family needs, since
+     * that follows cell edges and can turn either way.
+     *
+     * `arcTo` rounds whichever way the path turns, so a corner that bites into
+     * a region gets the same treatment as one that sticks out, and the two
+     * stay the same weight. `addToPath` is for a loop that is one of several
+     * in a single stroke.
+     */
+    const roundedLoop = (pts: Point[], r: number, addToPath = false) => {
+      const n = pts.length;
+      if (!addToPath) ctx.beginPath();
+      const start = mid(pts[n - 1], pts[0]);
+      ctx.moveTo(start.x, start.y);
+      for (let i = 0; i < n; i++) {
+        const next = mid(pts[i], pts[(i + 1) % n]);
+        ctx.arcTo(pts[i].x, pts[i].y, next.x, next.y, r);
+      }
       ctx.closePath();
     };
+
+    const roundedHex = (centre: Point, radius: number) => {
+      roundedLoop(cornersAt(centre, radius), radius * NODE_CORNER);
+    };
+
+    const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
+      const radius = hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink;
+      roundedHex(cellToWorld(cell, hexSize), radius);
+    };
+
+    /**
+     * **The active hexagon's border**, which is the whole cell in the unit's
+     * own colour. Greg, 2026-11-05: *"this border, which is a hexagon layer
+     * sitting behind the active hexagon, should also be rounded"* — and it is
+     * not an **area** hexagon, however it is sized: an area hexagon is grey
+     * ground, this one takes the colour of whoever stands on it, so it reads
+     * as part of the thing rather than the room around it. Same shape as the
+     * node it sits behind, therefore, at the full size of the cell.
+     */
+    const washPath = (cell: Cell) => roundedHex(cellToWorld(cell, hexSize), hexSize);
 
     // 1. The bubbles. Greg, 2026-10-16: *"concentric toruses comprised of shaded
     //    hexagon zones offset from master-center"*, and *"a bubble is taken as
@@ -1875,7 +1983,7 @@ export default function HexLab({
         for (const unit of visible) {
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
-          hexPath(cell);
+          washPath(cell);
           ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, wash);
           ctx.fill();
         }
@@ -2124,10 +2232,18 @@ export default function HexLab({
       const family = hoverGroup(tree, focusId);
       const cells = [...family].map((id) => hexScene.hex.cells.get(id)).filter(Boolean) as Cell[];
       if (cells.length) {
+        /**
+         * **Rounded to match everything else active** (Greg, 2026-11-05). This
+         * is the one active outline that is not a hexagon: where a family's
+         * cells touch it wraps several of them, so it has corners that bite
+         * inward as well as corners that stick out. Hence the stitching —
+         * `outline` gives edges, and rounding needs to know which edge comes
+         * next. The radius is the same fraction of an edge as a node's, and a
+         * cell edge is `hexSize`.
+         */
         ctx.beginPath();
-        for (const seg of outline(cells, hexSize)) {
-          ctx.moveTo(seg.from.x, seg.from.y);
-          ctx.lineTo(seg.to.x, seg.to.y);
+        for (const loop of boundaryLoops(outline(cells, hexSize), hexSize)) {
+          roundedLoop(loop, hexSize * NODE_CORNER, true);
         }
         ctx.lineWidth = Math.max(1.5, 5 / scale);
         ctx.lineCap = "round";
@@ -3147,8 +3263,8 @@ export default function HexLab({
             aria-hidden
           >
             {!still && (
-              <polygon
-                points={SEED_POINTS}
+              <path
+                d={SEED_D}
                 fill="rgba(148,163,184,0.38)"
                 style={{
                   // The hexagon is centred on the drawing's origin, so the
@@ -3158,8 +3274,8 @@ export default function HexLab({
                 }}
               />
             )}
-            <polygon
-              points={SEED_POINTS}
+            <path
+              d={SEED_D}
               fill="#ffffff"
               stroke="#94a3b8"
               strokeWidth={2}
