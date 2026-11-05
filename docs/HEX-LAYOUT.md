@@ -3801,12 +3801,61 @@ Drawing it needed nothing new: `roundedHex` became a special case of
 `roundedLoop`, which takes any closed loop. `arcTo` rounds whichever way the
 path turns, so the inward corners came for free and at the same weight.
 
-**Not done, and deliberately:** the area hexagons, and the three cell-sized
-layers that ride on an active hexagon during a gesture — the orange dashed
-halo on a node still waiting to be described, the dashed ring offering a
-branch back, and the cells a drag would land on. All three are still
-square-cornered, so an active hexagon mid-gesture is a rounded tile inside a
-sharp outline. Nobody has looked at whether that is right.
+## The area hexagons, rounded as one shape (2026-11-05, later)
+
+**Greg: *"where an area tile joins another, we get a concave angle between the
+two touching hexagons … we need that to appear rounded, rather than it to
+'buttock'/cleave as the two rounded hexagons touch."*** And his guess about
+how they were drawn was right: every area on this map is a set of cells pushed
+into a `Path2D` as individual sharp hexagons, with the seams disappearing
+because the fill covers them.
+
+**So nothing here rounds a tile.** Round those hexagons individually and the
+seams stop disappearing: each pair of neighbours meets at two cusps and an
+area turns into a run of beads, which is the cleaving Greg named. The rounding
+goes on the **boundary of the union** instead — the edges with nothing of the
+area's own on the other side. `roundedUnion(cells, size)` is the whole of it:
+`outline` → `boundaryLoops` → `traceRounded`, the same three steps the hover
+outline already used, which is why this was a small change rather than a
+geometry project.
+
+Convex corners round outward, the reflex ones where two tiles meet round
+inward, and the shape reads as one piece of ground with soft edges — which is
+what an area was always pretending to be. A concave fillet *fills the notch*,
+so an area gains a little at its waists and loses a little at its points.
+
+Four layers went through it: the bubbles, the group's ground, every team's
+clear hexagon, and the line round each team.
+
+**Two things fell out of it.**
+
+*The silhouette and the ground are now the same path.* `groupZones` hands back
+`walls` — the boundary of the very set it also hands back as cells — so the
+line round a group is drawn by stroking the shape that was filled. One path,
+and the line and the ground it draws *cannot* disagree, which is what asking
+`groupFor` for both was for in the first place.
+
+*The fills are `evenodd` now.* An area with a hole in it — a team's collar of
+clear ground — comes back as two rings, and the inner one has to punch the
+middle out rather than fill it in. Unioned sharp hexagons never needed a fill
+rule; boundary loops do.
+
+`boundaryLoops` also learnt to say whether a run **closed**. Every caller today
+hands it a complete boundary, so every loop comes back closed — but a caller
+that filtered its segments would get an open run, and closing that would draw a
+line straight across the gap that nothing asked for. Said out loud now rather
+than left to come true quietly later.
+
+**Not done, and deliberately:** the three cell-sized layers that ride on an
+active hexagon during a gesture — the orange dashed halo on a node still
+waiting to be described, the dashed ring offering a branch back, and the cells
+a drag would land on. All three are still square-cornered, so an active
+hexagon mid-gesture is a rounded tile inside a sharp outline. Nobody has
+looked at whether that is right.
+
+---
+
+
 
 ---
 

@@ -16,9 +16,21 @@ import type { Point } from "@/lib/map/layout/hex/coords";
 export type Segment = { from: Point; to: Point };
 
 /**
- * Closed loops, each a list of corner points in the order the boundary visits
- * them. Loops of fewer than three points are dropped: there is no corner to
- * round on one, and nothing to draw.
+ * A run of boundary corners in the order the boundary visits them.
+ *
+ * `closed` is not decoration. A complete boundary comes back closed and wants
+ * `closePath`; a *partial* one — a caller that filtered its segments, say —
+ * comes back open, and closing it would draw a line straight across the gap
+ * that nothing in the data asked for. Every caller today passes a complete
+ * boundary, which is precisely why the open case needs saying out loud rather
+ * than being left to come true quietly later.
+ */
+export type Loop = { points: Point[]; closed: boolean };
+
+/**
+ * The loops a set of boundary segments describes, each a list of corner points
+ * in the order the boundary visits them. Runs of fewer than three points are
+ * dropped: there is no corner to round on one, and nothing to draw.
  *
  * Every segment is a whole cell edge, so two that meet share a corner point
  * exactly, give or take the floating-point error in a `cos`/`sin`. Quantising
@@ -29,7 +41,7 @@ export type Segment = { from: Point; to: Point };
  * touch at a single point it has four, and then either pairing draws the same
  * ink, so this takes whichever is unused and carries on.
  */
-export function boundaryLoops(segments: readonly Segment[], size: number): Point[][] {
+export function boundaryLoops(segments: readonly Segment[], size: number): Loop[] {
   if (!segments.length) return [];
   const eps = size * 1e-4;
   const key = (p: Point) => `${Math.round(p.x / eps)},${Math.round(p.y / eps)}`;
@@ -42,25 +54,28 @@ export function boundaryLoops(segments: readonly Segment[], size: number): Point
     }
   });
   const used: boolean[] = new Array(segments.length).fill(false);
-  const loops: Point[][] = [];
+  const loops: Loop[] = [];
   for (let start = 0; start < segments.length; start++) {
     if (used[start]) continue;
-    const loop: Point[] = [];
+    const points: Point[] = [];
     let current = start;
     let here = segments[start].from;
+    let closed = false;
     // Guarded against a malformed boundary rather than trusted: a walk that
     // cannot close would otherwise spin for as long as the hover lasts.
     for (let step = 0; step <= segments.length; step++) {
       used[current] = true;
-      loop.push(here);
+      points.push(here);
       const seg = segments[current];
       const there = key(here) === key(seg.from) ? seg.to : seg.from;
+      // Back where it started, with the ring complete.
+      if (key(there) === key(points[0])) { closed = true; break; }
       const next = (at.get(key(there)) ?? []).find((i) => !used[i]);
-      if (next === undefined) break;
+      if (next === undefined) { points.push(there); break; }
       current = next;
       here = there;
     }
-    if (loop.length >= 3) loops.push(loop);
+    if (points.length >= 3) loops.push({ points, closed });
   }
   return loops;
 }

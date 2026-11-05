@@ -26,7 +26,7 @@ import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layou
 import { holdActions } from "./questions";
 import { menuFor, type MenuAction } from "./menu";
 import { applyHand, settle } from "./hand";
-import { boundaryLoops } from "./loops";
+import { boundaryLoops, type Loop } from "./loops";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -160,6 +160,80 @@ const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
  * has that as a separate job needing a different approach.
  */
 const NODE_CORNER = 0.5;
+
+/**
+ * **Corner-rounding, written once for both things that take a path.**
+ *
+ * `CanvasPath` is the slice of the drawing API that a `Path2D` and a canvas
+ * context both implement, so an area's shape can be *built* into a reusable
+ * `Path2D` once and a hover outline *drawn* straight onto the context, with
+ * one piece of geometry between them.
+ *
+ * Walking the edge **midpoints** and letting `arcTo` cut each corner is what
+ * keeps it honest: `arcTo` runs a line to where the corner's circle first
+ * touches the edge and then the arc, so the straight part of every edge is
+ * whatever the rounding leaves rather than a number anybody guessed. A
+ * midpoint is always at least the tangent distance from the corner while the
+ * radius stays under `0.866` of an edge, so the path cannot overshoot itself.
+ *
+ * It rounds whichever way the path turns, which is the whole point for an
+ * area: a corner that bites *into* a shape gets the same treatment as one that
+ * sticks out.
+ */
+function traceRounded(path: CanvasPath, loop: Loop, r: number) {
+  const pts = loop.points;
+  const n = pts.length;
+  const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  if (!loop.closed) {
+    // An open run keeps its ends where they are and rounds only what is
+    // actually a corner — closing it would invent an edge.
+    path.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < n - 1; i++) path.arcTo(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, r);
+    path.lineTo(pts[n - 1].x, pts[n - 1].y);
+    return;
+  }
+  const start = mid(pts[n - 1], pts[0]);
+  path.moveTo(start.x, start.y);
+  for (let i = 0; i < n; i++) {
+    const next = mid(pts[i], pts[(i + 1) % n]);
+    path.arcTo(pts[i].x, pts[i].y, next.x, next.y, r);
+  }
+  path.closePath();
+}
+
+/**
+ * **An area as one rounded shape, not as rounded tiles.**
+ *
+ * Greg, 2026-11-05, on the area hexagons: *"where an area tile joins another,
+ * we get a concave angle between the two touching hexagons … we need that to
+ * appear rounded, rather than it to cleave as the two rounded hexagons
+ * touch."*
+ *
+ * Which is why nothing here rounds a tile. Every area on this map is a *set*
+ * of cells that the browser has been unioning for us — each one drawn as a
+ * sharp hexagon into a `Path2D`, with the seams disappearing because the fill
+ * covers them. Round those hexagons individually and the seams stop
+ * disappearing: each pair of neighbours meets at two cusps, and an area turns
+ * into a run of beads.
+ *
+ * So the rounding is applied to the **boundary of the union** instead — the
+ * edges with nothing of the area's own on the other side. Convex corners round
+ * outward, the reflex ones where two tiles meet round inward, and the shape
+ * reads as one piece of ground with soft edges, which is what an area was
+ * always pretending to be.
+ *
+ * `evenodd`, wherever this is filled: an area with a hole in it — a team's
+ * collar of clear ground, say — comes back as two rings, and the inner one has
+ * to punch the middle out rather than fill it in.
+ */
+function roundedUnion(cells: readonly Cell[], size: number): Path2D | null {
+  if (typeof Path2D === "undefined" || !cells.length) return null;
+  const path = new Path2D();
+  for (const loop of boundaryLoops(outline(cells, size), size)) {
+    traceRounded(path, loop, size * NODE_CORNER);
+  }
+  return path;
+}
 
 /**
  * The same rounded hexagon as a path string, for the one place that is drawn
@@ -1047,7 +1121,9 @@ export default function HexLab({
     return [...byTeam].map(([teamId, cells]) => ({
       teamId,
       cells,
-      segments: outline(cells, hexScene.hex.size),
+      // Rounded like everything else, and built here rather than in the paint
+      // loop: on the largest company this is hundreds of teams.
+      path: roundedUnion(cells, hexScene.hex.size),
     }));
   }, [groups, hexScene]);
 
@@ -1097,14 +1173,15 @@ export default function HexLab({
       tree, cells: hexScene.hex.cells, people: peopleIds, size: hexScene.hex.size,
     });
     if (!zone.cells.length) return null;
-    const fill = new Path2D();
-    for (const cell of zone.cells) {
-      const pts = corners(cell, hexScene.hex.size);
-      fill.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < 6; i++) fill.lineTo(pts[i].x, pts[i].y);
-      fill.closePath();
-    }
-    return { fill, walls: zone.walls };
+    /**
+     * One rounded shape for both the ground and the line round it. The walls
+     * `groupZones` hands back are the boundary of this very set, so stroking
+     * the shape that was filled is the same ink by a shorter route — and the
+     * line and the ground it draws *cannot* disagree, which was the point of
+     * asking `groupFor` for both in the first place.
+     */
+    const fill = roundedUnion(zone.cells, hexScene.hex.size);
+    return fill ? { fill } : null;
   }, [hexScene, tree, peopleIds]);
 
   const teamSpacers = useMemo(() => {
@@ -1113,20 +1190,19 @@ export default function HexLab({
     const size = hexScene.hex.size;
     const taken = new Set<string>();
     for (const cell of hexScene.hex.cells.values()) taken.add(cellKey(cell));
-    const path = new Path2D();
     const drawn = new Set<string>();
+    const spacer: Cell[] = [];
     for (const team of teamOutlines) {
       for (const cell of grow(team.cells)) {
         const key = cellKey(cell);
         if (taken.has(key) || drawn.has(key)) continue;
         drawn.add(key);
-        const pts = corners(cell, size);
-        path.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < 6; i++) path.lineTo(pts[i].x, pts[i].y);
-        path.closePath();
+        spacer.push(cell);
       }
     }
-    return path;
+    // Every team's collar in one set, so two teams whose clear ground touches
+    // round as the single shape they already looked like.
+    return roundedUnion(spacer, size);
   }, [hexScene, teamOutlines]);
   /**
    * **The bubbles** (Greg, 2026-10-16, requirements 4 and 6).
@@ -1152,13 +1228,7 @@ export default function HexLab({
       tree, cells: allocation.cells, tier: allocation.tier, size,
       occupants: allocation.occupants,
     }).map((bubble) => {
-      const fill = new Path2D();
-      for (const cell of bubble.cells) {
-        const pts = corners(cell, size);
-        fill.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < 6; i++) fill.lineTo(pts[i].x, pts[i].y);
-        fill.closePath();
-      }
+      const fill = roundedUnion(bubble.cells, size);
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (const seg of bubble.edge) {
         minX = Math.min(minX, seg.from.x, seg.to.x);
@@ -1167,7 +1237,7 @@ export default function HexLab({
         maxY = Math.max(maxY, seg.from.y, seg.to.y);
       }
       return { ...bubble, fill, box: { minX, maxX, minY, maxY } };
-    });
+    }).filter((b): b is typeof b & { fill: Path2D } => b.fill !== null);
   }, [hexScene, allocation, tree]);
 
   const regionOrder = useMemo(() => {
@@ -1818,32 +1888,9 @@ export default function HexLab({
      * stays under `0.866` of an edge, so the path cannot overshoot itself
      * however small the thing is drawn.
      */
-    const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-
-    /**
-     * The corner-rounding, for any closed loop of points rather than only a
-     * hexagon — which is what the hover outline round a family needs, since
-     * that follows cell edges and can turn either way.
-     *
-     * `arcTo` rounds whichever way the path turns, so a corner that bites into
-     * a region gets the same treatment as one that sticks out, and the two
-     * stay the same weight. `addToPath` is for a loop that is one of several
-     * in a single stroke.
-     */
-    const roundedLoop = (pts: Point[], r: number, addToPath = false) => {
-      const n = pts.length;
-      if (!addToPath) ctx.beginPath();
-      const start = mid(pts[n - 1], pts[0]);
-      ctx.moveTo(start.x, start.y);
-      for (let i = 0; i < n; i++) {
-        const next = mid(pts[i], pts[(i + 1) % n]);
-        ctx.arcTo(pts[i].x, pts[i].y, next.x, next.y, r);
-      }
-      ctx.closePath();
-    };
-
     const roundedHex = (centre: Point, radius: number) => {
-      roundedLoop(cornersAt(centre, radius), radius * NODE_CORNER);
+      ctx.beginPath();
+      traceRounded(ctx, { points: cornersAt(centre, radius), closed: true }, radius * NODE_CORNER);
     };
 
     const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
@@ -1905,7 +1952,7 @@ export default function HexLab({
 
         const hue = hueFor(bubble.unitId);
         ctx.fillStyle = css(hue, bubble.depth, maxDepth, 0.05 * weight);
-        ctx.fill(bubble.fill);
+        ctx.fill(bubble.fill, "evenodd");
 
         /**
          * **No line round a region** (Greg, 2026-10-16): *"there are borders
@@ -1939,7 +1986,7 @@ export default function HexLab({
      */
     if (groupRings) {
       ctx.fillStyle = "#f7f8fa";
-      ctx.fill(groupRings.fill);
+      ctx.fill(groupRings.fill, "evenodd");
     }
     if (teamSpacers) {
       /**
@@ -1951,7 +1998,7 @@ export default function HexLab({
        * **colour is for what is there, grey is for the room around it.**
        */
       ctx.fillStyle = "#e8eaee";
-      ctx.fill(teamSpacers);
+      ctx.fill(teamSpacers, "evenodd");
     }
     /**
      * **The silhouette of the whole, and nothing inside it.**
@@ -1965,12 +2012,7 @@ export default function HexLab({
     if (groupRings) {
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
-      ctx.beginPath();
-      for (const seg of groupRings.walls) {
-        ctx.moveTo(seg.from.x, seg.from.y);
-        ctx.lineTo(seg.to.x, seg.to.y);
-      }
-      ctx.stroke();
+      ctx.stroke(groupRings.fill);
     }
 
     // 1a. The territory, as a faint wash over the whole cell. It is what makes
@@ -2087,14 +2129,7 @@ export default function HexLab({
     if (teamOutlines.length > 0) {
       ctx.lineWidth = Math.max(0.7, 2.2 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.30)";
-      ctx.beginPath();
-      for (const team of teamOutlines) {
-        for (const seg of team.segments) {
-          ctx.moveTo(seg.from.x, seg.from.y);
-          ctx.lineTo(seg.to.x, seg.to.y);
-        }
-      }
-      ctx.stroke();
+      for (const team of teamOutlines) if (team.path) ctx.stroke(team.path);
     }
 
     // 3. Where a dragged branch would land. Greg: *"make the nearest hexagon
@@ -2243,7 +2278,7 @@ export default function HexLab({
          */
         ctx.beginPath();
         for (const loop of boundaryLoops(outline(cells, hexSize), hexSize)) {
-          roundedLoop(loop, hexSize * NODE_CORNER, true);
+          traceRounded(ctx, loop, hexSize * NODE_CORNER);
         }
         ctx.lineWidth = Math.max(1.5, 5 / scale);
         ctx.lineCap = "round";

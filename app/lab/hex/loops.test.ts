@@ -15,8 +15,8 @@ const SIZE = 40;
 const origin: Cell = { q: 0, r: 0 };
 
 /** Each loop's points, rounded so two that should be equal compare equal. */
-const keyed = (loops: { x: number; y: number }[][]) =>
-  loops.map((loop) => loop.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`));
+const keyed = (loops: { points: { x: number; y: number }[] }[]) =>
+  loops.map((loop) => loop.points.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`));
 
 describe("boundaryLoops", () => {
   it("gives nothing back for no segments", () => {
@@ -26,7 +26,8 @@ describe("boundaryLoops", () => {
   it("turns one cell into one six-cornered loop", () => {
     const loops = boundaryLoops(outline([origin], SIZE), SIZE);
     expect(loops).toHaveLength(1);
-    expect(loops[0]).toHaveLength(6);
+    expect(loops[0].points).toHaveLength(6);
+    expect(loops[0].closed).toBe(true);
   });
 
   it("wraps two touching cells in a single loop, shared edge left out", () => {
@@ -36,21 +37,23 @@ describe("boundaryLoops", () => {
     expect(loops).toHaveLength(1);
     // Twelve edges less the two that face each other.
     expect(segments).toHaveLength(10);
-    expect(loops[0]).toHaveLength(10);
+    expect(loops[0].points).toHaveLength(10);
+    expect(loops[0].closed).toBe(true);
   });
 
   it("keeps cells that do not touch in loops of their own", () => {
     const far: Cell = { q: 5, r: -2 };
     const loops = boundaryLoops(outline([origin, far], SIZE), SIZE);
     expect(loops).toHaveLength(2);
-    expect(loops.map((l) => l.length)).toEqual([6, 6]);
+    expect(loops.map((l) => l.points.length)).toEqual([6, 6]);
+    expect(loops.every((l) => l.closed)).toBe(true);
   });
 
   it("uses every segment exactly once", () => {
     const cells = [origin, ...neighbours(origin)];
     const segments = outline(cells, SIZE);
     const loops = boundaryLoops(segments, SIZE);
-    const points = loops.flat();
+    const points = loops.flatMap((l) => l.points);
     expect(points).toHaveLength(segments.length);
     // A boundary visits each of its corners once, so no point repeats.
     expect(new Set(keyed(loops).flat()).size).toBe(points.length);
@@ -63,6 +66,9 @@ describe("boundaryLoops", () => {
     const inside = new Set(ring.map(cellKey));
     expect(inside.has(cellKey(origin))).toBe(false);
     expect(loops.length).toBeGreaterThanOrEqual(2);
+    // Both the coastline and the shore of the hole are rings in their own
+    // right, which is what lets an `evenodd` fill punch the middle out.
+    expect(loops.every((l) => l.closed)).toBe(true);
   });
 
   it("does not hang on a boundary that cannot close", () => {
@@ -71,5 +77,7 @@ describe("boundaryLoops", () => {
     // back, which is the point: the walk has to give up rather than spin.
     const loops = boundaryLoops([a, { from: b.from, to: { x: 9e9, y: 9e9 } }], SIZE);
     expect(Array.isArray(loops)).toBe(true);
+    // And says so, so nothing draws a line across the gap to close it.
+    expect(loops.every((l) => l.closed)).toBe(false);
   });
 });
