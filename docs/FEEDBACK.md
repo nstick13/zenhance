@@ -2,7 +2,7 @@
 
 What prospects and testers say, relayed by Greg and Nate. Read this before building against a guess.
 
-**Last asked:** 2026-10-30
+**Last asked:** 2026-11-06
 
 *Every 48 hours, whichever agent is in session asks the person it's working with for new feedback, logs it below, and updates the date above. Agents have no clock between sessions, so this date is the timer — see `AGENTS.md`.*
 
@@ -16,6 +16,7 @@ What prospects and testers say, relayed by Greg and Nate. Read this before build
 
 | Date | Source | What was said | Written up |
 |---|---|---|---|
+| 2026-11-06 | Greg | Nothing new since 2026-10-30 — no prospect or tester feedback. | — |
 | 2026-10-30 | Greg | No new feedback from Nate, and none from prospects or testers. | — |
 | 2026-10-19 | Greg | No new prospect or tester feedback yet. | — |
 | 2026-09-19 | Greg | No new prospect or tester feedback since the last check. | — |
