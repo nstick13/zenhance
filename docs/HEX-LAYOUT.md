@@ -4047,6 +4047,63 @@ is drawn `activeInset` *inside* its cell — so a 2.2px line sits in the gap and
 nothing covers it. The ordering is right for when that stops being true: a
 heavier line, or a smaller gap, and the tiles win where they cross it.
 
+**And then it stood clear of its own cells (same day, later still).** Greg:
+*"that outline — and by definition the fill within it — needs to be offset
+outwards a little."* Half a radius was tried, looked at, and taken down to a
+quarter the same day. `TEAM_SPREAD = 0.25`, in cell radii, and it eats into
+the collar of clear hexagons rather than anyone else's ground, because the
+collar is a whole cell wide. The ground stops being a tracing of the team's
+tiles and becomes something the team sits inside.
+
+`pushOut` does it, in `loops.ts` beside the stitcher and tested for the same
+reason: every vertex moves along the bisector of its two edges by the *miter*
+distance, `d · (n₁ + n₂) / (1 + n₁·n₂)` — `d` on a straight run and `1.155 d`
+at a 60° turn, so both offset edges land exactly `d` out and still meet.
+
+**Which way is out is derived, not guessed.** `outline` emits each cell edge as
+`corner[i] → corner[i+1]` and the corners are generated at rising angles, so
+the material always lies to the **left** of travel; out is the right-hand
+normal, `(dy, −dx)`. Because that convention is the same on every loop, a
+hole's boundary travels the other way round and the same sign *shrinks* it —
+which is what a hole does when a shape grows, and is a test.
+
+**One thing the tests corrected.** The first version of the edge test asserted
+that an edge's midpoint moves to the offset edge's midpoint. It does not: an
+edge grows at a convex end and is eaten at a reflex one, so it **slides along
+itself** as well as moving out — by `d/√3` on a domino. The property worth
+holding is that both ends of the offset edge sit `d` off the original's line,
+which says parallel *and* exactly that far, and that is what it checks now.
+
+**The corners travel with it.** Greg: *"if the current corner rounding radius
+is equal to half a hexagon radius, then if we offset the line by +0.25 hexagon
+radii, the new convex corner radius should be 3/4 hexagon radius. Concave
+radii should remain unchanged."* Which is what a shape *does* when it is
+pushed out: a corner that sticks out is swept round a circle that much bigger,
+because every point on it has moved `outward` further from the same centre. A
+notch does the opposite by the same arithmetic — its radius would shrink — and
+Greg's call is to leave those alone, so a team keeps the same soft bite
+between its tiles however far its ground stands off them.
+
+So `traceRounded` takes two radii now, one for corners that stick out and one
+for the notches, and `roundedUnion` hands it `corner + outward` and `corner`.
+Nothing that was already drawn changes: the second radius defaults to the
+first, so every caller that wants one radius gets exactly what it had.
+
+**Which corner is which is a cross product**, and it was checked rather than
+reasoned at: the material lies to the left of travel, so a corner that sticks
+out turns toward it. Measured on three shapes — one cell gives 6 convex and 0
+reflex, a domino gives 8 and 2 (the two where the cells meet), and the loop
+round a one-cell hole gives 0 and 6, which is right: seen from the material,
+every corner of a hole is a notch, so a hole keeps the unchanged radius.
+
+**`traceRounded` learnt to clamp**, which the offset forced. Walking midpoints
+gives each corner half of each neighbouring edge, and the tangent point sits
+`r / tan(θ/2)` back — so a corner can afford `half-edge · tan(θ/2)`, the
+documented `0.866` of an edge. On a plain lattice shape that never binds, which
+is why it was never needed; pushing a boundary outward shortens the edges
+inside a notch, and an unclamped radius would have folded the path back on
+itself. Nothing that was drawn before this changes.
+
 **Checked** on Sparrow Jam, Digital Tailoring and the 1,000-person company, at
 fit and at four zooms in. **Only the people strata shows it**: with no people
 there are no teams to group, so `teamTints` is empty and the teams view is

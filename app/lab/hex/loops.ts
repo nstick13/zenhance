@@ -28,6 +28,45 @@ export type Segment = { from: Point; to: Point };
 export type Loop = { points: Point[]; closed: boolean };
 
 /**
+ * **The same boundary, standing `d` further out.**
+ *
+ * Every vertex moves along the bisector of its two edges by the *miter*
+ * distance — `d · (n₁ + n₂) / (1 + n₁·n₂)`, which is `d` for a straight run
+ * and `1.155 d` at a 60° turn, so both offset edges land exactly `d` from the
+ * originals and still meet.
+ *
+ * **Which way is out** is not a guess: `outline` emits each cell edge as
+ * `corner[i] → corner[i+1]`, and the corners are generated at rising angles,
+ * so the material always lies to the **left** of travel. Out is therefore the
+ * right-hand normal, `(dy, −dx)`, for every loop — and because the convention
+ * is the same on every loop, a hole's boundary travels the other way round and
+ * the same sign shrinks it, which is what a hole does when a shape grows.
+ *
+ * A hex boundary only ever turns ±60°, so the denominator is 1.5 and nothing
+ * can blow up; the guard is for a loop that doubles back, which `outline`
+ * cannot produce but a future caller might.
+ */
+export function pushOut(loop: Loop, d: number): Loop {
+  if (!loop.closed) return loop;
+  const pts = loop.points;
+  const n = pts.length;
+  const normal = (a: Point, b: Point) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: dy / len, y: -dx / len };
+  };
+  const points: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    const n1 = normal(pts[(i - 1 + n) % n], pts[i]);
+    const n2 = normal(pts[i], pts[(i + 1) % n]);
+    const k = 1 + n1.x * n2.x + n1.y * n2.y;
+    if (k < 0.2) { points.push(pts[i]); continue; }
+    points.push({ x: pts[i].x + (d * (n1.x + n2.x)) / k, y: pts[i].y + (d * (n1.y + n2.y)) / k });
+  }
+  return { points, closed: true };
+}
+
+/**
  * The loops a set of boundary segments describes, each a list of corner points
  * in the order the boundary visits them. Runs of fewer than three points are
  * dropped: there is no corner to round on one, and nothing to draw.

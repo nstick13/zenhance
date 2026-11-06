@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { outline } from "@/lib/map/layout/hex/arrange";
 import { cellKey, neighbours, type Cell } from "@/lib/map/layout/hex/coords";
-import { boundaryLoops } from "./loops";
+import { boundaryLoops, pushOut } from "./loops";
 
 const SIZE = 40;
 const origin: Cell = { q: 0, r: 0 };
@@ -79,5 +79,62 @@ describe("boundaryLoops", () => {
     expect(Array.isArray(loops)).toBe(true);
     // And says so, so nothing draws a line across the gap to close it.
     expect(loops.every((l) => l.closed)).toBe(false);
+  });
+});
+
+describe("pushOut", () => {
+  const d = SIZE / 2;
+  /** A regular hexagon's apothem grows by exactly `d`, so its circumradius
+   *  grows by `2d / √3` — the one number that pins the whole offset. */
+  const grown = SIZE + (2 * d) / Math.sqrt(3);
+
+  it("grows one cell into a bigger hexagon, concentric with it", () => {
+    const [loop] = boundaryLoops(outline([origin], SIZE), SIZE);
+    const out = pushOut(loop, d);
+    expect(out.points).toHaveLength(6);
+    for (const p of out.points) expect(Math.hypot(p.x, p.y)).toBeCloseTo(grown, 6);
+  });
+
+  it("moves every edge exactly d along its own outward normal", () => {
+    // A domino, so the walk meets reflex corners as well as convex ones: at a
+    // notch the edge still moves d outward, it is the corners that travel
+    // further to keep the two offset edges meeting.
+    const [loop] = boundaryLoops(outline([origin, neighbours(origin)[0]], SIZE), SIZE);
+    const out = pushOut(loop, d);
+    expect(out.points).toHaveLength(loop.points.length);
+    for (let i = 0; i < loop.points.length; i++) {
+      const a = loop.points[i], b = loop.points[(i + 1) % loop.points.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      // `outline` walks each cell's corners in rising angle, which puts the
+      // material on the left of travel — so out is the right-hand normal.
+      const nx = (b.y - a.y) / len, ny = -(b.x - a.x) / len;
+      // Both ends of the offset edge sit `d` off the original's line, which
+      // says the edge is parallel to it and exactly that far out. Where along
+      // the line they land is not fixed and should not be: an edge grows at a
+      // convex end and is eaten at a reflex one, so it slides as well as moves.
+      const off = (p: { x: number; y: number }) => (p.x - a.x) * nx + (p.y - a.y) * ny;
+      expect(off(out.points[i])).toBeCloseTo(d, 6);
+      expect(off(out.points[(i + 1) % out.points.length])).toBeCloseTo(d, 6);
+    }
+  });
+
+  it("shrinks a hole, because that is what a hole does when a shape grows", () => {
+    const ring = neighbours(origin);
+    const loops = boundaryLoops(outline(ring, SIZE), SIZE);
+    // The hole is the loop that stays near the middle.
+    const inner = loops.reduce((best, loop) => {
+      const near = (l: typeof loop) =>
+        Math.min(...l.points.map((p) => Math.hypot(p.x, p.y)));
+      return near(loop) < near(best) ? loop : best;
+    });
+    const before = Math.max(...inner.points.map((p) => Math.hypot(p.x, p.y)));
+    const after = Math.max(...pushOut(inner, d).points.map((p) => Math.hypot(p.x, p.y)));
+    expect(after).toBeLessThan(before);
+    expect(after).toBeCloseTo(SIZE - (2 * d) / Math.sqrt(3), 6);
+  });
+
+  it("leaves an open run alone, having no second side to offset toward", () => {
+    const open = { points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], closed: false };
+    expect(pushOut(open, d)).toBe(open);
   });
 });

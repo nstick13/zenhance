@@ -26,7 +26,7 @@ import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layou
 import { holdActions } from "./questions";
 import { menuFor, type MenuAction } from "./menu";
 import { applyHand, settle } from "./hand";
-import { boundaryLoops, type Loop } from "./loops";
+import { boundaryLoops, pushOut, type Loop } from "./loops";
 import { layoutHex, nodeScale, type HexDensity, type HexScene } from "@/lib/map/layout/hex/scene";
 import { neaten } from "@/lib/map/layout/hex/tidy";
 import { TAPER_RUNGS, branchShape, deferBranch, type BranchShape } from "@/lib/map/layout/hex/defer";
@@ -226,6 +226,16 @@ const TEAM_GROUND = 0.30;
  */
 const TEAM_EDGE_DARKER = 0.10;
 
+/**
+ * **How far a team's ground stands clear of the cells it holds.** Greg,
+ * 2026-11-06: *"that outline (and by definition the fill within it) needs to
+ * be offset outwards a little — show me what it looks like if we offset it by
+ * half of one hexagon radius."* In cell radii, so half a cell's radius is
+ * `0.5`, and it eats into the collar of clear hexagons rather than into
+ * anybody else's ground, because the collar is a whole cell wide.
+ */
+const TEAM_SPREAD = 0.25;
+
 const KNEE_BY_LENGTH: readonly { within: number; radii: number }[] = [
   { within: 6, radii: 1 },
   { within: 24, radii: 2 },
@@ -251,7 +261,7 @@ const KNEE_BY_LENGTH: readonly { within: number; radii: number }[] = [
  * area: a corner that bites *into* a shape gets the same treatment as one that
  * sticks out.
  */
-function traceRounded(path: CanvasPath, loop: Loop, r: number) {
+function traceRounded(path: CanvasPath, loop: Loop, r: number, inward = r) {
   const pts = loop.points;
   const n = pts.length;
   const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
@@ -265,9 +275,38 @@ function traceRounded(path: CanvasPath, loop: Loop, r: number) {
   }
   const start = mid(pts[n - 1], pts[0]);
   path.moveTo(start.x, start.y);
+  let from = start;
   for (let i = 0; i < n; i++) {
     const next = mid(pts[i], pts[(i + 1) % n]);
-    path.arcTo(pts[i].x, pts[i].y, next.x, next.y, r);
+    /**
+     * **Each corner takes what its own two half-edges can pay for.**
+     *
+     * Walking midpoints gives every corner half of each edge beside it, and
+     * the tangent point sits `r / tan(θ/2)` back from the corner — so the
+     * radius a corner can afford is `half-edge · tan(θ/2)`, which on a plain
+     * hexagon works out at the documented `0.866` of an edge and never binds.
+     * It binds once a shape is *offset*: pushing a boundary outward shortens
+     * the edges inside a notch, and an unclamped radius would then put the
+     * tangent point past the midpoint and fold the path back on itself.
+     */
+    const ax = from.x - pts[i].x, ay = from.y - pts[i].y;
+    const bx = next.x - pts[i].x, by = next.y - pts[i].y;
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    if (la > 1e-9 && lb > 1e-9) {
+      /**
+       * **Which way the corner bends, so the two can be rounded differently.**
+       *
+       * The material lies to the left of travel (see `pushOut`), so a corner
+       * that sticks *out* of the shape turns toward it — a left turn, and a
+       * positive cross product. `inward` is for the other sort, the notch
+       * where two tiles meet, and it defaults to `r` so every caller that
+       * wants one radius keeps getting exactly what it had.
+       */
+      const want = ax * by - ay * bx < 0 ? r : inward;
+      const theta = Math.acos(Math.min(1, Math.max(-1, (ax * bx + ay * by) / (la * lb))));
+      path.arcTo(pts[i].x, pts[i].y, next.x, next.y, Math.min(want, Math.min(la, lb) * Math.tan(theta / 2)));
+    }
+    from = next;
   }
   path.closePath();
 }
@@ -297,11 +336,32 @@ function traceRounded(path: CanvasPath, loop: Loop, r: number) {
  * collar of clear ground, say — comes back as two rings, and the inner one has
  * to punch the middle out rather than fill it in.
  */
-function roundedUnion(cells: readonly Cell[], size: number): Path2D | null {
+/**
+ * **An area, optionally standing `outward` clear of the cells it holds.**
+ *
+ * Greg, 2026-11-06: *"if the current corner rounding radius is equal to half
+ * a hexagon radius, then if we offset the line by +0.25 hexagon radii, the
+ * new convex corner radius should be 3/4 hexagon radius. Concave radii should
+ * remain unchanged."*
+ *
+ * Which is what a shape *does* when it is pushed outward: the corners that
+ * stick out are swept round a circle that much bigger, because every point on
+ * them has moved `outward` further from the same centre. A notch does the
+ * opposite by the same arithmetic — its radius would shrink — and Greg's call
+ * is to leave those alone, so a team keeps the same soft bite between its
+ * tiles however far its ground stands off them.
+ */
+function roundedUnion(cells: readonly Cell[], size: number, outward = 0): Path2D | null {
   if (typeof Path2D === "undefined" || !cells.length) return null;
   const path = new Path2D();
+  const corner = size * NODE_CORNER;
   for (const loop of boundaryLoops(outline(cells, size), size)) {
-    traceRounded(path, loop, size * NODE_CORNER);
+    traceRounded(
+      path,
+      outward > 0 ? pushOut(loop, outward) : loop,
+      corner + outward,
+      corner,
+    );
   }
   return path;
 }
@@ -1194,7 +1254,9 @@ export default function HexLab({
       cells,
       // Rounded like everything else, and built here rather than in the paint
       // loop: on the largest company this is hundreds of teams.
-      path: roundedUnion(cells, hexScene.hex.size),
+      // Standing clear of its own cells by `TEAM_SPREAD`, so the ground reads
+      // as something the team sits inside rather than a tracing of its tiles.
+      path: roundedUnion(cells, hexScene.hex.size, hexScene.hex.size * TEAM_SPREAD),
     }));
   }, [groups, hexScene]);
 
