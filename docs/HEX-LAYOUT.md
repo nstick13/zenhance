@@ -3977,6 +3977,89 @@ it smaller than it reads here.
 
 ---
 
+## A team became a place (2026-11-06, later)
+
+**The thing that was tried first, and reverted.** Greg asked for the mid-grey
+line round each team to be five times thicker, centred on the team's border and
+drawn under the active hexagons so the outer tiles would come down on top of
+it. It was built and it was wrong — his words: *"that didn't go as planned."*
+The weight was a fixed number of pixels on the glass, so as the camera pulled
+back the line kept its thickness while the team it wrapped shrank: at the
+1,000-person overview every team read as grey wool rather than as a coloured
+place. The exact tipping point, if anyone tries this again: a stroke of
+`w / scale` world units is wider than a cell whenever a cell is under `w`
+pixels across on screen. Reverted whole; the line is the thin one it always
+was.
+
+**What landed instead.** Greg: *"the area drawn by this line can get a fill of
+its own — the average colour of the active hexagons that it contains. But all
+active hexagons and their immediate containing cells (not the grey ones from
+behind) should sit above the newly coloured-in area."*
+
+Same shape, opposite instinct, and much better: instead of a heavier border
+round the team, the team's **ground** takes the team's colour. Grey is still
+the room *around* a team — the collar, the group's zone — and colour is now
+what is *inside* the line as well as what stands on it.
+
+**Averaged in the colour space the palette is written in**, not in sRGB: hue as
+a vector on the circle, so a mean of 350° and 10° comes out at 0° rather than
+180°; lightness and saturation as plain means. In practice a team is already
+one hue — `hueById` gives its people their team's shade exactly — so what the
+average actually does is pool the *tone* across a team node and the people
+under it, which sit on different rungs. Doing it properly costs four additions
+and survives the day a team stops being one hue.
+
+**Where it goes in the stack**, which is the whole of Greg's second sentence:
+after every grey (the region washes, the group's ground, the collar of clear
+hexagons round each team) and before the first thing that is active, which is
+the coloured cell a node stands in. Everything active lands on top of it
+without anything needing to know it exists. It is drawn from the same `Path2D`
+as the line round the team, so the fill and the line cannot disagree about
+where the team ends.
+
+`TEAM_GROUND` is the one dial: 0.30, strong enough that a team reads as one
+place from across the map, light enough that a cell someone stands on still
+comes out a step deeper than the ground between the cells, because the tile's
+own wash carries the same hue over the top of it.
+
+**And the line came with it (same day, a little later).** Greg: *"the grey
+outline should fall one z-axis position above the colour fill it draws, which
+should put it below the active cells within the drawn area. Let's also make the
+outline the same colour as the fill it draws, darkened by 10%."*
+
+So the line moved from the very end of the paint — it used to be the last thing
+drawn, over the nodes — to immediately above its own ground, and it stopped
+being grey. `TEAM_EDGE_DARKER` is ten per cent off the lightness, in the same
+HSL as everything else, from the same averaged colour as the fill. The edge is
+now part of the place rather than a boundary drawn round it.
+
+**The one judgement call: the line is opaque.** Taken completely literally,
+*the same colour as the fill* would include the fill's alpha — and the fill is
+deliberately a 30% wash so the tiles standing on it still read. A line ten per
+cent darker than a 30% wash, at 30%, works out at about two per cent of
+difference: a line nobody could see. Opaque, it is the colour that ground
+*would* be if the ground were solid, which is what "the same colour, darker"
+means to the eye. The alpha is the knob if that reading is wrong.
+
+**What the z-order actually buys, today:** less than it sounds, and it is worth
+saying so. The team's path runs along the boundary of its cells, while a tile
+is drawn `activeInset` *inside* its cell — so a 2.2px line sits in the gap and
+nothing covers it. The ordering is right for when that stops being true: a
+heavier line, or a smaller gap, and the tiles win where they cross it.
+
+**Checked** on Sparrow Jam, Digital Tailoring and the 1,000-person company, at
+fit and at four zooms in. **Only the people strata shows it**: with no people
+there are no teams to group, so `teamTints` is empty and the teams view is
+exactly as it was.
+
+**Measured, roughly:** on the 1,000-person company a wheel notch to two frames
+later ran a median of 33ms — about two 60Hz frames, so one extra fill per team
+(on top of the 131 bubble fills already there) is not blowing the budget. That
+is a dev build on a developer's machine, which is not the five-year-old iPad
+the bar is set by.
+
+---
+
 
 
 ---

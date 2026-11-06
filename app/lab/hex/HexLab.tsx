@@ -202,6 +202,30 @@ const ACTIVE_GAP_MAX = 0.12;
  * chain that is broken into runs where it passes behind somebody still bends
  * the same way all the way along.
  */
+/**
+ * **How strongly a team's own ground is coloured.** Strong enough that the
+ * shape reads as one place from across the map, light enough that the tiles
+ * standing on it still read as the thing that is there — they carry the same
+ * hue over the top of this, so a cell someone is standing on comes out a step
+ * deeper than the ground between the cells.
+ */
+const TEAM_GROUND = 0.30;
+
+/**
+ * **How much darker the line round a team is than the ground it draws.**
+ * Greg, 2026-11-06: *"make the outline the same colour as the fill it draws,
+ * darkened by 10%."* Ten per cent off the lightness, in the same HSL the
+ * palette is written in.
+ *
+ * Drawn at **full opacity**, which is the one judgement call in it: the fill
+ * is deliberately a 30% wash so that the tiles standing on it still read, and
+ * a line 10% darker than that wash *at that wash's alpha* works out at about
+ * two per cent of difference — a line nobody could see. Opaque, it is the
+ * same colour the ground would be if the ground were solid, which is what
+ * "the same colour, darker" means to the eye.
+ */
+const TEAM_EDGE_DARKER = 0.10;
+
 const KNEE_BY_LENGTH: readonly { within: number; radii: number }[] = [
   { within: 6, radii: 1 },
   { within: 24, radii: 2 },
@@ -1352,6 +1376,58 @@ export default function HexLab({
     return deepest(laid.length ? laid : scene.units);
   }, [scene, pinned, born]);
 
+  /**
+   * **A team's ground takes the average colour of the people standing on it.**
+   * Greg, 2026-11-06: *"the area drawn by this line can get a fill of its own
+   * — the average colour of the active hexagons that it contains."*
+   *
+   * Which turns the team from a shape with a line round it into a **place**.
+   * The line stays what it was; what changes is that the ground inside it is
+   * no longer the same neutral as the room outside it.
+   *
+   * **Averaged in the colour space the palette is written in**, not in sRGB:
+   * hue as a vector on the circle (so a mean of 350° and 10° is 0°, not 180°),
+   * lightness and saturation as plain means. In practice a team is already one
+   * hue — `hueById` gives its people their team's shade exactly — so what this
+   * actually averages is the *tone*, across a team node and the people under
+   * it, which sit on different rungs. Doing it properly anyway costs four
+   * additions and survives the day a team stops being one hue.
+   */
+  const teamTints = useMemo(() => {
+    const out = new Map<string, { fill: string; line: string }>();
+    if (!groups?.length) return out;
+    const members = new Map<string, string[]>();
+    for (const [unitId, teamId] of groups) {
+      const list = members.get(teamId) ?? [];
+      list.push(unitId);
+      members.set(teamId, list);
+    }
+    // The team's own node stands on this ground too, and is one of the active
+    // hexagons the average is over.
+    for (const [teamId, list] of members) list.push(teamId);
+    for (const [teamId, ids] of members) {
+      let x = 0, y = 0, l = 0, sat = 0, n = 0;
+      for (const id of ids) {
+        const unit = scene.unitById.get(id);
+        if (!unit) continue;
+        const hue = ((hueById.get(id) ?? 0) * Math.PI) / 180;
+        const tone = toneOf(unit.depth, maxDepth);
+        x += Math.cos(hue); y += Math.sin(hue);
+        l += tone.l; sat += tone.s; n++;
+      }
+      if (n === 0) continue;
+      const hue = ((Math.atan2(y / n, x / n) * 180) / Math.PI + 360) % 360;
+      const h = hue.toFixed(1);
+      const sp = ((sat / n) * 100).toFixed(0);
+      const lp = (l / n) * 100;
+      out.set(teamId, {
+        fill: `hsla(${h}, ${sp}%, ${lp.toFixed(0)}%, ${TEAM_GROUND})`,
+        line: `hsl(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%)`,
+      });
+    }
+    return out;
+  }, [groups, scene, hueById, maxDepth]);
+
   const floor = useMemo(
     () => minScaleFor(scene.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 }, size),
     [scene, size],
@@ -2158,6 +2234,47 @@ export default function HexLab({
       ctx.stroke(groupRings.fill);
     }
 
+    /**
+     * **The ground a team stands on, in the team's own colour** — the last of
+     * the area hexagons, and the only one that is not grey.
+     *
+     * Greg, 2026-11-06: *"the area drawn by this line can get a fill of its
+     * own — the average colour of the active hexagons that it contains. But
+     * all active hexagons and their immediate containing cells (not the grey
+     * ones from behind) should sit above the newly coloured-in area."*
+     *
+     * So it goes down **here**: after every grey — the region washes, the
+     * group's ground, the collar of clear hexagons round each team — and
+     * before the first thing that is active, which is the coloured cell a
+     * node stands in. Everything active therefore lands on top of it without
+     * anything needing to know this exists.
+     *
+     * It is the same `Path2D` the line round the team is drawn from, so the
+     * fill and that line cannot disagree about where the team ends.
+     */
+    /**
+     * **And the line round the team, one step above its own ground.** Greg,
+     * 2026-11-06: *"the grey outline should fall one z-axis position above the
+     * colour fill it draws, which should put it below the active cells within
+     * the drawn area"* — so a tile sitting on the team's edge covers the line
+     * where it crosses, and the line survives everywhere else.
+     *
+     * It is no longer grey. Same colour as the ground it encloses, ten per
+     * cent darker, which makes the edge part of the place rather than a
+     * boundary drawn round it.
+     */
+    if (teamOutlines.length > 0) {
+      ctx.lineWidth = Math.max(0.7, 2.2 / scale);
+      for (const team of teamOutlines) {
+        const tint = teamTints.get(team.teamId);
+        if (!team.path || !tint) continue;
+        ctx.fillStyle = tint.fill;
+        ctx.fill(team.path, "evenodd");
+        ctx.strokeStyle = tint.line;
+        ctx.stroke(team.path);
+      }
+    }
+
     // 1a. The territory, as a faint wash over the whole cell. It is what makes
     //     a division read as one place from far away, where the nodes are only
     //     a few pixels — so it is strongest pulled back and fades as the nodes
@@ -2263,15 +2380,6 @@ export default function HexLab({
         ctx.strokeStyle = "rgba(15,23,42,0.85)";
         ctx.stroke();
       }
-    }
-
-    // 2d. A line round each team, so a crowd of people reads as a team even
-    //     though the colour is the division's. Under the nodes, like every
-    //     other boundary.
-    if (teamOutlines.length > 0) {
-      ctx.lineWidth = Math.max(0.7, 2.2 / scale);
-      ctx.strokeStyle = "rgba(15,23,42,0.30)";
-      for (const team of teamOutlines) if (team.path) ctx.stroke(team.path);
     }
 
     // 3. Where a dragged branch would land. Greg: *"make the nearest hexagon
@@ -2622,7 +2730,7 @@ export default function HexLab({
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
 
   // --- input ---------------------------------------------------------------
 
