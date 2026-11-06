@@ -37,11 +37,39 @@ export const COMPANIES = {
   small: { label: "Sparrow-ish · 10", people: 10, maxDepth: 2, spotlight: undefined },
   medium: { label: "Digital Tailoring-ish · 45", people: 45, maxDepth: 4, spotlight: SPOTLIGHT },
   large: { label: "1,000 · 8 rungs", people: 1000, maxDepth: 8, spotlight: SPOTLIGHT },
-  northwind: { label: "Northwind · 2,562 · 11 rungs", people: 2400, maxDepth: 11, spotlight: SPOTLIGHT },
 } as const;
 
+/**
+ * **Northwind is not here, and that is deliberate** — Greg, 2026-11-06:
+ * *"leave grow, sparrow, digital tailoring and 1000. Remove Northwind for
+ * now."*
+ *
+ * It was a card on this page reading *"Northwind · 2,562 · 11 rungs"*, at
+ * 2,957 cells the only fixture big enough to make the page itself slow, and
+ * every visit to the lab paid for inventing it. Nothing about the shape is
+ * lost: `buildDeepOrg` still generates it, the pure scale tests still use it
+ * through `lib/map/layout/__tests__/fixtures/deepOrg.ts`, and
+ * `npm run db:northwind` still seeds it into a local database. To put the card
+ * back, one line here is enough.
+ *
+ * **It is the one company whose scale this lab cannot now show**, so a change
+ * that only breaks at eleven rungs will not be caught on this page. The
+ * diagnostics still have it — `NORTHWIND` below, and `npx tsx
+ * scripts/hexZoning.ts` — so run those when scale is the question.
+ */
+
+/** A company this module knows how to build. */
+type Spec = { people: number; maxDepth: number; spotlight?: { small: number; large: number } };
+
+/**
+ * **The eleven-rung company, with no card on the page.** Kept because it is
+ * the only shape that proves the layout holds at scale, and the scripts that
+ * ask that question are the ones that found most of the layout's faults. It is
+ * not reachable from `/lab/hex`, by Greg's decision above.
+ */
+export const NORTHWIND: Spec = { people: 2400, maxDepth: 11, spotlight: SPOTLIGHT };
+
 export type CompanyKey = keyof typeof COMPANIES;
-export type Strata = "teams" | "people";
 
 export type LabCompany = {
   org: OrgInput;
@@ -51,10 +79,34 @@ export type LabCompany = {
   leads: string[];
 };
 
-export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
+/**
+ * **A person is always the smallest unit** — Greg, 2026-11-06: *"on hex, the
+ * smallest unit should always be people, so we don't need the 'teams' view
+ * option."*
+ *
+ * This used to take a `strata` of `"teams" | "people"`, and it opened on
+ * `"teams"`: every team was one cell and the humans inside it were seats
+ * orbiting that cell. The people strata was added on 2026-10-03 as an
+ * experiment — *"team nodes are the smallest absolute unit. In the next
+ * iteration, we should test human nodes being the smallest absolute unit,
+ * since this is what companies are made of"* — and it is the one that won, so
+ * it is now the only one.
+ *
+ * Which also removes the thing Greg named as the problem on 2026-10-02 —
+ * *"one mode to view people, one to view the org"* — because there is no
+ * longer a mode. A person is a unit, reporting to their actual manager; the
+ * team keeps a cell of its own; and nothing in `lib/map` knows any of this,
+ * because it is handed the same tree of units it always gets.
+ */
+export function buildLabCompany(key: CompanyKey): LabCompany {
   // Nothing to generate: the company is whatever gets made on the page.
   if (key === "blank") return { org: { units: [], people: [], assignments: [] }, groups: [], leads: [] };
-  const spec = COMPANIES[key];
+  return fromSpec(COMPANIES[key]);
+}
+
+/** The same build, from a spec rather than a card — which is how the scale
+ *  company is reached now that it has no card. */
+export function fromSpec(spec: Spec): LabCompany {
   const org = buildDeepOrg("hexlab", {
     people: spec.people,
     maxDepth: spec.maxDepth,
@@ -63,7 +115,7 @@ export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
     // A flat team is a lie, and it is the lie that decides whether this works:
     // fifty people reporting to one node is a fifty-wide span no lattice can
     // seat. Given a real tree it is spans of two to five.
-    inTeamSpan: strata === "people" ? [2, 5] : undefined,
+    inTeamSpan: [2, 5],
   });
 
   /** Person id → the team they sit in, for the layout's cohesion grouping. */
@@ -84,21 +136,19 @@ export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
    */
   const leadOf = new Map(org.units.filter((u) => u.leadPersonId).map((u) => [u.leadPersonId!, u.id]));
   const peopleById = new Map(org.people.map((p) => [p.id, p]));
-  const personUnits = strata === "people"
-    ? [...teamOf].map(([personId, unitId]) => {
-        const manager = peopleById.get(personId)?.managerId ?? null;
-        const leads = leadOf.get(personId);
-        return {
-          id: `person:${personId}`,
-          name: peopleById.get(personId)?.name ?? personId,
-          parentId: leads ? leads : manager ? `person:${manager}` : unitId,
-          leadPersonId: null,
-          team: unitId,
-          /** Drawn differently: this person leads the unit they hang from. */
-          isLead: Boolean(leads),
-        };
-      })
-    : [];
+  const personUnits = [...teamOf].map(([personId, unitId]) => {
+    const manager = peopleById.get(personId)?.managerId ?? null;
+    const leads = leadOf.get(personId);
+    return {
+      id: `person:${personId}`,
+      name: peopleById.get(personId)?.name ?? personId,
+      parentId: leads ? leads : manager ? `person:${manager}` : unitId,
+      leadPersonId: null,
+      team: unitId,
+      /** Drawn differently: this person leads the unit they hang from. */
+      isLead: Boolean(leads),
+    };
+  });
 
   // Only the fields `buildOrbitalTree` reads — the rest of a seeded company is
   // weight this page would carry for nothing.
@@ -114,12 +164,8 @@ export function buildLabCompany(key: CompanyKey, strata: Strata): LabCompany {
     ],
     // With people promoted to units they are no longer seats, so the unit tree
     // is the whole picture and nothing orbits anything.
-    people: strata === "people" ? [] : org.people.map((p) => ({ id: p.id, name: p.name })),
-    assignments: strata === "people" ? [] : org.assignments.map((a) => ({
-      personId: a.personId,
-      orgUnitId: a.orgUnitId,
-      allocationPct: a.allocationPct ?? 100,
-    })),
+    people: [],
+    assignments: [],
   };
 
 

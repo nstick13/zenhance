@@ -24,9 +24,17 @@ function lay(org: OrgInput, people: Set<string>, moves?: Map<string, Cell>) {
   return { tree, cells: hand?.cells ?? base.cells, occupants: hand?.occupants ?? base.occupants };
 }
 
-/** Sparrow Jam as the lab builds it: five units, nobody drawn as a person. */
+/**
+ * **Sparrow Jam as the lab builds it: 27 units, every person one of them.**
+ *
+ * It was five units until 2026-11-06, when the teams strata came off the lab
+ * and a person became the smallest unit everywhere (Greg: *"on hex, the
+ * smallest unit should always be people"*). The numbers below moved with it,
+ * and the flinch they describe did not: a company this size still re-lays
+ * around one new node, which is the whole reason `settle` exists.
+ */
 function sparrow() {
-  const { org, groups } = buildLabCompany("small", "teams");
+  const { org, groups } = buildLabCompany("small");
   const people = new Set(groups.map(([id]) => id));
   const clean = lay(org, people);
   // The unit the bug was found on: one more child here takes the ring
@@ -56,20 +64,41 @@ function stirred(before: ReadonlyMap<string, Cell>, after: ReadonlyMap<string, C
   return { moved, worst, of: before.size };
 }
 
-describe("the flinch itself", () => {
-  it("is real: the engine re-lays a five-unit company around one new node", () => {
+/**
+ * **The flinch, and where it went** (rewritten 2026-11-06).
+ *
+ * This block used to open by proving the fault: on the five-unit Sparrow Jam
+ * of the teams strata, making one node inside Granite Division moved four of
+ * the five units, up to five cells. The map went from 2,814 × 2,837 world
+ * units to 4,452 × 4,098. That is the fault `settle` was built for on
+ * 2026-10-30, and the full account of it is in the doc comment on `settle`
+ * itself, which is where it belongs.
+ *
+ * **It is no longer reproducible from this lab, and that is a finding rather
+ * than a fix.** The flinch was arithmetic about *smallness* — a sixth unit is
+ * a fifth of a five-unit company, enough to take the ring schedule in
+ * `radial.ts` from `[0,2]` to `[0,3,5]` and re-seat every rung outside it.
+ * With a person as the smallest unit everywhere, the smallest company the lab
+ * can show is 27 units, and at that size one more node changes no schedule and
+ * moves nothing at all. Measured the day the strata came off: **nought of 27
+ * moved on Sparrow Jam**, where the five-unit shape moved four of five.
+ *
+ * So what these two tests now assert is the *stability*, not the fault. They
+ * are still worth running: they are what would notice the engine starting to
+ * flinch again at a size somebody is actually looking at. `settle`'s own
+ * promise is tested below, and does not depend on either of them.
+ */
+describe("the engine, on the companies the lab can show", () => {
+  it("does not re-lay the smallest company around one new node", () => {
     const { org, people, clean, host } = sparrow();
     const grown = lay(withNode(org, host.id), people);
-    const { moved, worst, of } = stirred(clean.cells, grown.cells);
-    expect(of).toBe(5);
-    // Four of five, up to five cells away. This is the engine doing its job on
-    // a different tree, which is why the fix is not in the engine.
-    expect(moved).toBeGreaterThanOrEqual(4);
-    expect(worst).toBeGreaterThanOrEqual(4);
+    const { moved, of } = stirred(clean.cells, grown.cells);
+    expect(of).toBe(27);
+    expect(moved).toBe(0);
   });
 
-  it("is a small-company effect, not a general one", () => {
-    const { org, groups } = buildLabCompany("medium", "people");
+  it("nor a company twenty times the size", () => {
+    const { org, groups } = buildLabCompany("medium");
     const people = new Set(groups.map(([id]) => id));
     const clean = lay(org, people);
     const host = [...clean.tree.units.values()]
@@ -77,8 +106,9 @@ describe("the flinch itself", () => {
       .sort((a, b) => b.totalSeats - a.totalSeats)[0];
     const grown = lay(withNode(org, host.id), people);
     const { moved, of } = stirred(clean.cells, grown.cells);
-    // Same gesture, a company 20× the size: a handful of units at most. The
-    // 45-person map is where this stops being visible.
+    // A handful at most, and in practice none. The ceiling is kept rather than
+    // pinned to nought because this is the engine's own answer to a different
+    // tree, and it is entitled to move a tile without that being a fault.
     expect(moved / of).toBeLessThan(0.1);
   });
 });
@@ -119,13 +149,104 @@ describe("settle keeps the map where it is", () => {
 
   it("leaves the map where it is when a branch is removed", () => {
     const { org, people, clean } = sparrow();
-    const doomed = [...clean.tree.units.values()].find((u) => u.name === "Union Team 1")!;
+    /**
+     * **A leaf, which on the people strata means a person.**
+     *
+     * This used to remove a team by name, "Union Team 1", and that was a clean
+     * removal while a team was a cell with seats orbiting it. Now that every
+     * person is a unit in their own right, taking a team out from under its
+     * people orphans them — `buildOrbitalTree` has to find them a new parent,
+     * which is a different company rather than the same one minus a branch, and
+     * one of them honestly moves. Removing a leaf is the gesture this test is
+     * about: nothing else in the tree changes shape.
+     */
+    const parents = new Set([...clean.tree.units.values()].map((u) => u.parentId));
+    const doomed = [...clean.tree.units.values()]
+      .find((u) => u.parentId && !parents.has(u.id))!;
     const moves = settle(clean.cells, new Map());
     moves.delete(doomed.id);
     const pruned: OrgInput = { ...org, units: org.units.filter((u) => u.id !== doomed.id) };
     const after = lay(pruned, people, moves);
     expect(after.cells.has(doomed.id)).toBe(false);
     expect(stirred(clean.cells, after.cells).moved).toBe(0);
+  });
+});
+
+describe("a cell is taken only if the unit on it is staying", () => {
+  /**
+   * **The third-node bug, 2026-11-06.** `applyHand` walked the placements in
+   * order and refused any whose cell was occupied at that moment, so a chain —
+   * A wants B's cell, B wants C's — was broken wherever the order happened to
+   * visit it. It showed up as the map moving when you made the third thing, on
+   * every company: five of Sparrow Jam's 27 units, up to ten cells away; three
+   * of 110 on Digital Tailoring; one of 1,273 on the thousand-person company.
+   * Every refusal was a cell whose holder was itself moving away.
+   */
+  it("honours a chain of placements, whatever order they arrive in", () => {
+    const laid = new Map<string, Cell>([
+      ["a", { q: 0, r: 0 }], ["b", { q: 1, r: 0 }], ["c", { q: 2, r: 0 }],
+    ]);
+    // a→b's cell, b→c's cell, c→somewhere free. Nothing here conflicts; it
+    // only looks like it does if you ask one placement at a time.
+    const moves = new Map<string, Cell>([
+      ["a", { q: 1, r: 0 }], ["b", { q: 2, r: 0 }], ["c", { q: 3, r: 0 }],
+    ]);
+    const { cells } = applyHand(laid, moves);
+    expect(cells.get("a")).toEqual({ q: 1, r: 0 });
+    expect(cells.get("b")).toEqual({ q: 2, r: 0 });
+    expect(cells.get("c")).toEqual({ q: 3, r: 0 });
+  });
+
+  it("honours a cycle, where no cell is ever free", () => {
+    const laid = new Map<string, Cell>([["a", { q: 0, r: 0 }], ["b", { q: 1, r: 0 }]]);
+    const moves = new Map<string, Cell>([["a", { q: 1, r: 0 }], ["b", { q: 0, r: 0 }]]);
+    const { cells } = applyHand(laid, moves);
+    expect(cells.get("a")).toEqual({ q: 1, r: 0 });
+    expect(cells.get("b")).toEqual({ q: 0, r: 0 });
+  });
+
+  it("still refuses a cell held by somebody standing still, and cascades", () => {
+    // c is not moving, so b cannot have its cell; that makes b stay, so a
+    // cannot have b's cell either. Both keep what the engine gave them.
+    const laid = new Map<string, Cell>([
+      ["a", { q: 0, r: 0 }], ["b", { q: 1, r: 0 }], ["c", { q: 2, r: 0 }],
+    ]);
+    const moves = new Map<string, Cell>([
+      ["a", { q: 1, r: 0 }], ["b", { q: 2, r: 0 }],
+    ]);
+    const { cells, occupants } = applyHand(laid, moves);
+    expect(cells.get("a")).toEqual({ q: 0, r: 0 });
+    expect(cells.get("b")).toEqual({ q: 1, r: 0 });
+    expect(cells.get("c")).toEqual({ q: 2, r: 0 });
+    expect(occupants.size).toBe(3);
+  });
+
+  it("gives one cell to one unit when two placements claim it", () => {
+    const laid = new Map<string, Cell>([
+      ["a", { q: 0, r: 0 }], ["b", { q: 1, r: 0 }], ["c", { q: 5, r: 0 }],
+    ]);
+    const moves = new Map<string, Cell>([
+      ["a", { q: 9, r: 0 }], ["b", { q: 9, r: 0 }],
+    ]);
+    const { cells, occupants } = applyHand(laid, moves);
+    expect(cells.get("a")).toEqual({ q: 9, r: 0 });
+    expect(cells.get("b")).toEqual({ q: 1, r: 0 });
+    expect(occupants.size).toBe(3);
+  });
+
+  it("is injective on every company the lab can show", () => {
+    for (const key of ["small", "medium"] as const) {
+      const { org, groups } = buildLabCompany(key);
+      const people = new Set(groups.map(([id]) => id));
+      const clean = lay(org, people);
+      // Settle the whole map, then shuffle every placement one cell over —
+      // the hardest case there is, because every cell is wanted by somebody.
+      const moves = new Map<string, Cell>();
+      for (const [id, c] of clean.cells) moves.set(id, { q: c.q + 1, r: c.r });
+      const { cells } = applyHand(clean.cells, moves);
+      const keys = new Set([...cells.values()].map(cellKey));
+      expect(keys.size).toBe(cells.size);
+    }
   });
 });
 

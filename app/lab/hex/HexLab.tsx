@@ -707,12 +707,70 @@ export function stillNeeds(node: Born): string | null {
   return null;
 }
 
+/**
+ * **The five settings Greg settled on 2026-11-06**, which used to be five rows
+ * of buttons on the panel:
+ *
+ * > *"layout is always hex (remove orbits, but don't delete orbital from main
+ * > yet, we might keep it as an option) · place should always be radial · rung
+ * > is strictly out · wedge is 1 rung · cells are roomy."*
+ *
+ * Each of these was already the value the lab opened on, so **nothing about
+ * the picture changes** — what goes is the ability to change it, and five rows
+ * of panel explaining choices nobody is making any more. The reasoning behind
+ * each one is kept below, because the reason a decision was made outlives the
+ * switch that made it.
+ *
+ * They are `const` rather than inlined so the code that reads them still reads
+ * like a question being asked, and so turning one back on is a one-line edit
+ * here rather than an archaeology exercise. Each is deliberately typed as its
+ * **wider union**, not as the literal — that keeps the other branch alive and
+ * type-checking instead of letting TypeScript narrow it into dead code that
+ * the next tidy-up deletes.
+ */
+
+/**
+ * **Hex, always.** Orbits is the layout that ships today, and it was here to
+ * be put beside the lattice; that comparison is made. Greg's instruction is
+ * explicit that this is the *lab's* answer and not the product's — *"don't
+ * delete orbital from main yet, we might keep it as an option"* — so
+ * `layoutCompany` and everything under `components/viz/orbital/` is untouched,
+ * and `/org` still draws orbits. The branch below that reads this constant is
+ * left standing for the same reason.
+ */
+const LAYOUT: "hex" | "orbits" = "hex";
+
+/**
+ * **Radial, always** — Greg chose ragged concentric bands on 2026-10-16, and
+ * the atlas stayed one button away for comparison. Every spacing rule since
+ * then lives in the radial driver and the atlas has never held to the spacer
+ * at all, so the two are no longer comparable: the atlas is not a second
+ * opinion, it is an older one. It remains in `lib/map/layout/hex/` as the
+ * other driver `allocateByTerritory` can run, and that API default is
+ * unchanged.
+ */
+const DRIVER: HexDriver = "radial";
+
+/**
+ * **Strictly out** — a rung may not step sideways round the centre. Greg,
+ * 2026-10-17, on seeing chains loop back: *"what is preventing that code from
+ * working?"* It became Law 3 the same day, so the toggle was offering a choice
+ * the laws had already taken (`docs/MAP-LAWS.md`). `allow` is the older rule —
+ * *"equal distance is allowed; nearer is not"* — and the comparison it existed
+ * for is in the record.
+ */
+const SIDEWAYS: "allow" | "forbid" = "forbid";
+
+/** **Roomy cells.** `tight` packs the same company into about half the area
+ *  and was worth seeing once; the ground a family needs is what the room is
+ *  paying for (see the table at the top of `docs/HEX-LAYOUT.md`). */
+const DENSITY: HexDensity = "roomy";
+
 export default function HexLab({
-  org, companyKey, initialDensity, groups: rawGroups, leads,
+  org, companyKey, groups: rawGroups, leads,
 }: {
   org: LabOrg;
   companyKey: string;
-  initialDensity: HexDensity;
   /** unit id → the group it should be kept together with, when people have
    *  been promoted to units and a team is a crowd rather than a cell. */
   groups?: readonly (readonly [string, string])[];
@@ -721,38 +779,12 @@ export default function HexLab({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
-  const [density, setDensity] = useState<HexDensity>(initialDensity);
-  const [mode, setMode] = useState<"hex" | "orbits">("hex");
-  /**
-   * **Which driver decides where things go** — Greg, 2026-10-16, chose ragged
-   * rings. Both are here because the only way to settle which reads better is to
-   * put them side by side, which is how the atlas arrived beside the
-   * archipelago. The atlas is still the default, so nothing anybody has looked
-   * at so far changes until this is pressed.
-   */
-  /**
-   * **The lab opens on the driver the work is in** — radial since 2026-10-18.
-   *
-   * It opened on the atlas because that is what `allocateByTerritory` defaults
-   * to, and that default is right for the *API*: a caller who does not ask gets
-   * what it always got. It was wrong here. Every spacing rule of the last three
-   * days lives in the radial driver — the atlas has never held to the spacer at
-   * all — so the page opened showing none of it, and Greg twice went looking
-   * for work that was two clicks away. A study should open on the thing being
-   * studied; the atlas is still a button away for comparison, which is the only
-   * reason it is still here.
-   */
-  const [driver, setDriver] = useState<HexDriver>("radial");
-  /**
-   * **Whether a rung may step sideways round the centre.** Greg, 2026-10-17, on
-   * seeing chains loop back: *"what is preventing that code from working?"*
-   *
-   * `forbid` is the default since 2026-10-17 and is now what Law 3 says. `allow`
-   * is the older rule — *"equal distance is allowed; nearer is not"* — kept so
-   * the two can still be put side by side, which is how the decision was made.
-   * The toggle stays for that reason and not because the question is open.
-   */
-  const [sideways, setSideways] = useState<"allow" | "forbid">("forbid");
+  // The settled preferences, under the names the rest of this file reads them
+  // by. See the block above the component for why each one is what it is.
+  const density = DENSITY;
+  const mode = LAYOUT;
+  const driver = DRIVER;
+  const sideways = SIDEWAYS;
   const [hover, setHover] = useState<string | null>(null);
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -1126,10 +1158,12 @@ export default function HexLab({
    * where its own rung belongs. One makes the wedge as pointy as it can be —
    * the node in your hand, then its children already back where the master
    * centre had them. Larger carries the hand's influence further down the
-   * branch. A dial because the only way to settle how abrupt it should look is
-   * to look at it; see `TAPER_RUNGS`.
+   * branch. It was a dial because the only way to settle how abrupt it should
+   * look is to look at it; Greg looked, and settled it at one on 2026-11-06 —
+   * *"wedge is 1 rung"* — which is the value `TAPER_RUNGS` already held and the
+   * value the lab always opened on.
    */
-  const [taper, setTaper] = useState(TAPER_RUNGS);
+  const taper = TAPER_RUNGS;
 
 
   /** The allocation with every hand placement applied on top. Reparenting does
@@ -3979,43 +4013,17 @@ export default function HexLab({
           <strong style={{ fontSize: 13 }}>Hex grid study</strong>
           <span style={{ color: "#9ca3af" }}>{camera.scale.toFixed(2)}×</span>
         </Row>
+        {/**
+          * **The five settings rows came off here on 2026-11-06.** Layout,
+          * place, rung, wedge and cell were each a row of buttons, and Greg
+          * settled all five — see the constants above the component, which
+          * hold both the values and the reasoning. Everything that is left in
+          * this panel either *does* something (fit, undo, tidy) or *reports*
+          * something, which is the distinction worth keeping: the study still
+          * needs to tell you what the layout did, now that it has stopped
+          * asking you how to do it.
+          */}
         <Row>
-          <span style={{ color: "#6b7280" }}>layout</span>
-          <Btn small onClick={() => setMode("hex")} active={mode === "hex"}>hex</Btn>
-          <Btn small onClick={() => setMode("orbits")} active={mode === "orbits"}>orbits (today)</Btn>
-        </Row>
-        <Row>
-          <span style={{ color: "#6b7280" }}>place</span>
-          <Btn small onClick={() => setDriver("atlas")} active={mode === "hex" && driver === "atlas"} disabled={mode !== "hex"}>atlas</Btn>
-          <Btn small onClick={() => setDriver("radial")} active={mode === "hex" && driver === "radial"} disabled={mode !== "hex"}>radial</Btn>
-        </Row>
-        <Row>
-          <span style={{ color: "#6b7280" }}>rung</span>
-          <Btn small onClick={() => setSideways("allow")} active={mode === "hex" && driver === "radial" && sideways === "allow"} disabled={mode !== "hex" || driver !== "radial"}>sideways ok</Btn>
-          <Btn small onClick={() => setSideways("forbid")} active={mode === "hex" && driver === "radial" && sideways === "forbid"} disabled={mode !== "hex" || driver !== "radial"}>strictly out</Btn>
-        </Row>
-        <Row>
-          {/* **How quickly a moved branch hands itself back to the master
-              centre.** One rung is the pointiest wedge there is: the node where
-              your hand left it, its children already back where the centre had
-              them. Two and three carry the hand's influence further down. The
-              deference itself is not a setting — it is how far you drop it. */}
-          <span style={{ color: "#6b7280" }}>wedge</span>
-          {[1, 2, 3].map((n) => (
-            <Btn
-              key={n} small onClick={() => setTaper(n)}
-              active={mode === "hex" && driver === "radial" && taper === n}
-              disabled={mode !== "hex" || driver !== "radial"}
-            >
-              {n} rung{n > 1 ? "s" : ""}
-            </Btn>
-          ))}
-        </Row>
-        <Row>
-          <span style={{ color: "#6b7280" }}>cell</span>
-          {(["roomy", "tight"] as HexDensity[]).map((d) => (
-            <Btn key={d} small onClick={() => setDensity(d)} active={mode === "hex" && d === density} disabled={mode !== "hex"}>{d}</Btn>
-          ))}
           <Btn small onClick={fit}>fit</Btn>
           {/** Greg, 2026-10-20: *"a button in the interface **and** ctrl+z /
             * cmd+z"*. It sits with the other things you press rather than
@@ -4059,7 +4067,18 @@ export default function HexLab({
         )}
         <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
         <Small suppressHydrationWarning>
-          {scene.units.length} units · {tree.seats.size} people · laid out in {ms.toFixed(0)}ms
+          {/**
+            * **Counted as people and places, not units and seats.** This read
+            * `{scene.units.length} units · {tree.seats.size} people` until
+            * 2026-11-06, and `seats` is nought on the people strata — every
+            * human is a unit now, so nothing is orbiting anything. With the
+            * teams strata gone that line said "0 people" about a map covered
+            * in them. *Place* is Greg's word, from the same day.
+            */}
+          {peopleIds.size} {peopleIds.size === 1 ? "person" : "people"} ·{" "}
+          {scene.units.length - peopleIds.size}
+          {scene.units.length - peopleIds.size === 1 ? " place" : " places"} ·
+          {" "}laid out in {ms.toFixed(0)}ms
         </Small>
         {stats ? (
           <>

@@ -4124,7 +4124,120 @@ the bar is set by.
 
 ---
 
+## The settings came off (2026-11-06)
 
+Greg cleared six switches off the study in one go, and the reason they could go
+is that the study had answered all six:
+
+> *"on hex, the smallest unit should always be people, so we don't need the
+> 'teams' view option · leave grow, sparrow, digital tailoring and 1000. Remove
+> Northwind for now · layout is always hex (remove orbits, but don't delete
+> orbital from main yet, we might keep it as an option) · place should always be
+> radial · rung is strictly out · wedge is 1 rung · cells are roomy · the above
+> should allow you to substantially remove or reduce the dialog box since we've
+> established the preferences going forward."*
+
+**Nothing about the picture changed.** Every one of those values was already the
+value the lab opened on, so this took away the ability to change them, not the
+thing being looked at. What it bought is a page with one control on it — which
+company — and a panel that only *reports*.
+
+The values and the reasoning now live together as constants at the top of
+`HexLab.tsx` (`LAYOUT`, `DRIVER`, `SIDEWAYS`, `DENSITY`, and `TAPER_RUNGS` in
+`defer.ts`). Each is deliberately typed as its **wider union** rather than as
+the literal, which keeps the other branch alive and type-checking instead of
+letting TypeScript narrow it into dead code the next tidy-up deletes. Turning
+one back on is a one-line edit.
+
+**Orbital is untouched.** Greg was explicit — *"don't delete orbital from main
+yet"* — so `layoutCompany`, `components/viz/orbital/` and `/org` are exactly as
+they were. What went is the lab's button for putting the two side by side,
+because that comparison has been made.
+
+**The teams strata is gone, and that is the larger half of this.** Until now a
+team could be one cell with its people as seats orbiting it, or every person
+could be their own cell. The page opened on *teams*. Greg added the people
+strata on 2026-10-03 — *"team nodes are the smallest absolute unit. In the next
+iteration, we should test human nodes being the smallest absolute unit, since
+this is what companies are made of"* — and it is the one that won. Which also
+retires the thing he named as the problem on 2026-10-02, *"one mode to view
+people, one to view the org"*: there is no longer a mode.
+
+`buildLabCompany(key)` lost its `strata` argument and the `Strata` type is
+gone. The `-people` suffix on `companyKey` **stays**, although there is only one
+strata now, because it is part of the key every saved arrangement is stored
+under — dropping it would orphan every arrangement Greg has made, and that is
+not worth tidiness.
+
+**Northwind lost its card**, and its shape did not. It is `NORTHWIND` in
+`company.ts` with no card on the page, reachable by `fromSpec`, which is what
+`scripts/hexZoning.ts` and `scripts/hexConfetti.ts` now use. `buildDeepOrg`
+still generates it, the pure scale tests still use it through
+`lib/map/layout/__tests__/fixtures/deepOrg.ts`, and `npm run db:northwind` still
+seeds it locally. **The cost is worth stating:** the lab can no longer *show*
+eleven rungs, so a fault that only appears at that size will not be caught by
+looking at this page. Run the scripts when scale is the question.
+
+### The third-node bug, which this change uncovered
+
+Dropping the teams strata turned three tests in `hand.test.ts` red, and two of
+them were red for a real reason rather than a fixture reason.
+
+**The map moved when you made the third thing on it.** Not the first, not the
+second — the third, on every company. Measured: five of Sparrow Jam's 27 units
+moved, up to ten cells; three of 110 on Digital Tailoring; one of 1,273 on the
+thousand-person company.
+
+`applyHand` walked the saved placements in order and refused any whose cell was
+occupied *at that moment*. That is one pass over a problem that needs two: if A
+wants the cell B is standing on and B is itself moving away, A is only blocked
+by the order the two happen to be visited in. Every single refusal measured was
+a cell whose holder was itself moving — **none** was a real conflict with a unit
+standing still.
+
+So the question is asked properly now: a cell is taken only if the unit on it is
+**staying put**. Refusing one placement makes that unit stay, which takes the
+cell it was standing on, so refusals cascade — and the cascade runs to a fixed
+point before anything is written. Each cell enters the queue at most twice, so
+it is linear rather than a re-run of the whole pass. Five tests cover it: a
+chain, a cycle where no cell is ever free, a refusal that cascades, two
+placements claiming one cell, and injectivity under a shuffle of every
+placement on two companies.
+
+**Why it hid for a week.** It arrived with `settle` on 2026-10-30, and the test
+that would have caught it built Sparrow Jam on the **teams** strata — five
+units, where the chains are too short to collide. The people strata has 27, and
+two made nodes were still not enough. It took three.
+
+### What the flinch tests became
+
+The two tests under *"the flinch itself"* proved the fault `settle` was built
+for: on the five-unit Sparrow Jam, one new node moved four of the five units up
+to five cells, and the map grew from 2,814 × 2,837 world units to 4,452 × 4,098.
+
+**That is no longer reproducible from this lab, and it is a finding rather than
+a fix.** The flinch was arithmetic about smallness — a sixth unit is a fifth of
+a five-unit company, enough to take the ring schedule in `radial.ts` from
+`[0,2]` to `[0,3,5]` and re-seat every rung outside it. With a person as the
+smallest unit the smallest company the lab can show is 27 units, and there one
+more node changes no schedule and moves nothing at all: **nought of 27**, where
+the five-unit shape moved four of five.
+
+So they now assert the stability rather than the fault, renamed to say so. They
+still earn their place — they are what would notice the engine starting to
+flinch again at a size somebody is actually looking at — and `settle`'s own
+promise is tested separately and did not depend on them. The account of the
+original fault stays in the doc comment on `settle`, which is where it belongs.
+
+### Checked
+
+`npx tsc --noEmit` clean. The hex lab's own suite is 55 passed, 1 expected fail
+(56), including the five new ones. `npx tsx scripts/hexZoning.ts` runs on all
+four shapes. Looked at in a browser on Sparrow Jam, Digital Tailoring and the
+1,000-person company — see *Verified, and not* below for what that did and did
+not cover.
+
+---
 
 ---
 

@@ -14,7 +14,7 @@
  * with the archipelago; `groupOf` is the half holding the branch together, and
  * this is what says so. See `docs/MAP-LAWS.md`.
  */
-import { buildLabCompany } from "@/app/lab/hex/company";
+import { NORTHWIND, fromSpec } from "@/app/lab/hex/company";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import { layoutTerritories } from "@/lib/map/layout/hex/territory";
 import { branchOf, placeIsland } from "@/lib/map/layout/hex/arrange";
@@ -63,7 +63,9 @@ function measure(tree: OrbitalTree, cells: ReadonlyMap<string, Cell>, scope?: Se
 }
 const pct = (n: number, d: number) => `${((100 * n) / Math.max(1, d)).toFixed(1)}%`;
 
-const { org, groups, leads } = buildLabCompany("northwind", "people");
+/** The eleven-rung company. It has no card on `/lab/hex` since 2026-11-06,
+ *  but it is the shape this script exists to measure. */
+const { org, groups, leads } = fromSpec(NORTHWIND);
 const tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
 const peopleIds = new Set(groups.map(([id]) => id));
 const base = layoutTerritories(tree, { leads: new Set(leads), people: peopleIds });

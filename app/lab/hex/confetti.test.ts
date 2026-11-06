@@ -135,7 +135,7 @@ describe("a dragged branch landing on occupied ground", () => {
   };
 
   beforeAll(() => {
-    const { org, groups, leads } = buildLabCompany("large", "people");
+    const { org, groups, leads } = buildLabCompany("large");
     tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
     const groupMap = new Map(groups);
     groupOf = (id) => groupMap.get(id) ?? id;

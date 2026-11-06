@@ -6,7 +6,7 @@
  * is pointing at. Each metric says in a comment what it counts and what it does
  * not.
  */
-import { buildLabCompany, COMPANIES, type CompanyKey, type Strata } from "@/app/lab/hex/company";
+import { NORTHWIND, buildLabCompany, fromSpec, COMPANIES, type CompanyKey } from "@/app/lab/hex/company";
 import { buildOrbitalTree, type OrbitalTree } from "@/lib/map/layout/model";
 import { allocateByTerritory } from "@/lib/map/layout/hex/territory";
 import { spacerRule } from "@/lib/map/layout/hex/spacing";
@@ -16,6 +16,19 @@ import { allocateByTerritory as allocate } from "@/lib/map/layout/hex/territory"
 
 const ORIGIN: Cell = { q: 0, r: 0 };
 const DEG = 180 / Math.PI;
+
+/**
+ * **The companies these diagnostics run on.**
+ *
+ * `"northwind"` is not one of the lab's cards any more — Greg took it off the
+ * page on 2026-11-06 — but it is the only shape that answers the scale
+ * question, so the scripts keep it. The `strata` argument that used to sit
+ * beside this went at the same time: a person is always the smallest unit.
+ */
+type ScaleKey = CompanyKey | "northwind";
+const build = (key: ScaleKey) => (key === "northwind" ? fromSpec(NORTHWIND) : buildLabCompany(key));
+const labelOf = (key: ScaleKey) =>
+  key === "northwind" ? "Northwind · 2,562 · 11 rungs (no card)" : COMPANIES[key].label;
 
 export type Laid = {
   tree: OrbitalTree;
@@ -38,8 +51,8 @@ export type Laid = {
  * Law 1 (two units on a cell), Law 4 (the spacer), Law 2 (teams in one piece)
  * and how many units still touch their family.
  */
-export function drag(key: CompanyKey, strata: Strata, branchName?: string) {
-  const { org, groups, leads } = buildLabCompany(key, strata);
+export function drag(key: ScaleKey, branchName?: string) {
+  const { org, groups, leads } = build(key);
   const tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
   const people = new Set(groups.map(([id]) => id));
   const laid = allocate(tree, {
@@ -60,7 +73,7 @@ export function drag(key: CompanyKey, strata: Strata, branchName?: string) {
   };
   const was = teamsWhole(clean);
   console.log(
-    `\n${COMPANIES[key].label} · ${strata} — picking up ${anchor.name}`
+    `\n${labelOf(key)} — picking up ${anchor.name}`
     + ` (rung ${anchor.depth}, its floor ${belongs}, on load ${hexDistance(home, ORIGIN)} out)`
     + `\n  on load: spacer ${breaches(clean)}, teams ${was.whole}/${was.teams},`
     + ` family ${pct(touchingFamily(clean).touching, touchingFamily(clean).children)}`,
@@ -100,8 +113,8 @@ export function drag(key: CompanyKey, strata: Strata, branchName?: string) {
   }
 }
 
-export function lay(key: CompanyKey, strata: Strata, opts: Record<string, unknown> = {}): Laid {
-  const { org, groups, leads } = buildLabCompany(key, strata);
+export function lay(key: ScaleKey, opts: Record<string, unknown> = {}): Laid {
+  const { org, groups, leads } = build(key);
   const tree = buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 });
   const people = new Set(groups.map(([id]) => id));
   const leadIds = new Set(leads);
@@ -284,13 +297,13 @@ export function branchArcs(l: Laid, parentName: string) {
 
 const pct = (n: number, d: number) => d === 0 ? "—" : `${((n / d) * 100).toFixed(1)}%`;
 
-export function report(key: CompanyKey, strata: Strata, opts: Record<string, unknown> = {}) {
-  const l = lay(key, strata, opts);
+export function report(key: ScaleKey, opts: Record<string, unknown> = {}) {
+  const l = lay(key, opts);
   const t = teamsWhole(l);
   const r = roundRungs(l);
   const f = touchingFamily(l);
   console.log(
-    `${COMPANIES[key].label} · ${strata}`.padEnd(34)
+    `${labelOf(key)}`.padEnd(34)
     + ` ${l.ms.toFixed(0)}ms`.padEnd(9)
     + ` units ${l.placed}`.padEnd(13)
     + ` unplaced ${l.unplaced}`.padEnd(13)
@@ -305,7 +318,7 @@ export function report(key: CompanyKey, strata: Strata, opts: Record<string, unk
 }
 
 export function granite(opts: Record<string, unknown> = {}) {
-  const nw = lay("northwind", "people", opts);
+  const nw = lay("northwind", opts);
   const g = branchArcs(nw, "Granite Division");
   if (!g) return;
   console.log(`Granite Division's children, as seen from Granite:`);
@@ -316,15 +329,12 @@ export function granite(opts: Record<string, unknown> = {}) {
 }
 
 if (process.argv[1]?.endsWith("hexZoning.ts")) {
-  const strataList: Strata[] = ["teams", "people"];
-  for (const key of ["small", "medium", "northwind"] as CompanyKey[]) {
-    for (const strata of strataList) report(key, strata);
-  }
+  for (const key of ["small", "medium", "large", "northwind"] as ScaleKey[]) report(key);
   console.log("");
   granite();
   console.log("\n--- the hand: what a dragged branch answers to ---");
-  drag("northwind", "people", "Everest Region");
-  drag("northwind", "people", "Aurora Team 241");
-  drag("medium", "people");
-  drag("small", "people");
+  drag("northwind", "Everest Region");
+  drag("northwind", "Aurora Team 241");
+  drag("medium");
+  drag("small");
 }

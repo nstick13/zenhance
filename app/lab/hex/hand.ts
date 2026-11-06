@@ -22,33 +22,84 @@ import { cellKey, type Cell } from "@/lib/map/layout/hex/coords";
  * at."* Measured on a saved arrangement from the other shape, 1,479 placements
  * produced 66 of them.
  *
- * Checking as we go keeps the map **injective at every step**, which is the
- * property that matters: the layout starts with one unit per cell, a placement
- * is only taken when its target is free, and taking it frees the cell that
- * unit came from. So the invariant cannot be broken by any sequence of
- * placements, however stale. Anything refused simply stays where the engine
- * put it, which is the honest answer to "that cell is not yours any more".
+ * The map must stay **injective** — one unit per cell — and the honest answer
+ * to a placement that cannot land is that the unit stays where the engine put
+ * it, which is what *"that cell is not yours any more"* means.
+ *
+ * ## Which cells are genuinely taken, and which only look it (2026-11-06)
+ *
+ * This used to walk `moves` in order and refuse any placement whose cell was
+ * occupied *at that moment*. That is one pass over a problem that needs two,
+ * and it refused placements it could have honoured: if A wants the cell B is
+ * standing on, and B is itself moving away, then A is only blocked by the
+ * order the two happen to be visited in.
+ *
+ * It showed up as **the map moving when you made the third thing**, on every
+ * company. Measured the day it was found, on a settled arrangement plus three
+ * made nodes: five of Sparrow Jam's 27 units moved, up to ten cells; three of
+ * 110 on Digital Tailoring; one of 1,273 on the thousand-person company. Every
+ * single refusal was a cell whose holder was itself moving away — none was a
+ * real conflict with a unit standing still. It was invisible until 2026-11-06
+ * because the test that drove it used the teams strata, where the chains are
+ * too short to collide, and it survived two nodes everywhere.
+ *
+ * So the question is asked properly now: **a cell is taken only if the unit on
+ * it is staying put.** Refusing one placement makes that unit stay, which in
+ * turn takes the cell it was standing on — so refusals cascade, and the cascade
+ * is run to a fixed point before anything is written. Each cell enters the
+ * queue at most twice, so this is linear, not a re-run of the whole pass.
+ *
+ * **Still injective, by construction.** Units that stay keep distinct cells,
+ * because the layout gave them distinct cells. Units that move go to distinct
+ * cells, because the first claim on a cell wins and later ones are dropped. And
+ * no mover's target is a stayer's cell, because that is exactly what the
+ * cascade removes. A placement onto a unit's *own* cell is not a move at all,
+ * so it is treated as staying — without that, two units could end up claiming
+ * one cell through it.
  */
 export function applyHand(
   laid: ReadonlyMap<string, Cell>,
   moves: ReadonlyMap<string, Cell>,
 ): { cells: Map<string, Cell>; occupants: Map<string, string> } {
-  const cells = new Map(laid);
-  const occupants = new Map<string, string>();
-  for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
+  /** Where the engine put each unit, by cell key. */
+  const home = new Map<string, string>();
+  for (const [id, cell] of laid) home.set(id, cellKey(cell));
+
+  /** The placements that could land, and who claims each cell. */
+  const want = new Map<string, Cell>();
+  const claimedBy = new Map<string, string>();
   for (const [id, cell] of moves) {
     // A unit that has been merged away still has its old placement saved, and
     // stamping that on would put a ghost back on the map with nothing behind
     // it. The layout is the authority on who exists.
-    if (!cells.has(id)) continue;
+    if (!laid.has(id)) continue;
     const key = cellKey(cell);
-    const holder = occupants.get(key);
-    if (holder !== undefined && holder !== id) continue;
-    const had = cells.get(id);
-    if (had) occupants.delete(cellKey(had));
-    cells.set(id, cell);
-    occupants.set(key, id);
+    // Already standing there: nothing to move, and nothing to claim.
+    if (key === home.get(id)) continue;
+    // Two saved placements on one cell. The first wins, which is arbitrary but
+    // stable — and the loser keeps the cell the engine gave it.
+    if (claimedBy.has(key)) continue;
+    claimedBy.set(key, id);
+    want.set(id, cell);
   }
+
+  // Every unit that is staying holds its cell against all comers; refusing a
+  // mover makes it stay, so the cell it was standing on is held in turn.
+  const held: string[] = [];
+  for (const [id, key] of home) if (!want.has(id)) held.push(key);
+  while (held.length) {
+    const key = held.pop()!;
+    const mover = claimedBy.get(key);
+    if (mover === undefined) continue;
+    claimedBy.delete(key);
+    want.delete(mover);
+    held.push(home.get(mover)!);
+  }
+
+  const cells = new Map(laid);
+  for (const [id, cell] of want) cells.set(id, cell);
+  const occupants = new Map<string, string>();
+  for (const [id, cell] of cells) occupants.set(cellKey(cell), id);
   return { cells, occupants };
 }
 

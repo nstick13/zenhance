@@ -100,6 +100,74 @@ and the two inputs are allowed to differ.
 Agents should not settle these alone. Each changes how the product feels or
 what it costs, and that is not a refactor's call.
 
+### ☐ The layout engine still isn't quite right — *Greg, 2026-11-06*
+
+Greg asked, while clearing the settings off the hex lab: *"Make a note that the
+layout engine still isn't quite right."* So this is the note. **He did not say
+what he is seeing**, and nobody should guess and then go and fix the wrong
+thing — the first job here is to ask him, with the map in front of him, which
+of these it is.
+
+**In plain English:** the engine is the thing that decides where every person
+and every team stands on the honeycomb. It gets the big things right — nobody
+is ever on top of anybody else, and nothing ever falls off the map — but there
+are four places where it does not keep its own promises, and all four are
+things you would see rather than things only a test knows about.
+
+**What the diagnostics say**, from `npx tsx scripts/hexZoning.ts` on
+2026-11-06, on all four shapes:
+
+| Company | units | a child touches its family | teams in one piece | strayed |
+|---|---:|---:|---:|---:|
+| Sparrow-ish, 10 | 27 | 84.6% | 5/5 | 0 |
+| Digital Tailoring-ish, 45 | 110 | 82.6% | 13/13 | 0 |
+| 1,000 · 8 rungs | 1,273 | 83.9% | **162/165** | 0 |
+| Northwind, 2,562 · 11 rungs | 2,957 | 84.5% | **389/395** | **1** |
+
+1. **About one child in six does not touch its family**, and it is one in six
+   on *every* company — 82.6% to 84.6% across a twenty-fold range of size. A
+   figure that flat is a shortfall in the rule itself, not something that creeps
+   in at scale, and it is the single biggest thing between the map and *"my team
+   is over here"*.
+2. **Teams come apart on the larger companies.** Three of 165 on the
+   thousand-person company and six of 395 on Northwind are in two or more
+   pieces. Law 2 says *a body stays whole* (`docs/MAP-LAWS.md`), so these are
+   the law being broken, not a preference being traded.
+3. **A dragged branch is not always kept where it is put.** Dropping *Aurora
+   Team 241* at two of seven distances reports `hand kept no` — Law 0 says the
+   hand outranks the engine, and that is the most consequential promise the
+   lattice makes.
+4. **A drop can breach the spacing rule**, which a clean load never does. The
+   same drops report `spacer 2` and `spacer 4` where a load reports nought.
+   Law 4 is *one measure of distance*; these are places where a gesture leaves
+   the map in a state the engine would not have produced.
+
+**What is *not* wrong**, so nobody spends a day on it: no unit is ever unplaced,
+nothing ever shares a cell, no rung ever loops back round the centre (`round
+0/394` on Northwind), and the whole 2,957-cell company lays out in 90ms.
+
+*For whoever picks it up:* the owner of where things go is
+`allocateByTerritory` in `lib/map/layout/hex/territory.ts`, which runs the
+radial driver (`radial.ts`) — the only driver now, since the atlas came off the
+lab's panel on 2026-11-06. The rules it answers to are in
+`docs/MAP-LAWS.md`; the spacing rule itself is `spacing.ts`, the fan is
+`compass.ts`, and what a dropped branch answers to is `defer.ts`. **Don't start
+by reading the engine** — start by running `scripts/hexZoning.ts`, which prints
+every figure above and is how most of these were found. Items 3 and 4 are
+about a *gesture*, so they are `defer.ts` and `tidy.ts` rather than the placer.
+
+> **One of these was found and fixed on 2026-11-06, and is not in the list
+> above.** The map moved when you made the *third* thing on it, on every
+> company — five of Sparrow Jam's 27 units, up to ten cells away. `applyHand`
+> walked the saved placements in order and refused any whose cell was occupied
+> at that moment, so a chain (A wants B's cell, B wants C's) broke on the order
+> it happened to be visited in; every refusal was a cell whose holder was itself
+> moving away. It is now asked properly — a cell is taken only if the unit on it
+> is staying put, with refusals cascading to a fixed point — in
+> `app/lab/hex/hand.ts`, with five tests. It had been there since `settle`
+> landed on 2026-10-30 and was hidden by a test fixture using the teams strata,
+> where the chains are too short to collide.
+
 ### ☐ A view built around people, not the org chart — *raised by Greg, 2026-10-02*
 
 Everything the hex map draws is the **organisation**: cells are units, colour is
