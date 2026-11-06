@@ -35,12 +35,14 @@ because a ring layout sets its own extent.
 Greg asked for it on 2026-09-29. It lives on `lab`, at `/lab/hex`. Nothing
 about `/org` has changed.
 
-**Zoom is a separate note.** What should happen as the camera pulls back — people
-into teams into functions into a company — and what triggers each change, is
-**[HEX-ZOOM.md](HEX-ZOOM.md)**, written 2026-11-06 and not built. The short version:
-the whole ladder can hang off how many pixels wide a cell is on the glass, and the
-zoom range available runs from about three and a half doublings on a ten-person
-company to seven and a half on Northwind.
+**Zoom is a separate note.** What happens as the camera pulls back — people into
+teams into functions into a company — and what triggers each change, is
+**[HEX-ZOOM.md](HEX-ZOOM.md)**, designed and built on 2026-11-06. The short
+version: the whole ladder hangs off how many pixels wide a cell is on the glass,
+and the zoom range available runs from about three and a half doublings on a
+ten-person company to seven and a half on Northwind — so a fixed ladder gives a
+small company its top rungs only, which is right, because a ten-person company
+has no team-of-teams level to show.
 
 ---
 

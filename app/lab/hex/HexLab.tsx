@@ -53,11 +53,22 @@ import {
   type Cell, type Point,
 } from "@/lib/map/layout/hex/coords";
 import {
-  cameraAbout, cullBox, fitCamera, minScaleFor, wheelZoom, type Camera, type Size,
+  cameraAbout, cameraProgress, clampScale, cullBox, easeOutCubic, fitCamera, minScaleFor,
+  wheelZoom, type Camera, type Size,
 } from "@/lib/map/camera/viewport";
 import {
-  LOD_LADDER, drawnUnitRadius, isLandmark, revealAt, smoothstep, tierAt, unitLabelVisible,
+  drawnUnitRadius, isLandmark, smoothstep, unitLabelVisible,
 } from "@/lib/map/camera/lod";
+import {
+  HEX_LADDER,
+  cellPxOf,
+  hexRevealAt,
+  levelAt,
+  placePresence,
+  scaleForLevel,
+  stepLevel,
+  type HexLevel,
+} from "@/lib/map/camera/hexLod";
 
 export type LabOrg = OrgInput;
 
@@ -112,30 +123,29 @@ const PURPOSES = [
  */
 const RADIATE_WINDOW_MS = 5_000;
 
+/**
+ * **How long it takes to travel between two rungs of the zoom ladder.**
+ *
+ * Long enough to see where you went — the whole value of a named jump is that
+ * you keep your bearings, and a cut does not give you that — and short enough
+ * that pressing it twice in a row does not feel like waiting. `CAMERA_MS` in
+ * the camera engine is 560, which is right for flying across a company and too
+ * slow for stepping one rung.
+ */
+const LEVEL_TRAVEL_MS = 420;
+
 /** How faint a connection line goes where it passes behind somebody's tile.
  *  Faint enough to read as *behind* rather than *through*, strong enough that
  *  the eye can still follow it out the far side. */
 const BEHIND_ALPHA = 0.18;
 
 /**
- * When the people appear, measured in **cell pixels** rather than world scale
- * (Greg, 2026-10-02).
- *
- * *"Right now it feels like we need to zoom too far before people become
- * visible… Ideally, we want to be able to see two or three teams on a standard
- * 13" display, and more on a larger screen."*
- *
- * The orbital map reveals people at 1.7–2.1× world scale, which is the right
- * question asked of the wrong map: there, a unit's size depends on what it
- * carries. Here every cell is the same size, so the honest question is how big
- * a cell is **on the glass** — and that answer travels, because it is the same
- * on a 13" laptop and a 32" monitor.
- *
- * Fully shown once a cell's circumradius reaches 230px: a cell is then 460px
- * across, so a 1440px-wide laptop shows about three teams, and a larger screen
- * proportionally more. They start arriving at 140px, around five cells across.
+ * **When the people appear is no longer kept here.** It was the first thing on
+ * this map measured in cell-pixels rather than world scale — Greg, 2026-10-02,
+ * asking for people sooner — and on 2026-11-06 it became the first rung of a
+ * whole ladder measured that way. It now lives with the rest of it, as
+ * `PEOPLE_AT_CELL_PX` in `lib/map/camera/hexLod.ts`, with his words attached.
  */
-const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
 
 /**
  * **How much of a corner comes off a node's hexagon.** Greg asked for a
@@ -225,6 +235,27 @@ const TEAM_GROUND = 0.30;
  * "the same colour, darker" means to the eye.
  */
 const TEAM_EDGE_DARKER = 0.10;
+
+/**
+ * **A region's ground, which is a team's ground one rung out.**
+ *
+ * When the zoom ladder hands the place outward — Greg, 2026-11-06: *"companies,
+ * which would bubble all teams on the same branch together as a super-gummy
+ * bear blob"* — a division takes its ground exactly the way a team takes its
+ * own, at exactly the same strength.
+ *
+ * **It was two thirds of a team's for an afternoon, on the theory that a
+ * division covers many times the area and would read as a slab.** Looked at,
+ * that was plainly wrong, and wrong in an instructive way: alpha is not about
+ * area, it is about how firmly a place says it is there, and a place should
+ * say that equally firmly wherever it sits in the hierarchy. What the lighter
+ * value actually did was make the map go **pale as you pulled back** — the
+ * per-cell wash and the team grounds both stepping aside for something fainter
+ * than either — which is the opposite of the whole point. The same number it
+ * is, and if a region ever does read as a slab the answer is the edge, not the
+ * fill.
+ */
+const REGION_GROUND = TEAM_GROUND;
 
 /**
  * **How far a team's ground stands clear of the cells it holds.** Greg,
@@ -1489,8 +1520,59 @@ export default function HexLab({
    * it, which sit on different rungs. Doing it properly anyway costs four
    * additions and survives the day a team stops being one hue.
    */
+  /**
+   * **The averaged colour of a set of active hexagons**, as a ground and the
+   * line round it. Pulled out of `teamTints` on 2026-11-06 because the zoom
+   * ladder needs the same thing one rung out: when a division becomes the
+   * place you are looking at, it takes its ground the way a team takes its
+   * own, and the two must be the same arithmetic or they will not look like
+   * the same idea.
+   */
+  const tintOf = useCallback((
+    ids: Iterable<string>,
+    ground: number,
+    /**
+     * **Whose tone the ground takes**, when it should not be the average.
+     *
+     * For a team, averaging is right and is what Greg asked for: a handful of
+     * people a rung or two apart, with their own tiles sitting on top of the
+     * result carrying the colour.
+     *
+     * For a **region** it is wrong, and it was wrong on screen before it was
+     * wrong in theory — at the outermost zooms every gummy bear came out a
+     * pale grey-lavender. The arithmetic is why: `toneOf` lightens with depth,
+     * a region of five hundred people is almost all leaves, and so the average
+     * tone of a division is the tone of its *deepest* rung — the palest one
+     * there is — with nothing drawn over the top to rescue it.
+     *
+     * So a region averages the **hue**, which is what says *this family*, and
+     * takes its **tone** from its own node, which is what says *this rung*.
+     */
+    tone?: { l: number; s: number },
+  ) => {
+    let x = 0, y = 0, l = 0, sat = 0, n = 0;
+    for (const id of ids) {
+      const unit = scene.unitById.get(id);
+      if (!unit) continue;
+      const hue = ((hueById.get(id) ?? 0) * Math.PI) / 180;
+      const own = tone ?? toneOf(unit.depth, maxDepth);
+      x += Math.cos(hue); y += Math.sin(hue);
+      l += own.l; sat += own.s; n++;
+    }
+    if (n === 0) return null;
+    const hue = ((Math.atan2(y / n, x / n) * 180) / Math.PI + 360) % 360;
+    const h = hue.toFixed(1);
+    const sp = ((sat / n) * 100).toFixed(0);
+    const lp = (l / n) * 100;
+    return {
+      fill: (alpha = 1) => `hsla(${h}, ${sp}%, ${lp.toFixed(0)}%, ${ground * alpha})`,
+      line: (alpha = 1) =>
+        `hsla(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%, ${alpha})`,
+    };
+  }, [scene, hueById, maxDepth]);
+
   const teamTints = useMemo(() => {
-    const out = new Map<string, { fill: string; line: string }>();
+    const out = new Map<string, ReturnType<typeof tintOf>>();
     if (!groups?.length) return out;
     const members = new Map<string, string[]>();
     for (const [unitId, teamId] of groups) {
@@ -1501,37 +1583,283 @@ export default function HexLab({
     // The team's own node stands on this ground too, and is one of the active
     // hexagons the average is over.
     for (const [teamId, list] of members) list.push(teamId);
-    for (const [teamId, ids] of members) {
-      let x = 0, y = 0, l = 0, sat = 0, n = 0;
-      for (const id of ids) {
-        const unit = scene.unitById.get(id);
-        if (!unit) continue;
-        const hue = ((hueById.get(id) ?? 0) * Math.PI) / 180;
-        const tone = toneOf(unit.depth, maxDepth);
-        x += Math.cos(hue); y += Math.sin(hue);
-        l += tone.l; sat += tone.s; n++;
+    for (const [teamId, ids] of members) out.set(teamId, tintOf(ids, TEAM_GROUND));
+    return out;
+  }, [groups, tintOf]);
+
+  /**
+   * **The same ground, for a region rather than a team.**
+   *
+   * The zoom ladder hands the place outward as you pull back — a team, then a
+   * team of teams, then a division, then the company — and whichever rung is
+   * currently *the* place draws the way a team does. So every bubble needs the
+   * averaged colour of everything standing inside it, not just teams.
+   *
+   * A region's ground is lighter than a team's: it covers many times the area,
+   * and at the same strength a division reads as a slab rather than as a
+   * place. `REGION_GROUND` is the one dial.
+   */
+  const bubbleTints = useMemo(() => {
+    const out = new Map<string, ReturnType<typeof tintOf>>();
+    if (!bubbles.length) return out;
+    const kids = new Map<string, string[]>();
+    for (const unit of scene.units) {
+      if (!unit.parentId) continue;
+      const list = kids.get(unit.parentId) ?? [];
+      list.push(unit.id);
+      kids.set(unit.parentId, list);
+    }
+    for (const bubble of bubbles) {
+      // Everything under this node, including the node itself — the same set
+      // the bubble's own shape was built from.
+      const ids: string[] = [];
+      const stack = [bubble.unitId];
+      while (stack.length) {
+        const id = stack.pop()!;
+        ids.push(id);
+        for (const kid of kids.get(id) ?? []) stack.push(kid);
       }
-      if (n === 0) continue;
-      const hue = ((Math.atan2(y / n, x / n) * 180) / Math.PI + 360) % 360;
-      const h = hue.toFixed(1);
-      const sp = ((sat / n) * 100).toFixed(0);
-      const lp = (l / n) * 100;
-      out.set(teamId, {
-        fill: `hsla(${h}, ${sp}%, ${lp.toFixed(0)}%, ${TEAM_GROUND})`,
-        line: `hsl(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%)`,
-      });
+      out.set(bubble.unitId, tintOf(ids, REGION_GROUND, toneOf(bubble.depth, maxDepth)));
     }
     return out;
-  }, [groups, scene, hueById, maxDepth]);
+  }, [bubbles, scene, tintOf, maxDepth]);
+
+  /**
+   * **Which rungs outside a team could take over from it.**
+   *
+   * The ladder hands a place outward, and the handover only works if there is
+   * something out there to hand it *to*. There often is not: a unit only
+   * reaches bubble tier 1 if its children are big enough to count as places,
+   * so on Digital Tailoring just **three** nodes have a bubble at all, and on
+   * Northwind it was 51 of 117. Fading every team's ground out on the way to
+   * a region that does not exist leaves those teams as grey smudges belonging
+   * to nothing — which is what the first version of this did, and it was
+   * plainest on the 45-person company, where the outermost zoom went almost
+   * white.
+   *
+   * So each team is asked which of its ancestors actually has a bubble. If
+   * none of them is currently drawing as a place, the team keeps its own
+   * ground however far out you pull: nothing has taken over, so nothing is
+   * given up.
+   */
+  const teamCover = useMemo(() => {
+    const out = new Map<string, number[]>();
+    if (!teamOutlines.length || !allocation.tier) return out;
+    const bubbled = new Set(bubbles.map((b) => b.unitId));
+    for (const team of teamOutlines) {
+      const tiers: number[] = [];
+      let id: string | null = scene.unitById.get(team.teamId)?.parentId ?? null;
+      while (id) {
+        if (bubbled.has(id)) {
+          const tier = allocation.tier.get(id);
+          if (tier !== undefined) tiers.push(tier);
+        }
+        id = scene.unitById.get(id)?.parentId ?? null;
+      }
+      out.set(team.teamId, tiers);
+    }
+    return out;
+  }, [teamOutlines, bubbles, scene, allocation.tier]);
+
+  /**
+   * **How wide a typical region is at each rung, in world units.**
+   *
+   * This is the whole input to the recursion in `placePresence`: the ladder
+   * asks, of every rung at once, whether a region at that rung is big enough
+   * on screen to read as a place. Tier nought is a team; tier one a team of
+   * teams, and so on outward.
+   *
+   * **The median, not the mean.** Every company has one enormous division and
+   * a long tail of small ones, and a mean follows the enormous one — which
+   * would hold a rung on screen long after the regions you are actually
+   * looking at had become specks.
+   */
+  const footprints = useMemo(() => {
+    const spans = new Map<number, number[]>();
+    const add = (tier: number, span: number) => {
+      const list = spans.get(tier) ?? [];
+      list.push(span);
+      spans.set(tier, list);
+    };
+    if (hexScene) {
+      const size = hexScene.hex.size;
+      for (const team of teamOutlines) {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const cell of team.cells) {
+          const at = cellToWorld(cell, size);
+          minX = Math.min(minX, at.x); maxX = Math.max(maxX, at.x);
+          minY = Math.min(minY, at.y); maxY = Math.max(maxY, at.y);
+        }
+        // Plus the cell itself at either end, so a one-cell team is one cell
+        // wide rather than nothing wide.
+        add(0, Math.max(maxX - minX, maxY - minY) + 2 * size);
+      }
+    }
+    for (const bubble of bubbles) {
+      add(bubble.tier, Math.max(bubble.box.maxX - bubble.box.minX, bubble.box.maxY - bubble.box.minY));
+    }
+    const out = new Map<number, number>();
+    for (const [tier, list] of spans) {
+      list.sort((a, b) => a - b);
+      out.set(tier, list[Math.floor(list.length / 2)]);
+    }
+    return out;
+  }, [teamOutlines, bubbles, hexScene]);
 
   const floor = useMemo(
     () => minScaleFor(scene.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 }, size),
     [scene, size],
   );
+  /**
+   * **`prefers-reduced-motion`.** Three things move on this page — the neck
+   * arming over the dwell, a node breathing until it is described, and since
+   * 2026-11-06 the camera travelling between two rungs of the zoom ladder —
+   * and all three stand down for anybody who has asked for that. The jump
+   * still *happens*; it simply arrives rather than travels, which is the right
+   * reading of the setting: it asks for less motion, not less function.
+   *
+   * Watched rather than read once, because it can change while the page is
+   * open.
+   */
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const read = () => setStill(mq.matches);
+    read();
+    mq.addEventListener("change", read);
+    return () => mq.removeEventListener("change", read);
+  }, []);
+
   const [camera, setCamera] = useState<Camera>({ scale: 0.05, x: 0, y: 0 });
+
+  /**
+   * **The one number the whole ladder reads** — how many pixels a cell covers
+   * on the glass. See `lib/map/camera/hexLod.ts` for why it is this and not
+   * world scale, the window size, or how many nodes are on screen.
+   */
+  const cellPx = cellPxOf(hexScene?.hex.size ?? 1, camera.scale);
+  const level = levelAt(cellPx);
   const fit = useCallback(() => {
     if (scene.bounds) setCamera(fitCamera(scene.bounds, size, { min: floor }));
   }, [scene, size, floor]);
+
+  /**
+   * **Going to a rung of the ladder, rather than scrubbing until you arrive.**
+   *
+   * Greg asked for *"several levels of zoom, and smooth animations between
+   * them"*, and those are two separate features that are easy to confuse. The
+   * **morph** is what the painter does every frame, continuously, as the wheel
+   * turns — there are no steps in it and there should not be. This is the
+   * other half: a way to *name* a rung and go there, which is what makes the
+   * ladder learnable at all. Reachable only by scrubbing, the levels might as
+   * well not have names.
+   *
+   * **The centre of the window stays put** while it travels. The scale is
+   * interpolated **geometrically** — a camera moves in multiples, not in
+   * additions, so halfway between 4× and 230× is 30×, not 117× — and the
+   * offset is recomputed from that scale each frame rather than interpolated
+   * alongside it, which is what keeps the point under the middle of the screen
+   * exactly still instead of drifting and settling.
+   *
+   * It is also where the zoom can run out: a rung past `MAX_SCALE`, or past
+   * the floor that stops you pulling back further than the whole company, is
+   * clamped. A ten-person company simply cannot reach the outer rungs, which
+   * is the ladder eliding itself rather than a failure.
+   */
+  const travel = useRef<number>(0);
+  const arrival = useRef<number>(0);
+  /**
+   * **Where the camera is, for a journey that is about to start.**
+   *
+   * A ref rather than reading `camera` through a `setCamera` updater, which is
+   * what this did for an hour and which does not work: React may run an
+   * updater more than once, so the journey started twice from two different
+   * places and the two loops fought over every frame. It landed wherever the
+   * loser's last write happened to be — pressing *Function* on the
+   * thousand-person company arrived at 7.2px instead of 14px, which looks for
+   * all the world like a clamp and is not one. An updater must be pure; this
+   * is the side effect moved out of it.
+   */
+  const cameraRef = useRef(camera);
+  useEffect(() => { cameraRef.current = camera; }, [camera]);
+
+  const jumpTo = useCallback((target: HexLevel) => {
+    if (!hexScene) return;
+    cancelAnimationFrame(travel.current);
+    const from = cameraRef.current;
+    const want = clampScale(scaleForLevel(target, hexScene.hex.size), floor);
+    const screen = { x: size.width / 2, y: size.height / 2 };
+    const centre = {
+      x: (screen.x - from.x) / from.scale,
+      y: (screen.y - from.y) / from.scale,
+    };
+    /**
+     * **A jump arrives at something, not at empty ground.**
+     *
+     * Holding the middle of the window still is the predictable thing to do
+     * and is what the wheel does, so that is the default. But a named jump is
+     * a navigational act rather than a nudge, and this map has a great deal of
+     * blank lattice in it — pressing *Person* while the middle of the window
+     * happens to be over open ground zooms all the way in on nothing, which is
+     * the worst moment the ladder can give you.
+     *
+     * So: if there is nobody under the middle of the window, aim at whoever is
+     * nearest to it. The shift is as small as it can be, because it is the
+     * *nearest*, and in the common case — the middle of the window is over the
+     * company, as it is after `fit` — there is no shift at all.
+     */
+    const here = allocation.occupants.get(cellKey(worldToCell(centre, hexScene.hex.size)));
+    let world = centre;
+    if (!here) {
+      let best = Infinity;
+      for (const unit of scene.units) {
+        const d = (unit.x - centre.x) ** 2 + (unit.y - centre.y) ** 2;
+        if (d < best) { best = d; world = { x: unit.x, y: unit.y }; }
+      }
+    }
+    const settle = (s: number) => cameraAbout(s, world, screen);
+    if (still || Math.abs(Math.log(want / from.scale)) < 0.01) {
+      setCamera(settle(want));
+      return;
+    }
+    const t0 = performance.now();
+    const ratio = want / from.scale;
+    const step = () => {
+      const progress = cameraProgress(performance.now() - t0, LEVEL_TRAVEL_MS);
+      setCamera(settle(from.scale * ratio ** easeOutCubic(progress)));
+      if (progress < 1) travel.current = requestAnimationFrame(step);
+      else window.clearTimeout(arrival.current);
+    };
+    travel.current = requestAnimationFrame(step);
+    /**
+     * **A journey always arrives, even if nobody watches it.**
+     *
+     * `requestAnimationFrame` stops firing while a tab is in the background,
+     * so a jump begun just before somebody switched away would freeze at
+     * whatever fraction it had reached and be sitting there, between two
+     * rungs, when they came back. Caught while driving this in a browser pane
+     * that had been hidden: pressing *Function* from *Team* left the camera at
+     * 28px, which is neither.
+     *
+     * So the animation is the nice way to arrive and this is the guarantee.
+     * Whichever gets there first cancels the other.
+     */
+    window.clearTimeout(arrival.current);
+    arrival.current = window.setTimeout(() => {
+      cancelAnimationFrame(travel.current);
+      setCamera(settle(want));
+    }, LEVEL_TRAVEL_MS + 150);
+  }, [hexScene, floor, size, still, allocation, scene]);
+
+  /** A gesture of the user's own outranks a journey they started earlier. */
+  const stopTravel = useCallback(() => {
+    cancelAnimationFrame(travel.current);
+    window.clearTimeout(arrival.current);
+  }, []);
+  useEffect(() => () => {
+    cancelAnimationFrame(travel.current);
+    window.clearTimeout(arrival.current);
+  }, []);
   /**
    * Fit when the *picture* changes, never when the arrangement does.
    *
@@ -1737,6 +2065,31 @@ export default function HexLab({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [undo]);
+
+  /**
+   * **`[` and `]` step out and in a rung of the zoom ladder.**
+   *
+   * Not `cmd+-` and `cmd+=`, which is what the design note first suggested and
+   * what a browser uses to resize the whole page. Taking those from somebody
+   * who meant to make the text bigger is a worse fault than the shortcut being
+   * slightly less obvious, and the buttons on the panel are the discoverable
+   * route in any case. Bare keys, so they do not fight anything, and never
+   * while a name is being typed.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "[" && e.key !== "]") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const on = e.target as HTMLElement | null;
+      if (on && (on.tagName === "INPUT" || on.tagName === "TEXTAREA" || on.isContentEditable)) return;
+      const next = stepLevel(cellPx, e.key === "]" ? "in" : "out");
+      if (!next) return;
+      e.preventDefault();
+      jumpTo(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cellPx, jumpTo]);
 
   const commit = useCallback((
     cells: Map<string, Cell>,
@@ -2033,21 +2386,6 @@ export default function HexLab({
   );
 
   /**
-   * **`prefers-reduced-motion`.** Two things move on this page — the neck
-   * arming over the dwell, and a node breathing until it is described — and
-   * both stand down for anybody who has asked for that. Watched rather than
-   * read once, because the setting can change while the page is open.
-   */
-  const [still, setStill] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const read = () => setStill(mq.matches);
-    read();
-    mq.addEventListener("change", read);
-    return () => mq.removeEventListener("change", read);
-  }, []);
-
-  /**
    * **A clock, and only while the hand is resting on somebody.**
    *
    * The neck below grows over the dwell, and nothing else repaints while the
@@ -2085,6 +2423,72 @@ export default function HexLab({
     const { scale } = camera;
     const view = cullBox(camera, size);
     const hexSize = hexScene?.hex.size ?? 1;
+
+    /**
+     * **The zoom ladder, read fresh every frame from the live camera.**
+     *
+     * One number in — how many pixels a cell covers on the glass — and out of
+     * it comes how much a person reads as themselves, how much any single tile
+     * reads at all, whether a tile carries its own name, and which rung of the
+     * hierarchy currently draws as a place of its own. Every figure is a
+     * continuous curve, so detail morphs rather than switching on.
+     *
+     * The lattice makes this nearly free: cells do not move when you zoom, so
+     * unlike the orbital map nothing has to animate position. Only presence and
+     * colour cross-fade, which is also why it should hold up on the old iPad in
+     * AGENTS.md.
+     */
+    const px = cellPxOf(hexSize, scale);
+    const reveal = hexRevealAt(px);
+    const place = placePresence(footprints, scale);
+
+    /**
+     * **A team is the innermost place, and it hands itself outward.**
+     *
+     * `place.get(0)` is 1 everywhere you can see a team properly, which is
+     * every zoom this map had before the ladder existed — so close in, nothing
+     * here changed. Pull back far enough that a team is a smudge and it falls
+     * away, while the rung outside it takes the ground above. That handover is
+     * the whole ladder, and a team is simply its first rung.
+     */
+    const teamPlace = teamOutlines.length > 0 ? (place.get(0) ?? 1) : 0;
+    /** How much of this team's job some region outside it has taken over. */
+    const takenOver = (teamId: string) => {
+      let most = 0;
+      for (const tier of teamCover.get(teamId) ?? []) most = Math.max(most, place.get(tier) ?? 0);
+      return most;
+    };
+    /** So a team's ground is whichever is stronger: its own rung being the
+     *  place, or nobody outside it having taken that job on. */
+    const groundOf = (teamId: string) => Math.max(teamPlace, 1 - takenOver(teamId));
+    /**
+     * **And the grey room lasts exactly as long as the strongest team does.**
+     *
+     * Both grey layers are opaque, which is deliberate — the room must read
+     * the same whatever wash it falls inside — and opaque is what makes them
+     * dangerous out here: pulled back, those thin collars are most of the map,
+     * so leaving them up paints flat grey over every region's ground and the
+     * company comes out pale. Tried first as *teams plus their groups*, which
+     * kept them at full strength through exactly the rung where a group
+     * becomes the gummy bear, and so hid the thing the rung exists to show.
+     *
+     * The honest rule is: the room between teams means something until a
+     * region has taken the job of being the place, and nothing afterwards.
+     *
+     * **Asked of the map, not of each team**, which is forced rather than
+     * chosen: both greys are a single merged path apiece, so there is one
+     * alpha to give them and it cannot vary team by team. Taking the strongest
+     * team's own ground was tried and is worse than it sounds — it is a
+     * maximum, so a single team that no region contains holds the grey up at
+     * full strength across the whole company, which on the 45-person company
+     * meant nothing changed at all. The question a shared path can answer is
+     * the shared one: has any rung outside a team become the place?
+     */
+    let regionTaken = 0;
+    for (const [tier, strength] of place) {
+      if (tier >= 1) regionTaken = Math.max(regionTaken, strength);
+    }
+    const roomBetween = 1 - regionTaken;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -2262,12 +2666,39 @@ export default function HexLab({
          * the nodes take over.
          */
         const onScreen = Math.max(box.maxX - box.minX, box.maxY - box.minY) * scale;
-        const weight = Math.min(1, (onScreen - 48) / 112);
-        if (weight <= 0) continue;
+        const weight = smoothstep(48, 160, onScreen);
+
+        /**
+         * **And how much this rung is *the* place right now** — the zoom
+         * ladder's recursion, which is what makes a conglomerate the same
+         * mechanism as a team instead of a sixth special case.
+         *
+         * Greg, 2026-11-06: *"then there's companies, which would bubble all
+         * teams on the same branch together as a super-gummy bear blob."* That
+         * is this: when a rung is big enough to read and the rung inside it has
+         * become too small to bother with, this rung takes the ground and the
+         * edge a team takes when you are close in, and the teams inside it fade
+         * into it. Pull back another step and the same thing happens one rung
+         * further out, for as many rungs as the company has.
+         */
+        const solid = place.get(bubble.tier) ?? 0;
+        if (weight <= 0 && solid <= 0.004) continue;
 
         const hue = hueFor(bubble.unitId);
-        ctx.fillStyle = css(hue, bubble.depth, maxDepth, 0.05 * weight);
-        ctx.fill(bubble.fill, "evenodd");
+        if (weight > 0) {
+          ctx.fillStyle = css(hue, bubble.depth, maxDepth, 0.05 * weight);
+          ctx.fill(bubble.fill, "evenodd");
+        }
+        if (solid > 0.004) {
+          const tint = bubbleTints.get(bubble.unitId);
+          if (tint) {
+            ctx.fillStyle = tint.fill(solid);
+            ctx.fill(bubble.fill, "evenodd");
+            ctx.lineWidth = Math.max(0.7, 2.2 / scale);
+            ctx.strokeStyle = tint.line(solid);
+            ctx.stroke(bubble.fill);
+          }
+        }
 
         /**
          * **No line round a region** (Greg, 2026-10-16): *"there are borders
@@ -2299,11 +2730,37 @@ export default function HexLab({
      * each a step darker than the last, and nothing in any of them says which
      * colour the team is.
      */
-    if (groupRings) {
+    /**
+     * **The grey room recedes with the thing it is room around.**
+     *
+     * Greg's rule since 2026-10-18 is that *colour is for what is there, grey
+     * is for the room around it*, and these two layers are the room: the
+     * collar of clear hexagons each team keeps, and the ring round a group of
+     * them. Both are **opaque**, deliberately, so that the room reads the same
+     * whatever territory wash it falls inside.
+     *
+     * Opaque is exactly what broke the outermost rungs of the ladder. Close
+     * in, the collar is a thin margin between tiles. Pulled back, those
+     * margins are most of the map — so a flat grey went down over every
+     * region's ground and the whole company came out pale, which is the
+     * opposite of a super-gummy-bear blob. It is the same trap as the five-
+     * times-thicker team line of 2026-11-06: a constant that is right at one
+     * zoom and swamps the picture at another.
+     *
+     * So the room fades with whatever it is room *around*. The collar between
+     * teams goes when a team stops being the subject — inside a blob it would
+     * only cut the blob into pieces. The ring round a group lasts one rung
+     * longer, because at the rung where a group *is* the gummy bear its ring
+     * is that bear's own outside edge.
+     */
+    if (groupRings && roomBetween > 0.004) {
+      ctx.globalAlpha = roomBetween;
       ctx.fillStyle = "#f7f8fa";
       ctx.fill(groupRings.fill, "evenodd");
+      ctx.globalAlpha = 1;
     }
-    if (teamSpacers) {
+    if (teamSpacers && roomBetween > 0.004) {
+      ctx.globalAlpha = roomBetween;
       /**
        * **Opaque, not a wash.** Greg: *"it should be light grey"*, and it was
        * not — a tint of `rgba(15,23,42,0.05)` over a cell that already carries
@@ -2314,6 +2771,7 @@ export default function HexLab({
        */
       ctx.fillStyle = "#e8eaee";
       ctx.fill(teamSpacers, "evenodd");
+      ctx.globalAlpha = 1;
     }
     /**
      * **The silhouette of the whole, and nothing inside it.**
@@ -2324,10 +2782,12 @@ export default function HexLab({
      * groups that meet simply become one shape, which is what *bubbling
      * together* means.
      */
-    if (groupRings) {
+    if (groupRings && roomBetween > 0.004) {
+      ctx.globalAlpha = roomBetween;
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
       ctx.stroke(groupRings.fill);
+      ctx.globalAlpha = 1;
     }
 
     /**
@@ -2363,10 +2823,11 @@ export default function HexLab({
       ctx.lineWidth = Math.max(0.7, 2.2 / scale);
       for (const team of teamOutlines) {
         const tint = teamTints.get(team.teamId);
-        if (!team.path || !tint) continue;
-        ctx.fillStyle = tint.fill;
+        const ground = groundOf(team.teamId);
+        if (!team.path || !tint || ground <= 0.004) continue;
+        ctx.fillStyle = tint.fill(ground);
         ctx.fill(team.path, "evenodd");
-        ctx.strokeStyle = tint.line;
+        ctx.strokeStyle = tint.line(ground);
         ctx.stroke(team.path);
       }
     }
@@ -2376,7 +2837,21 @@ export default function HexLab({
     //     a few pixels — so it is strongest pulled back and fades as the nodes
     //     themselves take over.
     if (hexScene) {
-      const wash = 0.30 - 0.24 * Math.min(1, scale / 1.1);
+      /**
+       * **Strongest in the middle of the ladder, and gone at both ends.**
+       *
+       * It used to be `0.30 − 0.24 · min(1, scale / 1.1)` — world scale, which
+       * means nothing on a lattice where every cell is the same size. Two
+       * things are true about this wash and the old form only captured one.
+       * Close in it should step back, because the tile itself carries who is
+       * there: that is the `reveal.people` term, as before. But *pulled right
+       * out* it should also go, because a few thousand separate washes fight
+       * the blob that is supposed to be carrying the company at that distance
+       * — and the old form made it strongest exactly there. `reveal.tiles` is
+       * that second half: below about 16px a cell it stops being a thing and
+       * becomes texture, and the region's own ground takes over.
+       */
+      const wash = (0.30 - 0.24 * reveal.people) * reveal.tiles;
       if (wash > 0.02) {
         for (const unit of visible) {
           const cell = hexScene.hex.cells.get(unit.id);
@@ -2725,6 +3200,25 @@ export default function HexLab({
     }
 
     // 7. The unit itself, and its people once there is room for them.
+    /**
+     * **How present a node is, on the ladder.**
+     *
+     * Greg, 2026-11-06, on the rung where teams become gummy bears: *"this is
+     * where humans cease to be visible as avatars, but may remain visible as
+     * nodes or dots"*, and one rung further out, of a company: *"only its
+     * leading node would be visible as the utile interaction at this level of
+     * zoom."*
+     *
+     * Both fall out of one line. A node fades with `reveal.tiles` as its cell
+     * stops being a thing you could point at — **unless it is the node the
+     * current place belongs to**, in which case it holds. A unit's tier is how
+     * many rungs of places sit beneath it, so the unit governing whichever
+     * bubble is currently the place has exactly the tier that `placePresence`
+     * is lighting up. So the leading node of the blob you are looking at stays,
+     * and everything inside it goes quiet, at every rung and without anything
+     * here knowing which rung that is.
+     */
+    const tierOf = allocation.tier;
     for (const unit of visible) {
       // In hex mode the node carries "a unit is here", so the disc is only the
       // thing people orbit and is drawn at its true size. Holding it above a
@@ -2732,7 +3226,11 @@ export default function HexLab({
       // overview and said nothing the hexagon was not already saying.
       const drawn = hexScene ? unit.r : drawnUnitRadius(unit, scale, unit.drawCeiling);
       if (drawn * scale < 2) continue;
+      const leads = place.get(tierOf?.get(unit.id) ?? -1) ?? 0;
+      const presence = hexScene ? Math.max(reveal.tiles, leads) : 1;
+      if (presence <= 0.02) continue;
       const isParent = unit.childIds.length > 0;
+      ctx.globalAlpha = presence;
       ctx.beginPath();
       ctx.arc(unit.x, unit.y, drawn, 0, Math.PI * 2);
       ctx.fillStyle = unit.id === hover ? "#0f172a" : "#ffffff";
@@ -2742,6 +3240,7 @@ export default function HexLab({
       ctx.lineWidth = Math.max(0.5, (isParent ? 3 : 1.2) / scale);
       ctx.strokeStyle = css(hueFor(unit.id), unit.depth, maxDepth, 0.95);
       ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     /**
@@ -2774,8 +3273,27 @@ export default function HexLab({
     );
     for (const unit of ordered) {
       const drawn = drawnUnitRadius(unit, scale, unit.drawCeiling);
-      const inside = unitLabelVisible(drawn, scale) || forced.has(unit.id);
-      const landmark = !inside && isLandmark(unit.depth);
+      /**
+       * **A tile names itself once there is room for the name**, which on a
+       * lattice is a question about the cell and not about the camera.
+       *
+       * This used to call `unitLabelVisible`, whose gate is `0.7×` *world
+       * scale* — the orbital map's question, and meaningless here. The
+       * ladder's own band is cell-pixels, like everything else.
+       */
+      const named = hexScene
+        ? reveal.names > 0.5 && drawn * scale >= 7
+        : unitLabelVisible(drawn, scale);
+      const inside = named || forced.has(unit.id);
+      /**
+       * **And a place names itself while it is the place.** At overview the
+       * standing rule still applies — the company and the rungs just below it
+       * are the landmarks you navigate by — but so does the ladder: whichever
+       * rung is currently drawing as a gummy bear should say what it is, or it
+       * is a coloured shape with nothing to tell you.
+       */
+      const leading = (place.get(allocation.tier?.get(unit.id) ?? -1) ?? 0) > 0.35;
+      const landmark = !inside && (isLandmark(unit.depth) || leading);
       if (!inside && !landmark) continue;
       const sx = unit.x * scale + camera.x;
       const sy = unit.y * scale + camera.y;
@@ -2826,18 +3344,20 @@ export default function HexLab({
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, teamSpacers, groupRings, bubbles, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, teamSpacers, groupRings, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
 
   // --- input ---------------------------------------------------------------
 
   const onWheel = useCallback((e: React.WheelEvent) => {
+    // A hand on the wheel outranks a journey that hand started a moment ago.
+    stopTravel();
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     const pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     setCamera((cam) => {
       const z = wheelZoom(cam, e.deltaY, pointer);
       return cameraAbout(Math.min(12, Math.max(floor, z.scale)), z.world, z.screen);
     });
-  }, [floor]);
+  }, [floor, stopTravel]);
 
   const unitAtPointer = useCallback((world: { x: number; y: number }): string | null => {
     if (hexScene) return allocation.occupants.get(cellKey(worldToCell(world, hexScene.hex.size))) ?? null;
@@ -3425,16 +3945,6 @@ export default function HexLab({
 
 
   const hovered = hover ? scene.unitById.get(hover) : null;
-  const tier = tierAt(
-    hexScene
-      ? {
-          ...revealAt(camera.scale),
-          people: smoothstep(
-            PEOPLE_AT_CELL_PX[0], PEOPLE_AT_CELL_PX[1], hexScene.hex.size * camera.scale,
-          ),
-        }
-      : revealAt(camera.scale),
-  );
   /**
    * **Counted from what is on the screen, not from what was calculated.**
    *
@@ -4014,6 +4524,34 @@ export default function HexLab({
           <span style={{ color: "#9ca3af" }}>{camera.scale.toFixed(2)}×</span>
         </Row>
         {/**
+          * **The ladder, as somewhere to go rather than somewhere you end up.**
+          *
+          * Greg, 2026-11-06: *"I think we need several levels of zoom, and
+          * smooth animations between them."* The drawing itself never steps —
+          * it morphs continuously with the wheel — so this row is the other
+          * half of that sentence: the rungs have names, and pressing one
+          * travels there. `[` and `]` do the same from the keyboard.
+          *
+          * A rung the company cannot reach is still shown and still works; it
+          * simply clamps, which is what a ten-person company does to the outer
+          * rungs. Hiding them would make the ladder look different per company,
+          * which is the one thing the design is trying not to do.
+          */}
+        <Row>
+          <span style={{ color: "#6b7280" }}>zoom</span>
+          {HEX_LADDER.map((rung) => (
+            <Btn
+              key={rung.name}
+              small
+              onClick={() => jumpTo(rung.name)}
+              active={level === rung.name}
+              disabled={!hexScene}
+            >
+              {rung.label}
+            </Btn>
+          ))}
+        </Row>
+        {/**
           * **The five settings rows came off here on 2026-11-06.** Layout,
           * place, rung, wedge and cell were each a row of buttons, and Greg
           * settled all five — see the constants above the component, which
@@ -4115,7 +4653,16 @@ export default function HexLab({
         <Small>
           <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
         </Small>
-        <Small>detail: {LOD_LADDER.find(([t]) => t === tier)?.[1] ?? tier}</Small>
+        {/**
+          * **How big a cell is, which is the number the whole ladder reads.**
+          * On the panel because it is otherwise invisible, and because every
+          * threshold in `hexLod.ts` is written in it — so anybody arguing with
+          * where a rung sits can see the figure they are arguing about.
+          */}
+        <Small>
+          cell <b>{cellPx.toFixed(cellPx < 10 ? 1 : 0)}px</b> ·{" "}
+          {Math.round(size.width / Math.max(cellPx * 1.5, 0.01))} across
+        </Small>
         {/**
           * **What the branch in your hand is answering to**, while you hold it.
           *

@@ -844,7 +844,7 @@ hex:zoning` measures the map; the figures above are from the panel readout on
 
 ---
 
-### ☐ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19; he opened the zoom half of it on 2026-11-06*
+### ☐ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19; the zoom half was built on 2026-11-06*
 
 Two things were being tracked separately and Greg has merged them: **making the
 corporate layers intelligible to look at**, and **what the map shows at each
@@ -874,8 +874,22 @@ doublings on a ten-person company to seven and a half on Northwind — so a fixe
 ladder gives Sparrow Jam three rungs and Northwind five, which is right, because
 a ten-person company has no team-of-teams level to show.
 
-**Three questions in that note are waiting on Greg**, and nothing should be
-built past them:
+**The zoom half is built** (2026-11-06). The ladder is
+`lib/map/camera/hexLod.ts` — five rungs named Work · Person · Team · Function ·
+Whole, all driven by one number, how many pixels a cell covers on the glass.
+Detail morphs continuously as the wheel turns; the rungs also have buttons and
+the `[` and `]` keys, which travel to them. Pulling back, a team's coloured
+ground hands outward to the region containing it, then to the region containing
+*that*, by one rule at any depth — so Greg's *"super-gummy bear blob"* and his
+conglomerate layer are the same mechanism as a team rather than special cases.
+[HEX-ZOOM.md](HEX-ZOOM.md) has the reasoning, the four things that were right on
+paper and wrong on the glass, and what is deliberately not built.
+
+**What is left of this entry is the other half** — the *look* of the layers,
+which is Greg's and is design-first. The zoom behaviour it was waiting on now
+exists to design against.
+
+**Four questions are waiting on Greg**, and nothing should be built past them:
 
 - **Is there a work level below people?** He put people at the base. The note
   argues there is one further in, because a person's tile at that zoom is about
@@ -887,7 +901,17 @@ built past them:
   any field. Four was the straw man. It is a product decision.
 - **Should a zoomed-out drag be able to restructure a division?** It falls out
   of "you grab whatever the level is about", and it may be too sharp a tool: one
-  flick at the function level would move a thousand people.
+  flick at the function level would move a thousand people. Deliberately not
+  built for that reason; drag behaves the same at every zoom today.
+- **New, from building it: your words and your number point at different
+  rungs.** On 2026-10-02 Greg asked to *"see two or three teams on a standard
+  13" display"*, and that became the 140–230 cell-pixel band for people. At
+  230px on a 1440px screen you see about **four cells** — one person and their
+  neighbours — because the note written at the time read "three cells across"
+  as "three teams". The rung that actually shows two or three teams is **Team,
+  at 52px**, and on the map it is the best-looking rung of the five. So either
+  Person is one step too far in, or it is right and the sentence was loose.
+  Thirty seconds with `/lab/hex` and the `[` and `]` keys settles it.
 
 The rest of the entry below is the older scope note, and still holds.
 

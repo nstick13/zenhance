@@ -82,6 +82,7 @@ const ENGINE_OF: Record<string, Engine> = {
   // 5. Camera — pan, zoom, focus, and how closely you are looking.
   "lib/map/camera/focus.ts": "camera",
   "lib/map/camera/lod.ts": "camera",
+  "lib/map/camera/hexLod.ts": "camera",
   "lib/map/camera/detail.ts": "camera",
   "lib/map/camera/viewport.ts": "camera",
   "lib/map/camera/focusStack.ts": "camera",

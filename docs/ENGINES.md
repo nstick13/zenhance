@@ -153,7 +153,16 @@ animation frame, and the one clamped write to Konva. It returns *functions*,
 never raw refs: handing a ref out for outside mutation makes the component's
 lifecycle impossible to reason about, and the React compiler rejects it.
 **Also camera:** `lib/map/camera/focus.ts` (scene projection) · `lod.ts` ·
-`detail.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds`.
+`hexLod.ts` · `detail.ts` · `complexity.ts` `fitScaleFor` / `sceneBounds`.
+
+**`lod.ts` is the orbital map's ladder and `hexLod.ts` is the hex study's**,
+and they ask different questions on purpose. The orbital one reads **world
+scale**, which is right there because a unit's size depends on what it
+carries. On a lattice every cell is the same size, so the only honest
+question is how many pixels a cell covers on the glass — one number, from
+which the hex ladder derives every reveal, the rung you are standing on, and
+which rung of the hierarchy currently draws as a place of its own. See
+[HEX-ZOOM.md](HEX-ZOOM.md).
 
 **Still in `OrbitalMap.tsx`: focus *policy*.** Which unit to focus, and what
 to frame when you do, needs the scene and the tree — `enterFocus`,
