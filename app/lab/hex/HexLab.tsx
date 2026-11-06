@@ -180,6 +180,35 @@ const ACTIVE_GAP_PX = 3;
 const ACTIVE_GAP_MAX = 0.12;
 
 /**
+ * **How wide a chain swings through its knees, by how long the chain is.**
+ * Greg, 2026-11-06: *"short connection lines — say branching between two
+ * nodes that are 1-3 hexagons, or 2-6 radii, apart — should have the radius
+ * equal to one hexagon. Any connection line longer than that but shorter than
+ * say 12 hexagon-widths should be 2 radii of knee curvature. Anything above
+ * that should have a knee bend of 6 radii."*
+ *
+ * Everything here is in **cell radii**, which is also Greg's unit: a hexagon
+ * is two of them across. The thresholds are his — 6 radii and 24 — and so is
+ * the ladder, 1 → 2 → 6.
+ *
+ * The thought behind it is that a curve should be in proportion to the
+ * journey. A hop to the person next door has no room for a sweep and should
+ * not pretend to; a line crossing half a company reads as one gesture if it
+ * banks rather than turns, and as plumbing if it does not.
+ *
+ * **Measured along the line, not across it.** A chain that goes round a
+ * crowd is a long line however near its two ends are, and it is the line we
+ * are drawing. It is also one number per chain rather than per corner, so a
+ * chain that is broken into runs where it passes behind somebody still bends
+ * the same way all the way along.
+ */
+const KNEE_BY_LENGTH: readonly { within: number; radii: number }[] = [
+  { within: 6, radii: 1 },
+  { within: 24, radii: 2 },
+  { within: Infinity, radii: 6 },
+];
+
+/**
  * **Corner-rounding, written once for both things that take a path.**
  *
  * `CanvasPath` is the slice of the drawing API that a `Path2D` and a canvas
@@ -1994,7 +2023,7 @@ export default function HexLab({
      * No `beginPath` of its own: the route home traces several chains into a
      * single path and strokes it twice, for a casing under a core.
      */
-    const traceElbows = (points: readonly Point[]) => {
+    const traceElbows = (points: readonly Point[], radius: number) => {
       const n = points.length;
       ctx.moveTo(points[0].x, points[0].y);
       for (let i = 1; i < n - 1; i++) {
@@ -2005,9 +2034,22 @@ export default function HexLab({
         if (la < 1e-6 || lb < 1e-6) continue;
         const theta = Math.acos(Math.min(1, Math.max(-1, (ax * bx + ay * by) / (la * lb))));
         const fits = (Math.min(la, lb) / 2) * Math.tan(theta / 2);
-        ctx.arcTo(at.x, at.y, on.x, on.y, Math.min(hexSize, fits));
+        ctx.arcTo(at.x, at.y, on.x, on.y, Math.min(radius, fits));
       }
       if (n > 1) ctx.lineTo(points[n - 1].x, points[n - 1].y);
+    };
+
+    /**
+     * **How far a chain actually travels**, and the knee radius that length
+     * earns it — `KNEE_BY_LENGTH`, read in cell radii.
+     */
+    const kneeFor = (points: readonly Point[]) => {
+      let travelled = 0;
+      for (let i = 1; i < points.length; i++) {
+        travelled += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      }
+      const step = KNEE_BY_LENGTH.find((s) => travelled <= s.within * hexSize);
+      return hexSize * (step?.radii ?? 1);
     };
 
     // 1. The bubbles. Greg, 2026-10-16: *"concentric toruses comprised of shaded
@@ -2173,9 +2215,10 @@ export default function HexLab({
          * reads as going behind, and the eye drops it and picks it up again on
          * the far side.
          */
+        const knee = kneeFor(chain.points);
         for (const run of chain.runs) {
           ctx.beginPath();
-          traceElbows(run.points);
+          traceElbows(run.points, knee);
           ctx.strokeStyle = css(hueFor(chain.unitId), unit.depth, maxDepth, run.under ? BEHIND_ALPHA : 0.95);
           ctx.stroke();
         }
@@ -2215,7 +2258,7 @@ export default function HexLab({
       for (const chain of chains) {
         if (!leadIds.has(chain.unitId)) continue;
         ctx.beginPath();
-        traceElbows(chain.points);
+        traceElbows(chain.points, kneeFor(chain.points));
         ctx.lineWidth = Math.max(1.2, hexSize * 0.1);
         ctx.strokeStyle = "rgba(15,23,42,0.85)";
         ctx.stroke();
@@ -2444,7 +2487,7 @@ export default function HexLab({
       if (hops.length) {
         const trace = () => {
           ctx.beginPath();
-          for (const chain of hops) traceElbows(chain.points);
+          for (const chain of hops) traceElbows(chain.points, kneeFor(chain.points));
         };
         ctx.lineCap = "round";
         ctx.lineJoin = "round";

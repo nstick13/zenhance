@@ -3930,6 +3930,42 @@ leadership line, and the route home drawn under a hover (which traces several
 chains into one path and strokes it twice, for a casing under a core — so the
 helper deliberately opens no path of its own).
 
+**The curve is in proportion to the journey (2026-11-06, later).** Greg:
+*"short connection lines — say branching between two nodes that are 1-3
+hexagons, or 2-6 radii, apart — should have the radius equal to one hexagon.
+Any connection line longer than that but shorter than say 12 hexagon-widths
+should be 2 radii of knee curvature. Anything above that should have a knee
+bend of 6 radii."* His thresholds, his ladder, and his unit: everything in
+`KNEE_BY_LENGTH` is in **cell radii**, of which a hexagon is two across.
+
+| the line is | its knees bend at |
+| --- | --- |
+| up to 6 radii (3 hexagons) | 1 radius |
+| up to 24 radii (12 hexagons) | 2 radii |
+| longer | 6 radii |
+
+**Measured along the line, not across it.** A chain that goes round a crowd is
+a long line however near its two ends are, and it is the line being drawn. One
+number per chain, not per corner, so a chain broken into runs where it passes
+behind somebody bends the same way all the way along.
+
+The three tiers are all real, and they are not evenly populated — measured on a
+clean layout of each company, people strata:
+
+| | chains | 1 radius | 2 radii | 6 radii | longest |
+| --- | --- | --- | --- | --- | --- |
+| Sparrow Jam | 26 | 22 | 4 | 0 | 13.9 radii |
+| Digital Tailoring | 109 | 84 | 22 | 3 | 27.7 radii |
+| 1,000 people | 1,272 | 1,065 | 157 | 50 | 157.6 radii |
+
+So **Sparrow Jam never reaches the top tier** — nothing in it is 24 radii
+long — and the widest bends are a feature of the big company, which is where
+a line crossing the map most needs to read as one gesture.
+
+The radius is a *request*: the per-corner clamp above still applies, so a long
+chain that turns twice in a short space takes what its legs can pay for. The
+long ones mostly have long legs, which is why they bank.
+
 **Checked** on Sparrow Jam, Digital Tailoring and the 1,000-person company, in
 both strata and at seven zooms from fit to 1.1×. The teams view is untouched by
 the ground change by construction: with no people there are no team outlines,
