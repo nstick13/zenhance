@@ -3855,6 +3855,70 @@ looked at whether that is right.
 
 ---
 
+## The ground under the tiles (2026-11-06)
+
+**Greg: *"we need to deal with the gaps between the active hexagons. It looks
+like the area hexagons are less a background and more a perimeter that's
+calculated. This needs to change so it's a background and covers the whole area
+underneath active hexagons."*** He was looking at little white stars between
+the people on Digital Tailoring — one at every point where three tiles meet.
+
+**The stars were the symptom; the fault was that there was nothing
+underneath.** A team's grey ground was built as a *collar*: every cell within
+one step of the team **that nobody was standing on**. So the ground stopped at
+the tiles and started again on the other side of them, and the page itself was
+what sat behind a team. That never showed while the tiles were sharp hexagons,
+because sharp hexagons tile perfectly and leave nothing to see through. Round
+their corners — 2026-11-05 — and each pair of neighbours pulls apart near the
+corner they share, so at every lattice vertex three tiles open a three-armed
+hole, and the hole is the page. It read as holes punched in a green field,
+which is exactly what it was.
+
+**So the team's own cells are in the ground now.** One continuous piece of
+`#e8eaee` with the team standing on it; the collar is still a collar, it is
+simply the part of the ground nobody is on. Somebody else's cell is still left
+alone — a division standing next door keeps its own, which is `groupZones`'
+rule that *a zone is room, not ground to annex*, and the reason `teamSpacers`
+asks whether a cell is the team's own rather than simply dropping its
+occupied-cell check.
+
+The gaps are therefore **grey**, not a paler green. That is Greg's own rule
+from 2026-10-18 — *colour is for what is there, grey is for the room around
+it* — and the space between two people in a team is room. It is one fill
+colour if he wants it otherwise.
+
+**Then: nothing active ever touches its neighbour.** Greg: *"make active
+hexagons (and proportionally everything within them) a wee bit smaller so that
+they would always have a few pixels of space between each other."*
+
+Two neighbouring cells are `√3 · size` apart centre to centre and a tile's flat
+edge is `√3/2 · radius` from its own centre, so a tile drawn at the full size
+of its cell meets its neighbour exactly — zero, by construction. Taking `i` off
+the radius opens `√3 · i` of ground between the two.
+
+Three constants, because the idea has a floor and a ceiling:
+
+| | what it is | why |
+| --- | --- | --- |
+| `ACTIVE_GAP` **0.04** | the share of a cell's radius that comes off | the look: a tile keeps its proportions at every zoom |
+| `ACTIVE_GAP_PX` **3** | the gap may never be thinner than this on the glass | the promise: 4% of a 15px cell at overview is not a few pixels, it is none |
+| `ACTIVE_GAP_MAX` **0.12** | …and never fatter than this of the cell | the other end of that promise: far enough out, the floor would eat the tile |
+
+`activeShrink` is the same number as a factor, and **everything drawn inside a
+cell takes it** — the node, and the hover bands that are concentric with the
+node — which is Greg's *"and proportionally everything within them"*.
+
+**Checked** on Sparrow Jam, Digital Tailoring and the 1,000-person company, in
+both strata and at seven zooms from fit to 1.1×. The teams view is untouched by
+the ground change by construction: with no people there are no team outlines,
+so there is no `teamSpacers` to widen.
+
+**Not verified:** touch, and whether 3px is still the right floor on a screen
+that is not this one — it is a pixel count, so a very dense display will draw
+it smaller than it reads here.
+
+---
+
 
 
 ---

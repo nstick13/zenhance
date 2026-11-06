@@ -154,12 +154,30 @@ const PEOPLE_AT_CELL_PX: [number, number] = [140, 230];
  * the edge midpoints and the tile has become its own inscribed circle. So
  * this one number is the whole dial between hexagon and circle.
  *
- * **Nodes only, for now.** The lattice underneath — the cell a node stands
- * in, the territory wash, a landing cell — is still square-cornered, because
- * those hexagons *tile*, and rounding a tile opens a gap at every seam. Greg
- * has that as a separate job needing a different approach.
+ * **Everything that is a hexagon on this map takes it** — an active tile one
+ * at a time, an area along the boundary of its union (see `roundedUnion`,
+ * which is how an area rounds without its tiles cleaving at every seam). The
+ * three cells a gesture draws, in `hexPath`, are the last square corners left.
  */
 const NODE_CORNER = 0.5;
+
+/**
+ * **The clear ground every active hexagon keeps to itself.** Greg,
+ * 2026-11-06: *"make active hexagons (and proportionally everything within
+ * them) a wee bit smaller so that they would always have a few pixels of
+ * space between each other."*
+ *
+ * Three numbers for one idea, because the idea has a floor and a ceiling. The
+ * **share** is the look — a tile is this much smaller than its cell at every
+ * zoom, so the mosaic keeps its proportions as the camera moves. The
+ * **pixels** are the promise: a share of a 15px cell at overview is not a few
+ * pixels of space, it is none, so the gap is never allowed below this on the
+ * glass. The **ceiling** is the other end of the same promise — at a far
+ * enough zoom-out that floor would eat the tile, so it stops here.
+ */
+const ACTIVE_GAP = 0.04;
+const ACTIVE_GAP_PX = 3;
+const ACTIVE_GAP_MAX = 0.12;
 
 /**
  * **Corner-rounding, written once for both things that take a path.**
@@ -1184,6 +1202,27 @@ export default function HexLab({
     return fill ? { fill } : null;
   }, [hexScene, tree, peopleIds]);
 
+  /**
+   * **A team's ground, not a team's collar.** Greg, 2026-11-06: *"it looks
+   * like the area hexagons are less a background and more a perimeter that's
+   * calculated. This needs to change so it's a background and covers the
+   * whole area underneath active hexagons."*
+   *
+   * It was exactly a collar: every cell within one step of the team that
+   * nobody was standing on. So the ground stopped at the tiles and started
+   * again on the other side of them, and wherever two neighbouring tiles did
+   * not quite meet — which rounding their corners opened up — the page showed
+   * through as a little white star. The stars were never the fault; the fault
+   * is that there was nothing underneath.
+   *
+   * The team's own cells are in the set now, so this draws one continuous
+   * piece of ground with the team standing on it. The collar is still a
+   * collar — it is simply the part of the ground nobody is on.
+   *
+   * Somebody else's cell is still left alone: a division standing next door
+   * keeps its own, which is `groupZones`' rule — *a zone is room, not ground
+   * to annex* — and the reason this asks `own` rather than dropping `taken`.
+   */
   const teamSpacers = useMemo(() => {
     if (!hexScene || !teamOutlines.length) return null;
     if (typeof Path2D === "undefined") return null;
@@ -1193,15 +1232,17 @@ export default function HexLab({
     const drawn = new Set<string>();
     const spacer: Cell[] = [];
     for (const team of teamOutlines) {
+      const own = new Set(team.cells.map(cellKey));
       for (const cell of grow(team.cells)) {
         const key = cellKey(cell);
-        if (taken.has(key) || drawn.has(key)) continue;
+        if (drawn.has(key)) continue;
+        if (taken.has(key) && !own.has(key)) continue;
         drawn.add(key);
         spacer.push(cell);
       }
     }
-    // Every team's collar in one set, so two teams whose clear ground touches
-    // round as the single shape they already looked like.
+    // Every team's ground in one set, so two teams whose ground touches round
+    // as the single shape they already looked like.
     return roundedUnion(spacer, size);
   }, [hexScene, teamOutlines]);
   /**
@@ -1893,8 +1934,27 @@ export default function HexLab({
       traceRounded(ctx, { points: cornersAt(centre, radius), closed: true }, radius * NODE_CORNER);
     };
 
+    /**
+     * **How much comes off an active hexagon so it never touches its
+     * neighbour** — `ACTIVE_GAP` and its two clamps, in world units.
+     *
+     * Two neighbouring cells are `√3 · size` apart centre to centre, and a
+     * tile's flat edge is `√3/2 · radius` from its own centre, so a tile drawn
+     * at the full size of its cell meets its neighbour exactly. Taking `i` off
+     * the radius opens `√3 · i` of ground between the two, which is where the
+     * √3 below comes from: the pixel floor is a gap on the glass, and this
+     * turns it back into a radius.
+     */
+    const activeInset = Math.min(
+      hexSize * ACTIVE_GAP_MAX,
+      Math.max(hexSize * ACTIVE_GAP, ACTIVE_GAP_PX / scale / Math.sqrt(3)),
+    );
+    /** The same thing as a factor, for everything drawn *inside* a cell —
+     *  Greg: *"and proportionally everything within them"*. */
+    const activeShrink = hexSize > 0 ? 1 - activeInset / hexSize : 1;
+
     const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
-      const radius = hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink;
+      const radius = hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink * activeShrink;
       roundedHex(cellToWorld(cell, hexSize), radius);
     };
 
@@ -1905,9 +1965,11 @@ export default function HexLab({
      * not an **area** hexagon, however it is sized: an area hexagon is grey
      * ground, this one takes the colour of whoever stands on it, so it reads
      * as part of the thing rather than the room around it. Same shape as the
-     * node it sits behind, therefore, at the full size of the cell.
+     * node it sits behind, therefore, at the size of the cell less the clear
+     * ground every active hexagon keeps — see `activeInset`, which is what
+     * stops two of these ever touching.
      */
-    const washPath = (cell: Cell) => roundedHex(cellToWorld(cell, hexSize), hexSize);
+    const washPath = (cell: Cell) => roundedHex(cellToWorld(cell, hexSize), hexSize - activeInset);
 
     // 1. The bubbles. Greg, 2026-10-16: *"concentric toruses comprised of shaded
     //    hexagon zones offset from master-center"*, and *"a bubble is taken as
