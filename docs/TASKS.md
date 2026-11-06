@@ -776,7 +776,7 @@ hex:zoning` measures the map; the figures above are from the panel readout on
 
 ---
 
-### ⏸ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19*
+### ☐ The look of the layers and what shows at each zoom are one job — *Greg, 2026-10-19; he opened the zoom half of it on 2026-11-06*
 
 Two things were being tracked separately and Greg has merged them: **making the
 corporate layers intelligible to look at**, and **what the map shows at each
@@ -792,9 +792,36 @@ see it, and vice versa.
 
 He has also asked for a sub-task inside it: **some styling and artistic fun**.
 
-**This is design-first and it is Greg's.** Do not start building it from this
-entry — he has thoughts and they come first. Parked here so the scope is
-recorded, not so somebody picks it up.
+**This is design-first and it is Greg's**, and on 2026-11-06 he started it:
+*"we're going to look at what happens when we use zoom. I think we need several
+levels of zoom, and smooth animations between them."* He described five levels
+— people, a team or a few teams, teams of teams, companies, conglomerates — and
+said plainly what he was unsure of: *"what defines the transition between each
+zoom level."*
+
+That conversation is written up as **[HEX-ZOOM.md](HEX-ZOOM.md)**. The short
+version: the whole ladder can hang off one number, how many pixels wide a cell
+is on the glass, and the zoom range available runs from about three and a half
+doublings on a ten-person company to seven and a half on Northwind — so a fixed
+ladder gives Sparrow Jam three rungs and Northwind five, which is right, because
+a ten-person company has no team-of-teams level to show.
+
+**Three questions in that note are waiting on Greg**, and nothing should be
+built past them:
+
+- **Is there a work level below people?** He put people at the base. The note
+  argues there is one further in, because a person's tile at that zoom is about
+  460px across — a glance at their work, not a read of it.
+- **How many slots does a person's tile hold?** He raised the hard part himself
+  — what data a person shows varies by business unit and by person. The note's
+  answer is that the map should guarantee a fixed, small number of slots and let
+  each customer map its own fields into them, rather than the map knowing about
+  any field. Four was the straw man. It is a product decision.
+- **Should a zoomed-out drag be able to restructure a division?** It falls out
+  of "you grab whatever the level is about", and it may be too sharp a tool: one
+  flick at the function level would move a thousand people.
+
+The rest of the entry below is the older scope note, and still holds.
 
 What it would absorb when it starts: the orbital map's semantic layer, three
 engines of which the hex map currently uses none — `lib/map/work` (work as a
