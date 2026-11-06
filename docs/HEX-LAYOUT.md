@@ -3908,6 +3908,28 @@ Three constants, because the idea has a floor and a ceiling:
 cell takes it** — the node, and the hover bands that are concentric with the
 node — which is Greg's *"and proportionally everything within them"*.
 
+**And the chains stopped kneeing.** Greg, the same day: *"put a nice gentle
+curve on the connection lines where they currently knee — make the curve
+radius equal to one hexagon cell radius."* The router walks the lattice, so
+every corner is a 60° turn and a mitred join drew it as a visible elbow.
+
+One cell's radius is gentle by the geometry: the arc passes
+`size · (1/sin 60° − 1)` — about a seventh of a cell — inside the point, while
+taking `size / tan 60°`, a little over half a cell, off each leg. A one-step
+leg is `√3 · size` long, so two corners on the same leg still have room.
+
+**Clamped per corner, because a leg can be shorter than the arc wants.** The
+tangent point sits `r / tan(θ/2)` back from the corner, so a radius the legs
+cannot pay for would put it *past* the far end and the line would double back
+on itself. Each corner takes the largest radius that fits in half its shorter
+leg — half, so two corners on one leg never reach across each other — and a
+line that doubles back rounds to nothing and stays a corner, which is honest:
+there is no room there for a curve. One helper, `traceElbows`, and all three
+things that draw a chain go through it: the chains themselves, the heavier
+leadership line, and the route home drawn under a hover (which traces several
+chains into one path and strokes it twice, for a casing under a core — so the
+helper deliberately opens no path of its own).
+
 **Checked** on Sparrow Jam, Digital Tailoring and the 1,000-person company, in
 both strata and at seven zooms from fit to 1.1×. The teams view is untouched by
 the ground change by construction: with no people there are no team outlines,

@@ -1971,6 +1971,45 @@ export default function HexLab({
      */
     const washPath = (cell: Cell) => roundedHex(cellToWorld(cell, hexSize), hexSize - activeInset);
 
+    /**
+     * **A chain, with its knees rounded.** Greg, 2026-11-06: *"put a nice
+     * gentle curve on the connection lines where they currently knee — make
+     * the curve radius equal to one hexagon cell radius."*
+     *
+     * The router walks the lattice, so every corner is a 60° turn and a
+     * mitred join made each one a visible elbow. One cell's radius barely
+     * cuts the corner — the arc passes `size · (1/sin60° − 1)`, about a
+     * seventh of a cell, inside the point — while taking `size / tan60°`, a
+     * little over half a cell, off each leg. Gentle is exactly the word.
+     *
+     * **Clamped per corner, because a leg can be shorter than the arc wants.**
+     * The tangent point sits `r / tan(θ/2)` back from the corner, so a radius
+     * the legs cannot pay for would put it *past* the far end and the line
+     * would double back on itself. Each corner therefore takes the largest
+     * radius that fits in half of its shorter leg — half, so two corners on
+     * one leg never reach across each other — and a line that doubles back
+     * (θ→0) rounds to nothing and stays a corner, which is honest: there is
+     * no room there for a curve.
+     *
+     * No `beginPath` of its own: the route home traces several chains into a
+     * single path and strokes it twice, for a casing under a core.
+     */
+    const traceElbows = (points: readonly Point[]) => {
+      const n = points.length;
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < n - 1; i++) {
+        const back = points[i - 1], at = points[i], on = points[i + 1];
+        const ax = back.x - at.x, ay = back.y - at.y;
+        const bx = on.x - at.x, by = on.y - at.y;
+        const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+        if (la < 1e-6 || lb < 1e-6) continue;
+        const theta = Math.acos(Math.min(1, Math.max(-1, (ax * bx + ay * by) / (la * lb))));
+        const fits = (Math.min(la, lb) / 2) * Math.tan(theta / 2);
+        ctx.arcTo(at.x, at.y, on.x, on.y, Math.min(hexSize, fits));
+      }
+      if (n > 1) ctx.lineTo(points[n - 1].x, points[n - 1].y);
+    };
+
     // 1. The bubbles. Greg, 2026-10-16: *"concentric toruses comprised of shaded
     //    hexagon zones offset from master-center"*, and *"a bubble is taken as
     //    the shape of the contained node then offset wider by one hexagon
@@ -2136,8 +2175,7 @@ export default function HexLab({
          */
         for (const run of chain.runs) {
           ctx.beginPath();
-          ctx.moveTo(run.points[0].x, run.points[0].y);
-          for (let i = 1; i < run.points.length; i++) ctx.lineTo(run.points[i].x, run.points[i].y);
+          traceElbows(run.points);
           ctx.strokeStyle = css(hueFor(chain.unitId), unit.depth, maxDepth, run.under ? BEHIND_ALPHA : 0.95);
           ctx.stroke();
         }
@@ -2177,8 +2215,7 @@ export default function HexLab({
       for (const chain of chains) {
         if (!leadIds.has(chain.unitId)) continue;
         ctx.beginPath();
-        ctx.moveTo(chain.points[0].x, chain.points[0].y);
-        for (let i = 1; i < chain.points.length; i++) ctx.lineTo(chain.points[i].x, chain.points[i].y);
+        traceElbows(chain.points);
         ctx.lineWidth = Math.max(1.2, hexSize * 0.1);
         ctx.strokeStyle = "rgba(15,23,42,0.85)";
         ctx.stroke();
@@ -2407,12 +2444,7 @@ export default function HexLab({
       if (hops.length) {
         const trace = () => {
           ctx.beginPath();
-          for (const chain of hops) {
-            ctx.moveTo(chain.points[0].x, chain.points[0].y);
-            for (let i = 1; i < chain.points.length; i++) {
-              ctx.lineTo(chain.points[i].x, chain.points[i].y);
-            }
-          }
+          for (const chain of hops) traceElbows(chain.points);
         };
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
