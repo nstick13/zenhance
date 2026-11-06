@@ -11,11 +11,16 @@ import { describe, expect, it } from "vitest";
 import {
   HEX_LADDER,
   PEOPLE_AT_CELL_PX,
+  SOFTEN_FROM_CELL_PX,
+  SOFTEN_MAX,
+  SOFTEN_STEPS,
   cellPxOf,
   hexRevealAt,
   levelAt,
   placePresence,
+  placeTaken,
   scaleForLevel,
+  softeningAt,
   stepLevel,
   type HexLevel,
 } from "@/lib/map/camera/hexLod";
@@ -245,5 +250,80 @@ describe("stepping in and out", () => {
   it("runs out at both ends", () => {
     expect(stepLevel(HEX_LADDER[0].cellPx, "in")).toBeNull();
     expect(stepLevel(HEX_LADDER[HEX_LADDER.length - 1].cellPx, "out")).toBeNull();
+  });
+});
+
+describe("how much of the map the places have taken", () => {
+  /** The thousand-person company at its floor, measured 2026-11-06. */
+  const atTheFloor = new Map([[0, 0], [1, 0.30], [2, 0.67], [3, 0.04]]);
+
+  it("adds the handover up rather than taking the largest share of it", () => {
+    // The point of the whole function. `max` would say 0.67 — a third of the
+    // old picture left standing under the blob that has taken over from it.
+    expect(placeTaken(atTheFloor, [1, 2, 3])).toBeCloseTo(1, 2);
+  });
+
+  it("asks only about the tiers it is given", () => {
+    // A team steps aside for the regions that actually contain *it*, which is
+    // rarely every rung the company has.
+    expect(placeTaken(atTheFloor, [2])).toBeCloseTo(0.67);
+    expect(placeTaken(atTheFloor, [])).toBe(0);
+  });
+
+  it("is nothing when nothing outside has taken the job on", () => {
+    // Digital Tailoring has three bubbled nodes in the whole company, so most
+    // of its teams have nobody to hand to and must keep their own ground.
+    const nobody = new Map([[0, 1], [4, 0]]);
+    expect(placeTaken(nobody, [4])).toBe(0);
+  });
+
+  it("cannot exceed the whole map", () => {
+    const over = new Map([[1, 0.8], [2, 0.8]]);
+    expect(placeTaken(over, [1, 2])).toBe(1);
+  });
+
+  it("stays inside 0..1 across the ladder, on a company of any depth", () => {
+    const deep = new Map(Array.from({ length: 11 }, (_, i) => [i, 30 * 1.8 ** i]));
+    for (const scale of logSweep(0.001, 20, 1000)) {
+      const place = placePresence(deep, scale);
+      const taken = placeTaken(place, [...place.keys()].filter((t) => t >= 1));
+      expect(taken).toBeGreaterThanOrEqual(0);
+      expect(taken).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("the boundary softening", () => {
+  it("leaves the corner alone at the zoom Greg named", () => {
+    // "by 0.05x zoom, we'd see the border radius ... as they are defined" —
+    // and on this lattice 0.05x is 18px a cell.
+    expect(softeningAt(SOFTEN_FROM_CELL_PX)).toBeCloseTo(1, 1);
+    expect(softeningAt(SOFTEN_FROM_CELL_PX * 4)).toBe(1);
+    expect(softeningAt(1000)).toBe(1);
+  });
+
+  it("reaches the whole of it by the rung below", () => {
+    expect(softeningAt(HEX_LADDER[HEX_LADDER.length - 1].cellPx)).toBeCloseTo(SOFTEN_MAX, 1);
+    expect(softeningAt(0.5)).toBeCloseTo(SOFTEN_MAX, 5);
+  });
+
+  it("only ever softens on the way out, and never past the top", () => {
+    let previous = softeningAt(600);
+    for (const cellPx of logSweep(600, 0.5, 3000)) {
+      const now = softeningAt(cellPx);
+      expect(now).toBeGreaterThanOrEqual(previous - 1e-9);
+      expect(now).toBeLessThanOrEqual(SOFTEN_MAX + 1e-9);
+      expect(now).toBeGreaterThanOrEqual(1);
+      previous = now;
+    }
+  });
+
+  it("comes in steps, so a path is re-traced a few times and not every frame", () => {
+    const seen = new Set(logSweep(0.5, 600, 5000).map(softeningAt));
+    // Twenty steps over the ramp, give or take the two ends.
+    expect(seen.size).toBeLessThanOrEqual(SOFTEN_STEPS * (SOFTEN_MAX - 1) + 3);
+    for (const value of seen) {
+      expect(Math.abs(value * SOFTEN_STEPS - Math.round(value * SOFTEN_STEPS))).toBeLessThan(1e-9);
+    }
   });
 });

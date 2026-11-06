@@ -239,3 +239,95 @@ export function stepLevel(cellPx: CellPx, direction: "in" | "out"): HexLevel | n
   }
   return null;
 }
+
+/**
+ * **How much of the map the places at these tiers have taken between them.**
+ *
+ * The total, not the largest — which sounds like a detail and is the
+ * difference between a company that blobs together and one that does not.
+ *
+ * `placePresence` spreads a handover across two neighbouring rungs; that is
+ * the crossfade, and it is the whole reason nothing pops. Halfway through one,
+ * two tiers hold half the place each and the **largest single share is a
+ * half** — so anything that steps aside by `max` steps aside only halfway, and
+ * half of the old picture stays up underneath the blob that has already taken
+ * over from it.
+ *
+ * Normally that is invisible, because another notch of the wheel finishes the
+ * handover. At the outermost zoom it is permanent: the camera stops when the
+ * company fits the window, so whatever crossfade is in flight there stays in
+ * flight. Measured on the thousand-person company at its floor on 2026-11-06,
+ * the two region rungs held **0.30 and 0.67** — so a third of the grey room
+ * and a third of every team's own ground stayed on screen over the regions,
+ * and the map read as a honeycomb of team patches rather than as a company.
+ * The total is 0.97: nearly all of it has gone, which is the honest answer.
+ *
+ * Clamped, because the tiers sum to one by construction rather than by
+ * arithmetic.
+ */
+export function placeTaken(
+  place: ReadonlyMap<number, number>,
+  tiers: Iterable<number>,
+): number {
+  let sum = 0;
+  for (const tier of tiers) sum += place.get(tier) ?? 0;
+  return Math.min(1, Math.max(0, sum));
+}
+
+/**
+ * **How much softer a boundary's corners are than the shape they round.**
+ *
+ * Greg, 2026-11-06: *"as we zoom out, I'd like the borders around the team
+ * blobs to soften even further — so by 0.05x zoom, we'd see the border radius
+ * on the hexagon outlines … as they are defined. However, everything on a zoom
+ * <0.05x, the border radius should increase, so by the time we hit whatever
+ * the next increment is, the border radius of those hexagons is so high the
+ * team boundary begins to appear smooth."*
+ *
+ * `0.05×` is his, read off the panel, and on this lattice a cell is 364 world
+ * units, so it is **18px a cell** — just outside the Function rung. The rung
+ * below it is `whole`, at 4px, and that is where the ramp finishes: by the
+ * time the whole company is on the glass, a team has no corners left.
+ *
+ * It returns a **multiplier** on `NODE_CORNER` rather than a radius, so one
+ * number softens a team, a region and a collar alike and they cannot drift
+ * apart. The top of it is past the point where a hexagon's corner circle meets
+ * the edge midpoints — the drawing clamps each corner to what its own two
+ * half-edges can pay for — so the last part of the ramp is the boundary
+ * turning into arcs that meet tangentially, which is the thing Greg means by
+ * *smooth*.
+ */
+export const SOFTEN_FROM_CELL_PX = 18;
+export const SOFTEN_TO_CELL_PX = HEX_LADDER[HEX_LADDER.length - 1].cellPx;
+export const SOFTEN_MAX = 1.8;
+
+/**
+ * **How many steps the ramp is cut into, and why it is cut at all.**
+ *
+ * This is the one figure on the ladder that is *not* continuous, and the
+ * reason is cost rather than taste. Every other figure here is read straight
+ * into a colour or an alpha; this one changes the **shape** of a path, so a
+ * new value means re-tracing every team and every region. Finding a boundary
+ * is the expensive part and does not depend on the zoom, so it is cached —
+ * but re-tracing sixty times a second for a radius that has moved by a
+ * thousandth is still waste. Twenty steps across the ramp is finer than the
+ * eye can follow a corner opening, and works out at about one rebuild every
+ * three wheel notches.
+ */
+export const SOFTEN_STEPS = 20;
+
+/**
+ * Measured in **log** space, like everything else about this camera: 18px to
+ * 4px is four and a half times, and a ramp that is linear in pixels spends
+ * nearly all of itself in the first wheel notch and then creeps. In log space
+ * each notch softens the boundary by the same amount, which is what a hand on
+ * a wheel expects.
+ */
+export function softeningAt(cellPx: CellPx): number {
+  const here = Math.log(Math.max(cellPx, 1e-6));
+  const from = Math.log(SOFTEN_FROM_CELL_PX);
+  const to = Math.log(SOFTEN_TO_CELL_PX);
+  const t = 1 - smoothstep(to, from, here);
+  const soft = 1 + (SOFTEN_MAX - 1) * t;
+  return Math.round(soft * SOFTEN_STEPS) / SOFTEN_STEPS;
+}

@@ -65,7 +65,9 @@ import {
   hexRevealAt,
   levelAt,
   placePresence,
+  placeTaken,
   scaleForLevel,
+  softeningAt,
   stepLevel,
   type HexLevel,
 } from "@/lib/map/camera/hexLod";
@@ -165,8 +167,9 @@ const BEHIND_ALPHA = 0.18;
  * this one number is the whole dial between hexagon and circle.
  *
  * **Everything that is a hexagon on this map takes it** — an active tile one
- * at a time, an area along the boundary of its union (see `roundedUnion`,
- * which is how an area rounds without its tiles cleaving at every seam). The
+ * at a time, an area along the boundary of its union (see `unionLoops` and
+ * `pathOfLoops`, which is how an area rounds without its tiles cleaving at
+ * every seam). The
  * three cells a gesture draws, in `hexPath`, are the last square corners left.
  */
 const NODE_CORNER = 0.5;
@@ -382,18 +385,43 @@ function traceRounded(path: CanvasPath, loop: Loop, r: number, inward = r) {
  * is to leave those alone, so a team keeps the same soft bite between its
  * tiles however far its ground stands off them.
  */
-function roundedUnion(cells: readonly Cell[], size: number, outward = 0): Path2D | null {
-  if (typeof Path2D === "undefined" || !cells.length) return null;
+/**
+ * **The expensive half, and the one the zoom does not change.**
+ *
+ * These two were one function until 2026-11-06, when Greg asked for a
+ * boundary that softens as you pull back — which means the same set of cells
+ * has to be traced again at a new radius while the camera is moving. Finding
+ * the boundary is the costly part (`outline` walks every cell, and on the
+ * thousand-person company that is 37,000 of them) and it does not depend on
+ * the radius at all. So the walk is memoised on the arrangement and only the
+ * tracing is redone, which is a few hundred `arcTo` calls.
+ */
+function unionLoops(cells: readonly Cell[], size: number, outward = 0): Loop[] {
+  if (!cells.length) return [];
+  const loops = boundaryLoops(outline(cells, size), size);
+  return outward > 0 ? loops.map((loop) => pushOut(loop, outward)) : loops;
+}
+
+/**
+ * **Those loops as one path**, at whatever corner the zoom asks for. `soften`
+ * multiplies the radius; 1 is the radius every area on this map is defined
+ * with, and the ramp above it is `softeningAt`.
+ *
+ * Each corner is still clamped to what its own two half-edges can pay for —
+ * see `traceRounded` — so a radius far past what a hexagon can take does not
+ * fold the path back on itself. It simply runs out of straight edge, which is
+ * exactly the smooth boundary the far end of the ramp is after.
+ */
+function pathOfLoops(
+  loops: readonly Loop[],
+  size: number,
+  outward = 0,
+  soften = 1,
+): Path2D | null {
+  if (typeof Path2D === "undefined" || !loops.length) return null;
   const path = new Path2D();
-  const corner = size * NODE_CORNER;
-  for (const loop of boundaryLoops(outline(cells, size), size)) {
-    traceRounded(
-      path,
-      outward > 0 ? pushOut(loop, outward) : loop,
-      corner + outward,
-      corner,
-    );
-  }
+  const corner = size * NODE_CORNER * soften;
+  for (const loop of loops) traceRounded(path, loop, corner + outward, corner);
   return path;
 }
 
@@ -648,6 +676,53 @@ const css = (hue: number, depth: number, maxDepth: number, alpha = 1) => {
   const { l, s } = toneOf(depth, maxDepth);
   return `hsla(${hue}, ${(s * 100).toFixed(0)}%, ${(l * 100).toFixed(0)}%, ${alpha})`;
 };
+
+/**
+ * **The page the map is drawn on.** The canvas is cleared rather than filled,
+ * so this is the colour behind every pixel of it — `app/lab/hex/page.tsx`.
+ */
+const PAPER = { r: 0xfb, g: 0xfb, b: 0xfd };
+
+/** The palette's own HSL — hue in degrees, saturation and lightness 0..1 — in
+ *  sRGB, so a wash can be mixed rather than laid on. See `overPaper`. */
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = ((((h % 360) + 360) % 360) / 60);
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const [r1, g1, b1] =
+    hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x]
+      : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+  const m = l - c / 2;
+  const to255 = (v: number) => Math.round(Math.min(1, Math.max(0, v + m)) * 255);
+  return { r: to255(r1), g: to255(g1), b: to255(b1) };
+}
+
+/**
+ * **A wash worked out, rather than laid on.** Greg, 2026-11-06: *"the
+ * colouring is sort of muted, muddyish. My guess is because there's an alpha
+ * channel in use and a grey zone below it. Let's not alpha the conjoined
+ * blobs, so lighten by pushing the rgb values higher rather than adding the
+ * alpha channel."*
+ *
+ * He is right about the cause. A team's ground is a thirty-per-cent wash, and
+ * the thing underneath it is not the page — it is the grey collar each team
+ * keeps and the grey ring round each group. Thirty per cent of a pale blue
+ * over `#e8eaee` is a blue-grey, and the further out you pull the more of the
+ * map is collar, so the whole company drifts toward the same mud. The alpha
+ * was never describing anything real; it was a way of writing *a light version
+ * of this colour* that happened to let the room show through.
+ *
+ * So the lightening is done here instead, against the page, and what the
+ * canvas gets is **opaque**: the same colour it has always been where the page
+ * is white, and that same colour — rather than a mixture — everywhere else.
+ * Alpha is left for the one thing it does describe, which is the zoom ladder
+ * cross-fading one rung into the next.
+ */
+const overPaper = (c: { r: number; g: number; b: number }, share: number) => ({
+  r: Math.round(PAPER.r + (c.r - PAPER.r) * share),
+  g: Math.round(PAPER.g + (c.g - PAPER.g) * share),
+  b: Math.round(PAPER.b + (c.b - PAPER.b) * share),
+});
 
 /**
  * Which ancestor a unit takes its hue from.
@@ -1317,11 +1392,12 @@ export default function HexLab({
     return [...byTeam].map(([teamId, cells]) => ({
       teamId,
       cells,
-      // Rounded like everything else, and built here rather than in the paint
-      // loop: on the largest company this is hundreds of teams.
+      // The boundary only, found here rather than in the paint loop: on the
+      // largest company this is hundreds of teams. What radius it is traced
+      // at is a question for the zoom — see `areaPaths`.
       // Standing clear of its own cells by `TEAM_SPREAD`, so the ground reads
       // as something the team sits inside rather than a tracing of its tiles.
-      path: roundedUnion(cells, hexScene.hex.size, hexScene.hex.size * TEAM_SPREAD),
+      loops: unionLoops(cells, hexScene.hex.size, hexScene.hex.size * TEAM_SPREAD),
     }));
   }, [groups, hexScene]);
 
@@ -1378,8 +1454,8 @@ export default function HexLab({
      * line and the ground it draws *cannot* disagree, which was the point of
      * asking `groupFor` for both in the first place.
      */
-    const fill = roundedUnion(zone.cells, hexScene.hex.size);
-    return fill ? { fill } : null;
+    const loops = unionLoops(zone.cells, hexScene.hex.size);
+    return loops.length ? loops : null;
   }, [hexScene, tree, peopleIds]);
 
   /**
@@ -1423,7 +1499,7 @@ export default function HexLab({
     }
     // Every team's ground in one set, so two teams whose ground touches round
     // as the single shape they already looked like.
-    return roundedUnion(spacer, size);
+    return unionLoops(spacer, size);
   }, [hexScene, teamOutlines]);
   /**
    * **The bubbles** (Greg, 2026-10-16, requirements 4 and 6).
@@ -1449,7 +1525,7 @@ export default function HexLab({
       tree, cells: allocation.cells, tier: allocation.tier, size,
       occupants: allocation.occupants,
     }).map((bubble) => {
-      const fill = roundedUnion(bubble.cells, size);
+      const loops = unionLoops(bubble.cells, size);
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (const seg of bubble.edge) {
         minX = Math.min(minX, seg.from.x, seg.to.x);
@@ -1457,8 +1533,8 @@ export default function HexLab({
         minY = Math.min(minY, seg.from.y, seg.to.y);
         maxY = Math.max(maxY, seg.from.y, seg.to.y);
       }
-      return { ...bubble, fill, box: { minX, maxX, minY, maxY } };
-    }).filter((b): b is typeof b & { fill: Path2D } => b.fill !== null);
+      return { ...bubble, loops, box: { minX, maxX, minY, maxY } };
+    }).filter((b) => b.loops.length > 0);
   }, [hexScene, allocation, tree]);
 
   const regionOrder = useMemo(() => {
@@ -1564,8 +1640,17 @@ export default function HexLab({
     const h = hue.toFixed(1);
     const sp = ((sat / n) * 100).toFixed(0);
     const lp = (l / n) * 100;
+    /**
+     * **Opaque, and lightened in the colour rather than in the alpha** — see
+     * `overPaper`. `ground` is still the same dial it always was; it now says
+     * *how far from the page this colour sits* instead of *how much of it to
+     * let through*, which is the same picture on white and a cleaner one over
+     * the grey room. The alpha left in `fill` is the ladder's cross-fade, and
+     * nothing else.
+     */
+    const ink = overPaper(hslToRgb(hue, sat / n, l / n), ground);
     return {
-      fill: (alpha = 1) => `hsla(${h}, ${sp}%, ${lp.toFixed(0)}%, ${ground * alpha})`,
+      fill: (alpha = 1) => `rgba(${ink.r}, ${ink.g}, ${ink.b}, ${alpha})`,
       line: (alpha = 1) =>
         `hsla(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%, ${alpha})`,
     };
@@ -1595,9 +1680,10 @@ export default function HexLab({
    * currently *the* place draws the way a team does. So every bubble needs the
    * averaged colour of everything standing inside it, not just teams.
    *
-   * A region's ground is lighter than a team's: it covers many times the area,
-   * and at the same strength a division reads as a slab rather than as a
-   * place. `REGION_GROUND` is the one dial.
+   * A region's ground is the same strength as a team's, for the reason written
+   * on `REGION_GROUND` — and like a team's it is opaque, so a division that
+   * takes the map reads as one piece of coloured ground rather than as a wash
+   * over the honeycomb underneath it.
    */
   const bubbleTints = useMemo(() => {
     const out = new Map<string, ReturnType<typeof tintOf>>();
@@ -1739,6 +1825,45 @@ export default function HexLab({
    */
   const cellPx = cellPxOf(hexScene?.hex.size ?? 1, camera.scale);
   const level = levelAt(cellPx);
+
+  /**
+   * **How soft every area boundary is right now, and the paths at that
+   * softness.** Greg, 2026-11-06: *"by the time we hit whatever the next
+   * increment is, the border radius of those hexagons is so high the team
+   * boundary begins to appear smooth."*
+   *
+   * One number for all four areas — a team's ground, a region's blob, the
+   * collar between teams and the ring round a group — so they cannot drift
+   * apart and leave a sharp grey edge peeking out from behind a soft coloured
+   * one. Softening only the two coloured ones was tried on the grounds that
+   * the greys are each a single merged path over thousands of cells and would
+   * be most of the cost; measured on the thousand-person company it made no
+   * difference worth having, so they all soften together.
+   *
+   * `softeningAt` comes back **in steps** rather than continuously, so this
+   * memo rebuilds a few times across the ramp instead of on every frame; the
+   * reasoning for that is on `SOFTEN_STEPS`.
+   */
+  const soften = softeningAt(cellPx);
+  const areaPaths = useMemo(() => {
+    const size = hexScene?.hex.size ?? 1;
+    const teams = new Map<string, Path2D>();
+    for (const team of teamOutlines) {
+      const path = pathOfLoops(team.loops, size, size * TEAM_SPREAD, soften);
+      if (path) teams.set(team.teamId, path);
+    }
+    const blobs = new Map<string, Path2D>();
+    for (const bubble of bubbles) {
+      const path = pathOfLoops(bubble.loops, size, 0, soften);
+      if (path) blobs.set(bubble.unitId, path);
+    }
+    return {
+      teams,
+      blobs,
+      spacers: teamSpacers ? pathOfLoops(teamSpacers, size, 0, soften) : null,
+      rings: groupRings ? pathOfLoops(groupRings, size, 0, soften) : null,
+    };
+  }, [soften, hexScene, teamOutlines, bubbles, teamSpacers, groupRings]);
   const fit = useCallback(() => {
     if (scene.bounds) setCamera(fitCamera(scene.bounds, size, { min: floor }));
   }, [scene, size, floor]);
@@ -2452,12 +2577,15 @@ export default function HexLab({
      * the whole ladder, and a team is simply its first rung.
      */
     const teamPlace = teamOutlines.length > 0 ? (place.get(0) ?? 1) : 0;
-    /** How much of this team's job some region outside it has taken over. */
-    const takenOver = (teamId: string) => {
-      let most = 0;
-      for (const tier of teamCover.get(teamId) ?? []) most = Math.max(most, place.get(tier) ?? 0);
-      return most;
-    };
+    /**
+     * **How much of this team's job the regions outside it have taken over** —
+     * added up, not the largest of them. A handover crossfades across two
+     * rungs, so the largest single share through the middle of one is a half,
+     * and a team that steps aside by that much is still half there under the
+     * blob that has taken over from it. See `placeTaken`.
+     */
+    const takenOver = (teamId: string) =>
+      placeTaken(place, teamCover.get(teamId) ?? []);
     /** So a team's ground is whichever is stronger: its own rung being the
      *  place, or nobody outside it having taken that job on. */
     const groundOf = (teamId: string) => Math.max(teamPlace, 1 - takenOver(teamId));
@@ -2484,11 +2612,10 @@ export default function HexLab({
      * meant nothing changed at all. The question a shared path can answer is
      * the shared one: has any rung outside a team become the place?
      */
-    let regionTaken = 0;
-    for (const [tier, strength] of place) {
-      if (tier >= 1) regionTaken = Math.max(regionTaken, strength);
-    }
-    const roomBetween = 1 - regionTaken;
+    const roomBetween = 1 - placeTaken(
+      place,
+      [...place.keys()].filter((tier) => tier >= 1),
+    );
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -2645,6 +2772,23 @@ export default function HexLab({
     //    ten times over. It is the *edges* that carry the reading, and they are
     //    drawn at a weight that grows with the tier, so the eye gets the size of
     //    a region from the weight of its line before it can read a label.
+    /**
+     * **The rung that is the place is painted last.**
+     *
+     * Region grounds used to go down before the teams, which is the order the
+     * hierarchy is in and the wrong order for the eye. Pulled right out on the
+     * thousand-person company, a team is 27px across — a dot — and 165 of
+     * those dots were being painted *over* the divisions that had taken the
+     * map, so what you saw was a scatter of team patches and no company. Greg,
+     * 2026-11-06: *"the org unit cluster hasn't blobbed together like the
+     * teams have, even though there are area outlines to enable it."*
+     *
+     * So the rule is the ladder's own: whichever rung is currently the place
+     * is the subject, and the subject is on top. Close in that changes
+     * nothing, because `solid` is zero for every region there and the list
+     * below stays empty.
+     */
+    const solidBlobs: { bubble: (typeof bubbles)[number]; shape: Path2D; solid: number }[] = [];
     if (bubbles.length > 0) {
       for (const bubble of bubbles) {
         const { box } = bubble;
@@ -2684,21 +2828,20 @@ export default function HexLab({
         const solid = place.get(bubble.tier) ?? 0;
         if (weight <= 0 && solid <= 0.004) continue;
 
+        const shape = areaPaths.blobs.get(bubble.unitId);
+        if (!shape) continue;
         const hue = hueFor(bubble.unitId);
         if (weight > 0) {
           ctx.fillStyle = css(hue, bubble.depth, maxDepth, 0.05 * weight);
-          ctx.fill(bubble.fill, "evenodd");
+          ctx.fill(shape, "evenodd");
         }
-        if (solid > 0.004) {
-          const tint = bubbleTints.get(bubble.unitId);
-          if (tint) {
-            ctx.fillStyle = tint.fill(solid);
-            ctx.fill(bubble.fill, "evenodd");
-            ctx.lineWidth = Math.max(0.7, 2.2 / scale);
-            ctx.strokeStyle = tint.line(solid);
-            ctx.stroke(bubble.fill);
-          }
-        }
+        /**
+         * **A region's own ground is not drawn here** — it waits until after
+         * the teams, in `1d`. The wash above is context and belongs under
+         * everything; the ground is the region *being the place*, and the
+         * place goes on top.
+         */
+        if (solid > 0.004) solidBlobs.push({ bubble, shape, solid });
 
         /**
          * **No line round a region** (Greg, 2026-10-16): *"there are borders
@@ -2753,13 +2896,13 @@ export default function HexLab({
      * longer, because at the rung where a group *is* the gummy bear its ring
      * is that bear's own outside edge.
      */
-    if (groupRings && roomBetween > 0.004) {
+    if (areaPaths.rings && roomBetween > 0.004) {
       ctx.globalAlpha = roomBetween;
       ctx.fillStyle = "#f7f8fa";
-      ctx.fill(groupRings.fill, "evenodd");
+      ctx.fill(areaPaths.rings, "evenodd");
       ctx.globalAlpha = 1;
     }
-    if (teamSpacers && roomBetween > 0.004) {
+    if (areaPaths.spacers && roomBetween > 0.004) {
       ctx.globalAlpha = roomBetween;
       /**
        * **Opaque, not a wash.** Greg: *"it should be light grey"*, and it was
@@ -2770,7 +2913,7 @@ export default function HexLab({
        * **colour is for what is there, grey is for the room around it.**
        */
       ctx.fillStyle = "#e8eaee";
-      ctx.fill(teamSpacers, "evenodd");
+      ctx.fill(areaPaths.spacers, "evenodd");
       ctx.globalAlpha = 1;
     }
     /**
@@ -2782,11 +2925,11 @@ export default function HexLab({
      * groups that meet simply become one shape, which is what *bubbling
      * together* means.
      */
-    if (groupRings && roomBetween > 0.004) {
+    if (areaPaths.rings && roomBetween > 0.004) {
       ctx.globalAlpha = roomBetween;
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
-      ctx.stroke(groupRings.fill);
+      ctx.stroke(areaPaths.rings);
       ctx.globalAlpha = 1;
     }
 
@@ -2824,11 +2967,27 @@ export default function HexLab({
       for (const team of teamOutlines) {
         const tint = teamTints.get(team.teamId);
         const ground = groundOf(team.teamId);
-        if (!team.path || !tint || ground <= 0.004) continue;
+        const shape = areaPaths.teams.get(team.teamId);
+        if (!shape || !tint || ground <= 0.004) continue;
         ctx.fillStyle = tint.fill(ground);
-        ctx.fill(team.path, "evenodd");
+        ctx.fill(shape, "evenodd");
         ctx.strokeStyle = tint.line(ground);
-        ctx.stroke(team.path);
+        ctx.stroke(shape);
+      }
+    }
+
+    // 1d. And the region that has taken over from those teams, over the top of
+    //     them — see `solidBlobs`. Outermost first, so a division's ground goes
+    //     down before the ones nested inside it.
+    if (solidBlobs.length > 0) {
+      ctx.lineWidth = Math.max(0.7, 2.2 / scale);
+      for (const { bubble, shape, solid } of solidBlobs) {
+        const tint = bubbleTints.get(bubble.unitId);
+        if (!tint) continue;
+        ctx.fillStyle = tint.fill(solid);
+        ctx.fill(shape, "evenodd");
+        ctx.strokeStyle = tint.line(solid);
+        ctx.stroke(shape);
       }
     }
 
@@ -3344,7 +3503,7 @@ export default function HexLab({
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, teamSpacers, groupRings, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, areaPaths, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
 
   // --- input ---------------------------------------------------------------
 

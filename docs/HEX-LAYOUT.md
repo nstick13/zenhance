@@ -3823,10 +3823,14 @@ because the fill covers them.
 seams stop disappearing: each pair of neighbours meets at two cusps and an
 area turns into a run of beads, which is the cleaving Greg named. The rounding
 goes on the **boundary of the union** instead — the edges with nothing of the
-area's own on the other side. `roundedUnion(cells, size)` is the whole of it:
-`outline` → `boundaryLoops` → `traceRounded`, the same three steps the hover
-outline already used, which is why this was a small change rather than a
-geometry project.
+area's own on the other side. `unionLoops(cells, size)` then
+`pathOfLoops(loops, size)` is the whole of it: `outline` → `boundaryLoops` →
+`traceRounded`, the same three steps the hover outline already used, which is
+why this was a small change rather than a geometry project. (It was one
+function, `roundedUnion`, until 2026-11-06, when the corner stopped being a
+constant — see *The boundary softens as you pull back* in
+[HEX-ZOOM.md](HEX-ZOOM.md). Finding the boundary is the expensive half and does
+not depend on the radius, so it is cached separately from the tracing.)
 
 Convex corners round outward, the reflex ones where two tiles meet round
 inward, and the shape reads as one piece of ground with soft edges — which is
@@ -4094,9 +4098,16 @@ Greg's call is to leave those alone, so a team keeps the same soft bite
 between its tiles however far its ground stands off them.
 
 So `traceRounded` takes two radii now, one for corners that stick out and one
-for the notches, and `roundedUnion` hands it `corner + outward` and `corner`.
+for the notches, and `pathOfLoops` hands it `corner + outward` and `corner`.
 Nothing that was already drawn changes: the second radius defaults to the
 first, so every caller that wants one radius gets exactly what it had.
+
+**And since 2026-11-06 `corner` is multiplied by the zoom.** `NODE_CORNER` is
+still the radius every area is *defined* with, and it is what you see at 18px
+a cell and closer; below that the ladder's `softeningAt` ramps it up to 1.8×,
+far enough past the 0.866 ceiling that every corner saturates its own clamp and
+the boundary becomes arcs meeting at the edge midpoints. The reasoning and the
+cost are in [HEX-ZOOM.md](HEX-ZOOM.md).
 
 **Which corner is which is a cross product**, and it was checked rather than
 reasoned at: the material lies to the left of travel, so a corner that sticks

@@ -889,7 +889,16 @@ paper and wrong on the glass, and what is deliberately not built.
 which is Greg's and is design-first. The zoom behaviour it was waiting on now
 exists to design against.
 
-**Four questions are waiting on Greg**, and nothing should be built past them:
+**Greg drove it on 2026-11-06 and asked for three changes**, all now made:
+the coloured grounds are **opaque** (mixed into the page rather than laid over
+it with an alpha, which was picking up the grey underneath and reading muddy);
+an area's corners **soften as you pull back**, unchanged at 18px a cell — his
+*"0.05x"* — and up to 1.8× by the `whole` rung, where the boundary goes smooth;
+and **whichever rung is currently the place is painted last**, over the rungs
+it has taken over from, which is what makes a division read as one mass instead
+of as a scatter of team patches.
+
+**Five questions are waiting on Greg**, and nothing should be built past them:
 
 - **Is there a work level below people?** He put people at the base. The note
   argues there is one further in, because a person's tile at that zoom is about
@@ -903,7 +912,24 @@ exists to design against.
   of "you grab whatever the level is about", and it may be too sharp a tool: one
   flick at the function level would move a thousand people. Deliberately not
   built for that reason; drag behaves the same at every zoom today.
-- **New, from building it: your words and your number point at different
+- **New: do you want one super-blob at full zoom-out, and is it worth what it
+  costs Sparrow Jam?** Pulled right out, the thousand-person company now reads
+  as fourteen clean coloured divisions. Greg described *"all teams on the same
+  branch [bubbled] together as a super-gummy bear blob"* — one shape, not
+  fourteen — and the ladder cannot currently get there at any zoom. The reason
+  is structural, not a number to tune: the recursion hands a place outward by
+  asking whether the rung *inside* has become too small to read, and the camera
+  stops when the company fits the window, so a division (396px at the floor)
+  can never be made small enough to stop reading and the company's own bubble
+  never draws. Getting the single blob needs a second question — **does this
+  place fill the view?** — which is window-relative. Worked through against all
+  three companies on 2026-11-06: it does deliver the blob and marches properly
+  through every tier on the way, but on a ten-person company the whole company
+  fills the view at 36px a cell, so **Sparrow Jam would show one blob instead
+  of its five teams** between roughly 22px and 44px. That is a trade, and it is
+  Greg's to make. Reasoning in [HEX-ZOOM.md](HEX-ZOOM.md) § *What this did not
+  fix*.
+- **From building it: your words and your number point at different
   rungs.** On 2026-10-02 Greg asked to *"see two or three teams on a standard
   13" display"*, and that became the 140–230 cell-pixel band for people. At
   230px on a 1440px screen you see about **four cells** — one person and their

@@ -355,6 +355,121 @@ Each team now asks which of its ancestors actually has a bubble. If none of them
 is currently drawing as a place, the team keeps its own ground however far out
 you pull: nothing has taken over, so nothing is given up.
 
+---
+
+## What Greg saw, and the three changes it asked for
+
+He drove it and said the ladder does what it should — *"I can zoom right into a
+human, and can see in my minds eye how interactions can work now. I can also
+see how zooming out gradually removes information."* Three things were wrong
+with how it looked, and all three turn out to be the same mistake wearing
+different clothes: **a number that stands for one thing being used to carry
+another**.
+
+### The wash is mixed into the page, not laid over it
+
+*"At the zoom level where teams are seen as outlined blobs, the colouring is
+sort of muted, muddyish. My guess is because there's an alpha channel in use
+and a grey zone below it. Let's not alpha the conjoined blobs, so lighten by
+pushing the rgb values higher rather than adding the alpha channel."*
+
+The guess is right. A team's ground is a thirty-per-cent wash, and what is
+underneath it is not the page — it is the grey collar each team keeps and the
+grey ring round each group. Thirty per cent of a pale blue over `#e8eaee` is a
+blue-grey, and the further out you pull the more of the map is collar, so the
+whole company drifts toward one mud. The alpha was never describing anything
+real; it was a way of writing *a light version of this colour* that happened to
+let the room show through.
+
+So `tintOf` now mixes the colour against the page itself (`overPaper`, with
+`PAPER` being the `#fbfbfd` of `app/lab/hex/page.tsx`) and hands the canvas an
+**opaque** fill. It is the same colour it always was where the page is white,
+and that same colour rather than a mixture everywhere else. Alpha is left for
+the one thing it does describe: the ladder cross-fading one rung into the next.
+
+### The boundary softens as you pull back
+
+*"As we zoom out, I'd like the borders around the team blobs to soften even
+further — so by 0.05x zoom, we'd see the border radius on the hexagon outlines
+… as they are defined. However, everything on a zoom <0.05x, the border radius
+should increase, so by the time we hit whatever the next increment is, the
+border radius of those hexagons is so high the team boundary begins to appear
+smooth."*
+
+`0.05×` is read off the panel, and a cell on this lattice is 364 world units,
+so it is **18px a cell** — just outside the Function rung. The ramp runs from
+there to the `whole` rung at 4px, in log space like everything else about this
+camera, and multiplies `NODE_CORNER` by up to 1.8. That is past the point where
+a hexagon's corner circle reaches the edge midpoints, and `traceRounded` already
+clamps each corner to what its own two half-edges can pay for — so the last part
+of the ramp is simply the straight edges running out and the boundary becoming
+arcs that meet tangentially, which is what *smooth* means here.
+
+**The engineering is the cache, not the curve.** A radius that changes with the
+camera means re-tracing every team and every region while it moves. Finding a
+boundary is the expensive half — `outline` walks every cell, 37,000 of them on
+the thousand-person company — and it does not depend on the radius at all, so
+`roundedUnion` was split into `unionLoops` (memoised on the arrangement) and
+`pathOfLoops` (redone at the new radius). The ramp is then cut into twenty
+steps so the re-tracing happens a few times across it rather than every frame.
+Softening only the two *coloured* areas and leaving the greys alone was tried
+on the theory that the greys are each one merged path over thousands of cells
+and would dominate the cost; measured, it made no difference worth having, so
+all four soften together.
+
+### The rung that is the place is painted last
+
+*"At the maximum zoom on the 1000-member company view, the org unit cluster
+hasn't blobbed together like the teams have, even though there are area
+outlines to enable it."*
+
+Two faults, and the second is the interesting one.
+
+**The handover was being measured by its largest share instead of its total.**
+A crossfade spreads the place across two neighbouring rungs, so halfway through
+one the biggest single share is a half — and everything that steps aside by
+`max` steps aside only halfway. Normally another notch of the wheel finishes
+it. At the outermost zoom it never does, because the camera stops when the
+company fits the window, so whatever crossfade is in flight there stays in
+flight for good. Measured on the thousand-person company at its floor, the two
+region rungs held **0.30 and 0.67**: a third of the grey room and a third of
+every team's ground were still on screen, over the regions that had taken the
+map. `placeTaken` adds them up instead — 0.97, nearly all of it — and the greys
+go.
+
+**And the regions were underneath the teams.** Region grounds went down before
+team grounds, which is the order the hierarchy is in and the wrong order for
+the eye: pulled right out, a team is 27px across, and 165 of those dots were
+being painted *over* the divisions that had taken the map. So the rule is now
+the ladder's own — **whichever rung is currently the place is the subject, and
+the subject goes on top**. The faint context wash still goes down first,
+outermost-first, because that is context. Close in nothing changes, because
+every region's `solid` is zero there and the list stays empty.
+
+### What this did not fix
+
+**The top of a deep hierarchy still cannot take the map, and no amount of
+tuning will let it.** The recursion hands outward by asking whether the rung
+inside has become too small to read. That question has an answer for every rung
+but the last few, because the floor of the camera is *the company fits the
+window* — so a division can never be made small enough to stop reading. On the
+thousand-person company at its floor the divisions are 396px and the company
+itself is 671px: both are far past *readable*, so the innermost of them wins and
+the company's own bubble draws nothing, at any zoom, ever.
+
+What you get at full zoom-out is therefore the **tier-2 regions** — fourteen
+clean coloured masses — rather than Greg's one *"super-gummy bear blob"*. That
+is a good picture and a real improvement on the honeycomb it replaces, but it
+is not the thing he described.
+
+Getting the single blob needs a second question the ladder does not currently
+ask: **does this place fill the view?** Worked through on 2026-11-06 against all
+three companies, it does deliver the company blob at the floor and marches
+properly through every tier on the way there — but it is window-relative, and
+on a ten-person company the whole company fits the window at 36px a cell, so
+Sparrow Jam would show one blob where it now shows five teams. That trade is
+Greg's to make, not an agent's, and it is in `docs/TASKS.md`.
+
 ## The jump, and what it needed
 
 The morph is continuous and has no steps in it. The jump is the other half of
@@ -414,7 +529,15 @@ building it turned up.
 - **Is there a work level below people?**
 - **How many slots does a person's tile hold?**
 - **Should a zoomed-out drag be able to restructure a division?**
-- **New: your words and your number point at different rungs.** On 2026-10-02
+- **New: do you want one super-blob at full zoom-out, at Sparrow's expense?**
+  Pulled right out, the thousand-person company now reads as fourteen coloured
+  divisions rather than as one company. Making it one needs the ladder to ask
+  *does this place fill the view?*, which is window-relative — and on a
+  ten-person company the whole company fills the view at 36px a cell, so
+  Sparrow Jam would stop showing its five teams and show one blob instead
+  between about 22px and 44px. Worked through and measured; see
+  *What this did not fix* above and `docs/TASKS.md`.
+- **Your words and your number point at different rungs.** On 2026-10-02
   you asked to *"see two or three teams on a standard 13" display"* and that
   became `PEOPLE_AT_CELL_PX = [140, 230]`. At 230px on a 1440px screen you see
   about **four cells** — one person and their immediate neighbours — because the
@@ -427,17 +550,28 @@ building it turned up.
 ## Verified, and not
 
 **Checked:** `npx tsc --noEmit` clean, lint clean on everything touched, the
-full suite at 955 passing with the one expected failure (21 of them new, on the
+full suite at 964 passing with the one expected failure (30 of them on the
 ladder itself), and `npm run build` succeeds. Driven in a browser at 1440×820 on
 all four companies — blank paper, Sparrow Jam, Digital Tailoring and the
 1,000-person company — at every rung, by button and by `[` / `]`, with the dev
-server restarted first so no stale chunk could flatter the result. Console clean
-apart from the dev server's own HMR socket.
+server restarted first so no stale chunk could flatter the result, and a node
+made on blank paper afterwards to check the creation path still works. Console
+clean apart from the dev server's own HMR socket.
 
-**Measured:** wheel-zooming the 1,000-person company through the outer rungs,
-240 frames, **median 16.7ms, 90th percentile 18.5ms, worst 21.7ms** — 60Hz held
-with one frame over budget. That is a dev build on a developer's machine, which
-is not the five-year-old iPad the bar in AGENTS.md is set by.
+**Measured:** wheel-zooming the 1,000-person company out of its floor and up
+through the whole softening ramp, 100 frames, **median 16.7ms, 90th percentile
+16.8ms, worst 17.8ms** — 60Hz held, with the path rebuilds invisible in the
+distribution. That is a dev build on a developer's machine, which is not the
+five-year-old iPad the bar in AGENTS.md is set by.
+
+**One thing the lint caught that is worth knowing.** Writing
+`Math.round(softeningAt(cellPx) * 20) / 20` in the component made the React
+Compiler **silently stop analysing `HexLab` altogether** — the only visible
+symptom was `react-hooks/purity` reporting nothing and its `eslint-disable`
+going unused, which is an easy warning to wave away. Neither half does it
+alone. The quantisation moved into `softeningAt` and the analysis came back.
+If that warning ever appears again on this file, it means the compiler has
+bailed out, not that the file got tidier.
 
 **Not verified:** touch and pinch; `prefers-reduced-motion` is respected in code
 — the jump arrives instead of travelling — but was not driven with the setting
@@ -448,17 +582,20 @@ in `hexLod.test.ts`, which is not the same as looking at it.
 
 ### How the measurement was taken
 
-A throwaway Vitest file called `buildLabCompany(key, "people")` from
-`app/lab/hex/company.ts`, then `buildOrbitalTree(org, { mergePassThroughRoot:
-false, workCountFor: () => 6 })` — the same options `HexLab.tsx` passes — then
-`layoutHex(tree)` at default density, then `minScaleFor(scene.bounds, size)`
-from `lib/map/camera/viewport.ts` for each viewport. Cell-pixels is
-`scene.hex.size × scale`. It was deleted rather than committed, because it
-answers a question once rather than holding a promise; the four lines above
-reproduce it.
+**The zoom range and the per-tier figures:** a throwaway script run with
+`npx tsx`, calling `buildLabCompany(key)` from `app/lab/hex/company.ts`, then
+`buildOrbitalTree(org, { mergePassThroughRoot: false, workCountFor: () => 6 })`
+— the same options `HexLab.tsx` passes — then `allocateByTerritory` with the
+lab's settled driver, `layoutHex(tree, { density: "roomy", allocation })`, and
+`minScaleFor(scene.bounds, size)` from `lib/map/camera/viewport.ts` for the
+viewport. Cell-pixels is `scene.hex.size × scale`. Footprints, `placePresence`
+and `placeTaken` were then evaluated exactly as `HexLab` evaluates them, which
+is how the 0.30/0.67 above and the per-team ground figures were counted.
 
-**Not verified:** none of this has been looked at in a browser, because none of
-it is built. The 33ms figure is quoted from `docs/HEX-LAYOUT.md` § *A team
-became a place*, not re-measured. No touch device, no iPad, and no check of
-whether a derived blob rung is affordable at Northwind's scale — that last one
-is the real risk in the proposal, and the caching note is why.
+**The frame times:** in the browser, dispatching `WheelEvent`s on the canvas
+one per `requestAnimationFrame` and recording the gap between frames, after a
+warm-up — the first run after a reload has a 500ms outlier in it that is the
+dev server compiling, not the map.
+
+Both were deleted rather than committed, because they answer a question once
+rather than holding a promise; the lines above reproduce them.

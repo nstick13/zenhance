@@ -161,7 +161,12 @@ scale**, which is right there because a unit's size depends on what it
 carries. On a lattice every cell is the same size, so the only honest
 question is how many pixels a cell covers on the glass — one number, from
 which the hex ladder derives every reveal, the rung you are standing on, and
-which rung of the hierarchy currently draws as a place of its own. See
+which rung of the hierarchy currently draws as a place of its own — plus,
+since 2026-11-06, how much of the map the places have taken between them
+(`placeTaken`, a total rather than a maximum, because a handover spread across
+two rungs has still happened) and how far an area's corners are softened
+(`softeningAt`, the one figure here that comes back in steps, because it
+changes the shape of a path rather than a colour). See
 [HEX-ZOOM.md](HEX-ZOOM.md).
 
 **Still in `OrbitalMap.tsx`: focus *policy*.** Which unit to focus, and what
