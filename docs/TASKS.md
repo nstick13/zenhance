@@ -100,6 +100,67 @@ and the two inputs are allowed to differ.
 Agents should not settle these alone. Each changes how the product feels or
 what it costs, and that is not a refactor's call.
 
+### ☐ The two law sets do not say the same thing, and the gaps explain the drag problems — *Greg, 2026-11-07: "record the inconsistencies in the laws"*
+
+**In plain English:** the map has two sets of laws. The orbital engine got four
+on 2026-09-23; the hex map got six of its own on 2026-10-07, written from
+scratch rather than inherited. Reading them side by side, the hex set is not
+the orbital set adapted — it **reverses** the orbital set on the two points
+that matter most to somebody dragging a node about, and Greg's hunch on
+2026-11-07 is that this is what is behind the drag problems in *The layout
+engine still isn't quite right* below. **This entry is the record, not the
+fix.** Greg has said it gets its own conversation.
+
+Sources, both read rather than remembered: the orbital four are in
+[LAYOUT-ENGINE-PROMPT.md](LAYOUT-ENGINE-PROMPT.md) and held by
+`lib/map/layout/__tests__/laws.test.ts`; the hex six are
+[MAP-LAWS.md](MAP-LAWS.md).
+
+| Question | Orbital | Hex | |
+|---|---|---|---|
+| Is the layout a function? | **Law 1** — pure function, byte-identical | the same promise, **deliberately not numbered**: one of four *"standing requirements that are not laws"* | consistent |
+| Where does a drop land? | **Law 2** — exactly where the hand let go, never corrected; *"if a drop cannot be honoured at all, refuse it plainly before release"* | **Law 0** — the hand outranks the engine, in three tiers | **reversed in effect** |
+| Do old placements survive? | **Law 3** — obstacles, never suggestions; only explicit Tidy clears them | **Law 0** again, plus *tidy is aimed* | hex is more usable |
+| Can two things overlap? | **Law 4**, second half — bodies never overlap, **binding the engine only**; a person may deliberately overlap and it stands | **Law 1** — one cell, one unit, **no exception, overriding even Law 0** | **reversed** |
+| Can lines cross? | **Law 4**, first half — never, by construction | **not a law**; *fewer crossing lines* is a preference, and **Law 5** forbids moving a unit to improve a line | **reversed, deliberately** |
+| Territory whole? | nothing | **Law 2** | hex only |
+| How near the centre? | nothing | **Law 3** — the ring floor | hex only |
+| How far apart? | nothing | **Law 4** — the spacer | hex only |
+| Ranked? | no — the distinction is engine vs hand | **strictly**, each naming what it yields to | different shape |
+
+**The four inconsistencies worth a decision**, in the order they bite:
+
+1. **Law 0 claims more than it delivers.** *"The hand outranks the engine"*
+   protects the cell you let go of and nothing else: every other unit in that
+   branch still answers to Laws 3 and 4 and gets redistributed. Orbital Law 2
+   guaranteed the pointer outright. The hex title should either be narrowed to
+   what it does or the law widened to what it says.
+2. **There is no "refuse before release".** Orbital Law 2 ends *"if a drop
+   cannot be honoured at all, refuse it plainly before release — do not accept
+   it and then move it."* The hex set has no equivalent clause, so it accepts
+   every drop and redistributes afterwards. That is exactly the behaviour Greg
+   described on 2026-11-06: you can watch it miss and you cannot aim.
+3. **Law 5 is knowingly broken** and has been since it was written. `neaten`'s
+   turning phase in `tidy.ts` picks a branch rotation by counting connection
+   crossings, which is the one thing the law forbids outright. Marked in the
+   code, found 2026-10-15.
+4. **The hardest law changed who it binds.** Orbital Law 4 binds the engine
+   only — *"the map is theirs to arrange badly."* Hex Law 1 binds everybody,
+   because a lattice has nowhere to put the second unit. That one is **forced
+   by the geometry rather than chosen**, and it is probably the root: on a
+   continuous plane "the hand always wins" costs nothing, and on a lattice it
+   collides with Law 1 immediately, which is why Law 0 had to be cut back to a
+   single cell in the first place.
+
+That last point is the same question as Greg's *"deciding how opinionated the
+system needs to be"* in the entry below, arriving from the law side rather
+than from the drag.
+
+**Not an inconsistency, but the trap that keeps catching people:** the two sets
+share the word *law* and **their numbers collide** — orbital Law 4 is *never
+overlap two bodies*, which is hex Law 1. MAP-LAWS.md already says so, and the
+hex tests still carried the orbital numbering until 2026-10-15.
+
 ### ☐ The layout engine still isn't quite right — *Greg, 2026-11-06*
 
 Greg asked, while clearing the settings off the hex lab: *"Make a note that the
@@ -146,6 +207,55 @@ things you would see rather than things only a test knows about.
 nothing ever shares a cell, no rung ever loops back round the centre (`round
 0/394` on Northwind), and the whole 2,957-cell company lays out in 90ms.
 
+**Greg came back to this on 2026-11-06, after driving the zoom ladder, and
+named three of them in his own terms.** None is a bug report — the engine does
+what it is told in every case.
+
+1. *"Moving a team is problematic and remains difficult for a human to predict
+   how they'll land."*
+2. *"Moving a whole node and its children is equally difficult — the
+   restrictions around master-center make for some very odd results, even if
+   they are mathematically predictable."*
+3. *"The child becoming subject to the positioning relationship defined by its
+   parent isn't as slick as it could be; it's also producing bizarre outcomes
+   even if they are also mathematically predictable."*
+
+**It is not a prediction problem, and that is the part worth getting right.**
+Greg, the same day, correcting exactly that reading: *"a person can see where a
+node will land, or a group of them, because the GUI shows them. But that
+doesn't mean it's useful — where the thing lands and where my mouse is are
+often wildly different, with no apparent way to converge them, even if I move
+into open space, since the positioning rules push the nodes and teams to an
+unsatisfactory distribution."*
+
+So the preview is doing its job. The complaint is about **the gap between the
+pointer and the result, and the absence of any gesture that closes it**. You
+can see you are going to miss; you cannot aim. Moving into clear ground does
+not help, because the rules redistribute what lands there anyway. Being able to
+*watch* the engine overrule you is not obviously better than being surprised by
+it — it is the same loss of control with more warning.
+
+**His direction is to decide how opinionated the thing should be**, rather than
+to add rules: *"the solution is deciding how opinionated the system needs to
+be, rather than trying to be all things to all people."* That is the real
+question under all three symptoms. Today the engine is opinionated enough to
+move your drop a long way and not opinionated enough to say so and own it, and
+it is trying to honour a hand (Law 0) and a distribution at the same time. Two
+coherent answers exist and the middle is what hurts: either **the hand wins and
+the engine only tidies around it**, or **the engine owns the layout and the
+hand expresses intent — "put this near that" — rather than a position**. Both
+are liveable; what is there now is neither.
+
+**He also wants it rethought rather than patched**, and thinks the work already
+done makes that cheaper: *"we rethink it again, and the scale work we've been
+doing will help. Offsets and area-claiming by key nodes can help."* Two ideas
+in that sentence worth holding on to — a node being allowed to **claim an
+area** rather than only a cell, and placement expressed as an **offset** from
+something a person can see rather than derived from a rule they cannot. Neither
+is designed. It is a conversation to have with Greg before any code, and it
+overlaps the illusory-size idea in *The map gets crowded the moment people
+appear* below, which is the same thought arriving from the drawing side.
+
 *For whoever picks it up:* the owner of where things go is
 `allocateByTerritory` in `lib/map/layout/hex/territory.ts`, which runs the
 radial driver (`radial.ts`) — the only driver now, since the atlas came off the
@@ -167,6 +277,144 @@ about a *gesture*, so they are `defer.ts` and `tidy.ts` rather than the placer.
 > `app/lab/hex/hand.ts`, with five tests. It had been there since `settle`
 > landed on 2026-10-30 and was hidden by a test fixture using the teams strata,
 > where the chains are too short to collide.
+
+### ☐ The map gets crowded the moment people appear — *Greg, 2026-11-06, after driving the zoom ladder*
+
+**In plain English:** the zoom ladder now works, and driving it turned up the
+next problem. Somewhere around `0.05×` the people arrive, and from that moment
+the map feels packed — there is no air in it. Greg's reading is that the fault
+is not how much is on screen but how little space there is between things, and
+he has a specific fix in mind. **This is design, it is his, and nothing should
+be built until he has said what he wants.** These are his words written down so
+the next conversation starts from them rather than from memory.
+
+**Give the hexagons the appearance of more whitespace.** The proposal is to
+**draw a human about half the size it is now while it keeps the same cell**, so
+the tile stays where it is on the lattice and the mark inside it gets smaller.
+A smaller mark needs more zoom before its name is worth reading, so the label
+threshold moves out with it — Greg's figure is that you would have to be past
+roughly `0.15×` before human labels appear. And it is not only the nodes:
+*"we'd also have to make the various outlines, connection lines and weights
+reflect this use of whitespace."* A half-size node beside a line of today's
+weight would read as a line with dots on it.
+
+> **☑ Built on 2026-11-07.** Greg: *"the central hexagon should be half the
+> current size, nested within the outer hexagon that should be perhaps 80% its
+> current size"*, and *"let's make the connection lines between people and
+> their parent half the thickness too, which may also scale all other
+> connection lines."* So `PERSON_MARK` (0.5) and `PERSON_TILE` (0.8) in
+> `HexLab.tsx`, applied to humans only so a place and a person are further
+> apart in size than they were; and `CHAIN_WEIGHT` and `LEAD_WEIGHT` halved,
+> which scales every connection line, as he allowed.
+>
+> **And one thing that was not on the list turned out to be most of the
+> crowding.** Every person counted as a *landmark* and so was labelled at every
+> zoom from the Function rung inward, because the `leading` clause added with
+> the zoom ladder keys off `allocation.tier`, which gives a person tier 0 —
+> the same number a team gets. Human names therefore bypassed the
+> `NAMES_AT_CELL_PX` band entirely. Fixed the same day; written up in
+> [HEX-ZOOM.md](HEX-ZOOM.md) § *Every person was a landmark*. Measured at 0.05×
+> on the thousand-person company, from the same camera: dark marks on the map
+> went from **2.14% of the view to 1.39%**.
+>
+> **☑ And size now says *what kind of thing*, not *how senior*, the same
+> day.** Greg: *"parent nodes of people (team nodes) should now fill their
+> host cell … anything parent node that is not a human node and sits above
+> that of a team node should now grow beyond its host cell, extending to the
+> edges of the region drawn around it … the master centre node should be huge
+> — its radius should be the same as 2x the radius of a normal host cell."*
+> The old `nodeScale` grading, a step per rung, is gone from everything but a
+> person's floor.
+>
+> **Greg sharpened it an hour later and the sizes are now four flat
+> numbers.** *"Nodes that aren't master-centre or a human or a team-level node
+> should consume their entire cell plus half a radius in addition … a fixed
+> size regardless of the node. 'Fill the container' meant expand until it
+> touched the first border, not grow in proportion to the container size."*
+> And *"master centre should be 3x the radius of its host cell."* So
+> `PLACE_SPAN` is 1.5 and `MASTER_SPAN` is 3, and the region arithmetic is
+> gone.
+>
+> **And the half of the z-order rule that was missing**, an hour later:
+> *"the person node, even when it hovers/clips above another node, takes the
+> parent node because the human node host cell's colour is governed by an
+> alpha channel. Let's make it opaque, but a lighter shade so it matches the
+> lightened colour of the node itself."* A tile cannot sit above something if
+> you can see that something through it. `cssOver` mixes the colour into the
+> page at the same strength the alpha used and hands back an opaque one.
+>
+> **Plus a z-order rule that makes the rest safe:** *"all human nodes and
+> their host cells should sit on a z-axis point above other nodes, including
+> master centre … Nina Lindqvist would appear to clip into 'a deep enterprise
+> shape'. This is expected."* A place now overflows its cell and the master
+> centre covers the ring around it, so without this the people — the thing the
+> map is of — would be buried by them.
+>
+> **Two readings tried and discarded on the way**, both written up on
+> `markRadius` so nobody retries them: drawing a place *as* its region's own
+> path, which is 3.3 seconds a frame because stroking the boundary of
+> thousands of cells is nothing like filling it; and growing it in proportion
+> to its region, which put eight screen-wide hexagons over each other on the
+> eight-rung company.
+>
+> **☑ And the tile a person stands on is softer, the same day.** Greg: *"let's
+> give the host hexagons a bit more rounding, but not so that the thing
+> appears as a circle … I think border radius is half the hexagon radius,
+> let's make it ⅔?"* It went in globally first and he pulled it back —
+> *"only person tiles"* — so `PERSON_TILE_CORNER` is `2/3` and `NODE_CORNER`
+> stays at a half. A person is now three turns of one dial: a circle for the
+> body, a two-thirds hexagon for the tile, and the half-rounded ground of the
+> place that holds them.
+>
+> **☑ And a human is a circle, the same day.** Greg: *"they're now nestled far
+> enough inside their host hexagons that we could dial up the border radius so
+> that they appear circular. This would not be true for parent nodes, or
+> anything that wasn't a human node (for now)."* `PERSON_CORNER = √3/2`, which
+> is `NODE_CORNER`'s own top rather than a new way of drawing a person — the
+> point at which a rounded hexagon is its inscribed circle. A place stays a
+> hexagon, so the two kinds of thing now differ in shape as well as size.
+>
+> **☑ And the label threshold, the same day.** With the landmark bug gone the
+> names went the other way — Greg: *"they all appeared too soon prior to this
+> fix, but on this fix they appeared too late… having them appear at 0.15x is
+> good. Let's make it so."* The cause was a second leftover, `drawn × scale ≥
+> 7`, which measured the white centre mark rather than the cell and held human
+> names back to `0.52×`; the two bugs had been cancelling each other out.
+> `NAMES_AT_CELL_PX` is now `[42, 68]`, centred on the 55px a cell that is
+> `0.15×`, with a test pinning the switch there. Checked either side of it on
+> Digital Tailoring.
+
+> *"As the zoom reveals the humans at around 0.05x zoom, my feeling is the map
+> quickly becomes too crowded. We need to give the hexagons the appearance of
+> having more whitespace."*
+
+**And there is too much being said at once at that level.** Greg counts four
+things stacked in the same place: *"there's a team bubble and its border, the
+area spacing behind it, and beyond that, the outline of the functional group.
+This is a bit much; we likely don't need all of it."* Which of them goes is his
+call. Worth knowing before that conversation: the team's coloured ground and
+its line come from the same path, so they are one decision not two
+(`teamOutlines`, `TEAM_GROUND`, `TEAM_EDGE_DARKER`); the grey behind it is the
+collar every team keeps (`teamSpacers`) and it is load-bearing for the spacing
+rule, not decoration; and the functional group's outline is `groupRings`. All
+four are in `app/lab/hex/HexLab.tsx` and all four already fade with the zoom
+ladder — so one answer is that they should not *all* be visible at the same
+rung, rather than that one of them should go for good.
+
+**A trick worth keeping for when this is built.** Greg: *"we can make team head
+nodes (eg anything that isn't a human) appear to be bigger because we can offset
+backgrounds around them. So we can 'cheat' the strict hexagon layout system by
+making some appear larger than others, even if they are just so in an illusory
+capacity."* The machinery for it exists — `TEAM_SPREAD` already stands a team's
+ground off its own cells by a quarter of a cell radius, and `pushOut` in
+`app/lab/hex/loops.ts` will offset any boundary by any distance with the corner
+radii following correctly. So a head node could carry a ground that reaches
+visibly further than a person's without a single cell changing hands, which
+keeps Law 1 (*one cell, one unit*) intact while letting importance show.
+
+This is the same job as **The look of the layers and what shows at each zoom**
+below — that entry's remaining half is exactly this — but it is written here on
+its own because it is specific enough to act on and the other entry is long.
 
 ### ☐ A view built around people, not the org chart — *raised by Greg, 2026-10-02*
 
@@ -298,8 +546,16 @@ legible results."*
 The worst symptom is fixed — leaf clustering comes back at the far end of the
 dial, so a far-flung branch reads as a circle rather than a chart (`3f81323`).
 The question underneath it is open: **what should a user be able to predict
-before they let go?** Today the honest answer is "nothing precise" — you find
-out where a branch lands by dropping it and looking.
+before they let go?**
+
+**And one of the three directions below has since been tried and was not
+enough.** *Show the landing before the drop* is built — the map previews where
+a branch will sit — and on 2026-11-06 Greg said that seeing it does not help:
+*"where the thing lands and where my mouse is are often wildly different, with
+no apparent way to converge them."* The problem is not knowing; it is not being
+able to aim. That reframes this entry toward the other two directions, and it
+is written up under *The layout engine still isn't quite right* above, where
+Greg's answer — decide how opinionated the system should be — belongs.
 
 Three directions, not exclusive:
 

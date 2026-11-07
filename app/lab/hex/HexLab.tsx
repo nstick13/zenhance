@@ -153,11 +153,12 @@ const BEHIND_ALPHA = 0.18;
  * **How much of a corner comes off a node's hexagon.** Greg asked for a
  * quarter on 2026-11-05 — *"round the edges of all hexagons to, say, 25% of
  * the length of the vertex"* — looked at it on the map and took it to **half**
- * the same day. A regular hexagon's side is exactly its circumradius, so this
- * is also a straight fraction of the radius each node is drawn at — which
- * means the corner stays the same share of the edge at every rung, as the
- * nodes change size by depth, instead of looking blunter the smaller a node
- * gets.
+ * the same day, which is where it has stayed.
+ *
+ * A regular hexagon's side is exactly its circumradius, so this is also a
+ * straight fraction of the radius each node is drawn at — which means the
+ * corner stays the same share of the edge at every rung, as the nodes change
+ * size by depth, instead of looking blunter the smaller a node gets.
  *
  * It is the radius of the circle tucked into the corner, and that circle
  * meets each edge `r / tan(60°)` back from the point. **The useful range is
@@ -166,11 +167,21 @@ const BEHIND_ALPHA = 0.18;
  * the edge midpoints and the tile has become its own inscribed circle. So
  * this one number is the whole dial between hexagon and circle.
  *
- * **Everything that is a hexagon on this map takes it** — an active tile one
- * at a time, an area along the boundary of its union (see `unionLoops` and
- * `pathOfLoops`, which is how an area rounds without its tiles cleaving at
- * every seam). The
- * three cells a gesture draws, in `hexPath`, are the last square corners left.
+ *
+ * **Nearly everything that is a hexagon on this map takes it** — an active
+ * tile one at a time, an area along the boundary of its union (see
+ * `unionLoops` and `pathOfLoops`, which is how an area rounds without its
+ * tiles cleaving at every seam). The three cells a gesture draws, in
+ * `hexPath`, are the last square corners left.
+ *
+ * **Three things now read it differently rather than take it**, and all three
+ * are this dial turned up rather than a second way of rounding. A *human*'s
+ * mark takes `PERSON_CORNER`, which is the dial at its top and therefore a
+ * circle; the *tile a human stands on* takes `PERSON_TILE_CORNER`, two
+ * thirds; and an *area* boundary is multiplied by `softeningAt` below 18px a
+ * cell, so a team's ground goes smooth as you pull back. The first two are
+ * Greg, 2026-11-07, and they are **people only** — a place keeps the half,
+ * which is what tells the two apart at a glance.
  */
 const NODE_CORNER = 0.5;
 
@@ -191,6 +202,128 @@ const NODE_CORNER = 0.5;
 const ACTIVE_GAP = 0.04;
 const ACTIVE_GAP_PX = 3;
 const ACTIVE_GAP_MAX = 0.12;
+
+/**
+ * **How much smaller a human is drawn than the cell it stands in.** Greg,
+ * 2026-11-07, after driving the zoom ladder: *"as the zoom reveals the humans
+ * at around 0.05x zoom, my feeling is the map quickly becomes too crowded. We
+ * need to give the hexagons the appearance of having more whitespace … human
+ * nodes need to be smaller. The central hexagon should be half the current
+ * size, nested within the outer hexagon that should be perhaps 80% its
+ * current size."*
+ *
+ * **Two hexagons, two numbers, and the cell itself does not move.** The
+ * *central* one is the mark that says a person is here (`nodePath`); the
+ * *outer* one is the whole cell in that person's colour (`washPath`). Both
+ * shrink inside a cell that stays exactly where the lattice put it, so this is
+ * a drawing change and not a layout one — nothing re-lays, no law is touched,
+ * and a cell is still one unit's (Law 1).
+ *
+ * **Only a human.** A structural node keeps its full size, which widens the
+ * gap between a place and a person rather than scaling everything down
+ * together — and that is the point, because the crowding Greg is describing is
+ * the people. It is also the first half of his own idea for the other
+ * direction: *"we can make team head nodes … appear to be bigger because we
+ * can offset backgrounds around them."*
+ *
+ * The outer one is taken off the cell **after** `activeInset`, so the promise
+ * that two active hexagons never touch — and never come within a few pixels of
+ * each other on the glass — only gets easier to keep.
+ */
+const PERSON_MARK = 0.5;
+const PERSON_TILE = 0.8;
+
+/**
+ * **A human is drawn as a circle.** Greg, 2026-11-07, on the half-size marks:
+ * *"they're now nestled far enough inside their host hexagons that we could
+ * dial up the border radius so that they appear circular. This would not be
+ * true for parent nodes, or anything that wasn't a human node (for now)."*
+ *
+ * `√3/2` is not an approximation of a circle — it is the exact top of
+ * `NODE_CORNER`'s range, where each corner's circle reaches the midpoint of
+ * both its edges, every straight edge is used up, and a rounded hexagon *is*
+ * its own inscribed circle. So this is the same dial at its limit rather than
+ * a second way of drawing a person, which matters: the mark stays concentric
+ * with its cell, keeps the clear ground `ACTIVE_GAP` promises it, and shrinks
+ * and grows with everything else.
+ *
+ * **It makes the two kinds of thing tell themselves apart by shape, not only
+ * by size.** A place is a hexagon and holds the lattice's own geometry; a
+ * person is a circle and reads as a body standing on it. Until today the only
+ * difference was the dark border a structural node wears.
+ *
+ * The circle's radius is `√3/2` of the hexagon's, so a person reads a little
+ * smaller again than `PERSON_MARK` alone would suggest.
+ */
+const PERSON_CORNER = Math.sqrt(3) / 2;
+
+/**
+ * **And the hexagon a human stands on is softer than a place's.** Greg,
+ * 2026-11-07: *"let's give the host hexagons a bit more rounding, but not so
+ * that the thing appears as a circle. I think border radius is half the
+ * hexagon radius, let's make it ⅔?"* — and, asked whether he meant every
+ * hexagon or only the ones hosting people, **only the ones hosting people**.
+ *
+ * At two thirds the corner's circle meets each edge 38.5% of the way back
+ * from its end, so **23% of every edge is still dead straight**: soft, and
+ * still visibly six-sided, which is what *"not … a circle"* asks for. It is
+ * 77% of the way along `NODE_CORNER`'s range rather than at the end of it,
+ * where `PERSON_CORNER` sits.
+ *
+ * So a person is now three things nested, each a turn further round the same
+ * dial: a **circle** for the body, a **two-thirds hexagon** for the tile it
+ * stands on, and the **half**-rounded ground of whatever place holds them.
+ */
+const PERSON_TILE_CORNER = 2 / 3;
+
+/**
+ * **How big a node is, in cell radii, by what kind of thing it is.** Greg,
+ * 2026-11-07, after seeing the first attempt and sharpening it: *"nodes that
+ * aren't master-centre or a human or a team-level node should consume their
+ * entire cell plus half a radius in addition … a fixed size regardless of the
+ * node. 'Fill the container' meant expand until it touched the first border,
+ * not grow in proportion to the container size."* And: *"master centre should
+ * be 3x the radius of its host cell."*
+ *
+ * So four flat numbers and no arithmetic about regions at all:
+ *
+ * | | radius |
+ * | --- | --- |
+ * | a person | the old floor, halved, as a circle (`PERSON_MARK`) |
+ * | a team | its cell, less the clear ground every active hexagon keeps |
+ * | a place above a team | `PLACE_SPAN` — the cell and half a radius more |
+ * | the master centre | `MASTER_SPAN` — three cell radii |
+ *
+ * **The last two overflow the lattice on purpose**, so neither takes
+ * `activeShrink`: the clear-ground promise is about tiles that must not touch,
+ * and these are meant to. Three radii is nearly two cells' worth of reach
+ * (`√3 ≈ 1.73` radii to a neighbour's centre), so the master centre covers the
+ * ring around it and some of the one beyond.
+ *
+ * Growing a place *in proportion to its own region* was the first reading of
+ * this and it is gone — it made every rung's node a different size, which is
+ * the `nodeScale` grading this replaced, wearing different clothes.
+ */
+const PLACE_SPAN = 1.5;
+const MASTER_SPAN = 3;
+
+/**
+ * **How heavy a connection line is**, as a fraction of a cell's radius, before
+ * the per-rung grading that keeps a trunk heavier than a twig.
+ *
+ * Halved on 2026-11-07, with the human tiles: Greg, *"let's make the
+ * connection lines between people and their parent half the thickness too,
+ * which may also scale all other connection lines."* It does scale them all,
+ * which is his *"may"* taken as permission rather than as a side effect — a
+ * person's line halving while the trunk above it held would turn the trunk
+ * into the loudest thing on the map, and the weights are a hierarchy, not four
+ * separate decisions.
+ *
+ * `LEAD_WEIGHT` is the darker line from a team lead to their place, and it
+ * halves with the rest for the same reason.
+ */
+const CHAIN_WEIGHT = 0.135;
+const LEAD_WEIGHT = 0.05;
 
 /**
  * **How wide a chain swings through its knees, by how long the chain is.**
@@ -723,6 +856,27 @@ const overPaper = (c: { r: number; g: number; b: number }, share: number) => ({
   g: Math.round(PAPER.g + (c.g - PAPER.g) * share),
   b: Math.round(PAPER.b + (c.b - PAPER.b) * share),
 });
+
+/**
+ * **`css` at a given strength, mixed into the page rather than laid over it.**
+ *
+ * The same colour the alpha version produces on white, and the same colour
+ * everywhere else too — which is the whole point. Greg, 2026-11-07, on a
+ * person standing over the master centre: *"the person node, even when it
+ * hovers/clips above another node, takes the parent node because the human
+ * node host cell's colour is governed by an alpha channel. Let's make it
+ * opaque, but a lighter shade so it matches the lightened colour of the node
+ * itself."*
+ *
+ * Z-order put the people above everything a moment earlier, and this is the
+ * half of it that was missing: a tile cannot sit *above* something if you can
+ * see that something through it.
+ */
+const cssOver = (hue: number, depth: number, maxDepth: number, share: number) => {
+  const { l, s } = toneOf(depth, maxDepth);
+  const c = overPaper(hslToRgb(hue, s, l), share);
+  return `rgb(${c.r}, ${c.g}, ${c.b})`;
+};
 
 /**
  * Which ancestor a unit takes its hue from.
@@ -2661,9 +2815,9 @@ export default function HexLab({
      * stays under `0.866` of an edge, so the path cannot overshoot itself
      * however small the thing is drawn.
      */
-    const roundedHex = (centre: Point, radius: number) => {
+    const roundedHex = (centre: Point, radius: number, corner = NODE_CORNER) => {
       ctx.beginPath();
-      traceRounded(ctx, { points: cornersAt(centre, radius), closed: true }, radius * NODE_CORNER);
+      traceRounded(ctx, { points: cornersAt(centre, radius), closed: true }, radius * corner);
     };
 
     /**
@@ -2685,10 +2839,56 @@ export default function HexLab({
      *  Greg: *"and proportionally everything within them"*. */
     const activeShrink = hexSize > 0 ? 1 - activeInset / hexSize : 1;
 
-    const nodePath = (cell: Cell, depth: number, shrink = 1, person = false) => {
-      const radius = hexSize * nodeScale(person ? maxDepth : depth, maxDepth) * shrink * activeShrink;
-      roundedHex(cellToWorld(cell, hexSize), radius);
+    /**
+     * **How big a node's own mark is, and what that says about it.** Greg,
+     * 2026-11-07, replacing the even grading by rung with four statements:
+     *
+     * - a **person** is small — half the old floor, and a circle;
+     * - a **team** *"should now fill their host cell"*, so it is the cell;
+     * - a **place above a team** overflows its cell by half a radius, a fixed
+     *   amount whatever it holds (`PLACE_SPAN`);
+     * - the **master centre** *"should be huge"*, at `MASTER_SPAN` cell radii.
+     *
+     * The old `nodeScale` grading — every rung a step bigger than the one
+     * below — has gone from everything except a person's floor. Size used to
+     * say *how senior*; it now says *what kind of thing this is*, which is a
+     * question the eye can actually answer at a glance.
+     *
+     * Everything still multiplies by `activeShrink`, so the clear ground an
+     * active hexagon keeps is kept whatever the rule.
+     *
+     * **A place above a team is a team-level node that has been drawn
+     * bigger, and that is all.** Two richer readings were tried first and
+     * both are written up in `docs/HEX-LAYOUT.md`: drawing the node *as* its
+     * region's own path, which costs 3.3 seconds a frame because stroking the
+     * boundary of thousands of cells is nothing like filling it; and growing
+     * it in proportion to its region, which put eight screen-wide hexagons
+     * over each other on the eight-rung company. Greg's answer to both was to
+     * make it a constant.
+     */
+    const markRadius = (id: string, depth: number): number => {
+      void depth;
+      if (peopleIds.has(id)) {
+        return hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
+      }
+      if (id === tree.rootId) return hexSize * MASTER_SPAN;
+      // A team holds people; anything above one holds places.
+      const tier = allocation.tier?.get(id) ?? 0;
+      if (tier >= 1) return hexSize * PLACE_SPAN;
+      return hexSize * activeShrink;
     };
+
+    const nodePath = (cell: Cell, id: string, depth: number, shrink = 1) => {
+      const person = peopleIds.has(id);
+      // A person is the dial at its limit, which is a circle — `PERSON_CORNER`.
+      // The tile behind them stays a hexagon, and so does every place.
+      roundedHex(
+        cellToWorld(cell, hexSize),
+        markRadius(id, depth) * shrink,
+        person ? PERSON_CORNER : NODE_CORNER,
+      );
+    };
+
 
     /**
      * **The active hexagon's border**, which is the whole cell in the unit's
@@ -2701,7 +2901,12 @@ export default function HexLab({
      * ground every active hexagon keeps — see `activeInset`, which is what
      * stops two of these ever touching.
      */
-    const washPath = (cell: Cell) => roundedHex(cellToWorld(cell, hexSize), hexSize - activeInset);
+    const washPath = (cell: Cell, person = false) =>
+      roundedHex(
+        cellToWorld(cell, hexSize),
+        (hexSize - activeInset) * (person ? PERSON_TILE : 1),
+        person ? PERSON_TILE_CORNER : NODE_CORNER,
+      );
 
     /**
      * **A chain, with its knees rounded.** Greg, 2026-11-06: *"put a nice
@@ -3013,9 +3218,11 @@ export default function HexLab({
       const wash = (0.30 - 0.24 * reveal.people) * reveal.tiles;
       if (wash > 0.02) {
         for (const unit of visible) {
+          // A person's own tile goes up last, with the person — see `2d`.
+          if (peopleIds.has(unit.id)) continue;
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
-          washPath(cell);
+          washPath(cell, false);
           ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, wash);
           ctx.fill();
         }
@@ -3046,7 +3253,7 @@ export default function HexLab({
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         // Still scaled by the node, so the trunk stays heavier than the twigs.
-        ctx.lineWidth = Math.max(0.6, hexSize * 0.27 * nodeScale(unit.depth, maxDepth));
+        ctx.lineWidth = Math.max(0.6, hexSize * CHAIN_WEIGHT * nodeScale(unit.depth, maxDepth));
         /**
          * **A stretch that runs behind somebody is drawn faint.**
          *
@@ -3072,25 +3279,103 @@ export default function HexLab({
       }
     }
 
-    // 2c. The nodes themselves, inset in their cells by depth — the company
-    //     fills its hexagon, a team keeps half the area, and the gap between a
-    //     node and its container is what tells two peers apart.
+    // 2c. The nodes themselves, sized by what kind of thing they are rather
+    //     than by how senior they are — see `markRadius`. A person is a small
+    //     circle, a team fills its cell, a place above a team is its own
+    //     region, and the master centre is two cell radii across.
+    /**
+     * **Biggest first.** The marks now overlap on purpose: the master centre
+     * is wider than the distance to its neighbours' centres, and a region
+     * covers everything standing inside it. Drawn in `visible` order that
+     * would be a lottery — a division painted after its own teams would
+     * swallow them. Drawn largest-first, every smaller thing lands on top of
+     * the bigger thing that contains it, and the nesting reads as nesting.
+     *
+     * Sorted on the extent each one will actually draw at, so it keeps itself
+     * honest if any of the four rules changes.
+     */
     if (hexScene) {
-      for (const unit of visible) {
+      /**
+       * **A big node can be on screen when its own cell is not.** `visible`
+       * culls on where a unit *stands*, which was the right question while
+       * every node was a mark inside its cell. A place now reaches out to its
+       * region's edge, so panning until its own tile left the window would
+       * blink it out with most of it still in view. Each one is therefore
+       * tested against the window grown by its own reach.
+       */
+      const extent = new Map<string, number>();
+      const drawn = new Map(visible.map((u) => [u.id, u]));
+      for (const unit of visible) extent.set(unit.id, markRadius(unit.id, unit.depth));
+      for (const unit of scene.units) {
+        if (drawn.has(unit.id)) continue;
+        const r = markRadius(unit.id, unit.depth);
+        if (r <= hexSize) continue;
+        if (unit.x + r < view.minX || unit.x - r > view.maxX) continue;
+        if (unit.y + r < view.minY || unit.y - r > view.maxY) continue;
+        drawn.set(unit.id, unit);
+        extent.set(unit.id, r);
+      }
+      const bySize = [...drawn.values()].sort(
+        (a, b) => (extent.get(b.id) ?? 0) - (extent.get(a.id) ?? 0),
+      );
+      for (const unit of bySize) {
+        if (peopleIds.has(unit.id)) continue;
         const cell = hexScene.hex.cells.get(unit.id);
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
-        const person = peopleIds.has(unit.id);
-        nodePath(cell, unit.depth, 1, person);
+        nodePath(cell, unit.id, unit.depth);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
         // A structural node is a *place*; a person is a human. The border is
         // what says which, before you have read a single label.
-        if (!person && peopleIds.size > 0) {
+        if (peopleIds.size > 0) {
           ctx.lineWidth = Math.max(0.8, hexSize * 0.035);
           ctx.strokeStyle = "rgba(15,23,42,0.75)";
           ctx.stroke();
         }
+      }
+    }
+
+    /**
+     * **2d. And the people, over everything.** Greg, 2026-11-07: *"all human
+     * nodes and their host cells should sit on a z-axis point above other
+     * nodes, including master centre. That means, in the 1000-person company,
+     * Nina Lindqvist would appear to clip into 'a deep enterprise shape'.
+     * This is expected."*
+     *
+     * It is the rule that makes the other three safe. A place now overflows
+     * its cell by half a radius and the master centre by three, so a person
+     * standing next to one would otherwise be buried by it — and the people
+     * are the thing the map is of. Their own tile comes with them, because a
+     * circle alone on a place's ground would read as a dot on the place
+     * rather than as somebody standing there.
+     *
+     * Tiles first and then marks, rather than tile-and-mark per person, so
+     * that a neighbour's tile can never cover a mark either.
+     */
+    if (hexScene) {
+      const wash = (0.30 - 0.24 * reveal.people) * reveal.tiles;
+      const folk = visible.filter((u) => peopleIds.has(u.id));
+      if (wash > 0.02) {
+        for (const unit of folk) {
+          const cell = hexScene.hex.cells.get(unit.id);
+          if (!cell) continue;
+          washPath(cell, true);
+          // Opaque, and lightened in the colour rather than in the alpha —
+          // see `cssOver`. The territory wash above keeps its alpha, because
+          // it is a wash over the ground and meant to let it through; this
+          // one is a tile standing on top of whatever it lands on.
+          ctx.fillStyle = cssOver(hueFor(unit.id), unit.depth, maxDepth, wash);
+          ctx.fill();
+        }
+      }
+      for (const unit of folk) {
+        const cell = hexScene.hex.cells.get(unit.id);
+        if (!cell) continue;
+        const moving = drag?.members.has(unit.id) ?? false;
+        nodePath(cell, unit.id, unit.depth);
+        ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
+        ctx.fill();
       }
     }
 
@@ -3106,7 +3391,7 @@ export default function HexLab({
         if (!leadIds.has(chain.unitId)) continue;
         ctx.beginPath();
         traceElbows(chain.points, kneeFor(chain.points));
-        ctx.lineWidth = Math.max(1.2, hexSize * 0.1);
+        ctx.lineWidth = Math.max(1.2, hexSize * LEAD_WEIGHT);
         ctx.strokeStyle = "rgba(15,23,42,0.85)";
         ctx.stroke();
       }
@@ -3285,7 +3570,9 @@ export default function HexLab({
         ctx.setLineDash(dash.map((d) => d / scale));
         ctx.lineWidth = Math.max(0.8, width / scale);
         ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        nodePath(cell, unit.depth);
+        // The person flag matters here since 2026-11-07: a human's mark is
+        // half the size, and a band drawn without it would ring empty ground.
+        nodePath(cell, id, unit.depth);
         ctx.stroke();
         ctx.setLineDash([]);
       };
@@ -3303,7 +3590,7 @@ export default function HexLab({
           // the centre at the real cell size and only shrinks the radius —
           // shrinking through `corners` would move the centre too, which is
           // what left this band floating off its tile on 2026-09-30.
-          nodePath(cell, parent.depth, 0.86);
+          nodePath(cell, parentId, parent.depth, 0.86);
           ctx.lineWidth = Math.max(0.8, 2.6 / scale);
           ctx.strokeStyle = "rgba(15,23,42,0.9)";
           ctx.stroke();
@@ -3439,9 +3726,20 @@ export default function HexLab({
        * This used to call `unitLabelVisible`, whose gate is `0.7×` *world
        * scale* — the orbital map's question, and meaningless here. The
        * ladder's own band is cell-pixels, like everything else.
+       *
+       * **And `drawn × scale ≥ 7` went with it on 2026-11-07**, because it was
+       * the same mistake left behind: `drawn` here is the white *centre mark*,
+       * a constant 13.44 world units on every unit the hex scene lays, so that
+       * clause was a pure camera gate wearing a size's clothing — and a strict
+       * one. Worked through: the mark's screen floor pins `drawn × scale` at
+       * 4.5px through the middle of the range, so the test could not pass
+       * until the mark's own radius took over at `0.52×`. That is why Greg saw
+       * human names arrive *"too late"* once they stopped counting as
+       * landmarks. On this map the thing with room for a name is the **cell**,
+       * and `NAMES_AT_CELL_PX` is the only honest measure of that.
        */
       const named = hexScene
-        ? reveal.names > 0.5 && drawn * scale >= 7
+        ? reveal.names > 0.5
         : unitLabelVisible(drawn, scale);
       const inside = named || forced.has(unit.id);
       /**
@@ -3450,8 +3748,23 @@ export default function HexLab({
        * are the landmarks you navigate by — but so does the ladder: whichever
        * rung is currently drawing as a gummy bear should say what it is, or it
        * is a coloured shape with nothing to tell you.
+       *
+       * **A person is never a place, and leaving that unsaid was a bug.**
+       * `allocation.tier` is set for *every* unit the engine places, and a
+       * person's tier is 0 — the same number a team gets, because the tier
+       * counts the rungs of places beneath you and a person has none. So from
+       * the day this line was written (2026-11-06) until 2026-11-07, every
+       * person on the map counted as a landmark at every zoom where teams
+       * were the place, which is everything from the Function rung inward.
+       * Their names bypassed `NAMES_AT_CELL_PX` entirely and drew at 18px a
+       * cell, where the band says nothing should be named until 26px. That is
+       * most of the crowding Greg reported — *"as the zoom reveals the humans
+       * at around 0.05x zoom … the map quickly becomes too crowded"* — and it
+       * is why his *"you'd have to zoom to, say, >0.15x before human labels
+       * appeared"* could not have worked as a change to the band alone.
        */
-      const leading = (place.get(allocation.tier?.get(unit.id) ?? -1) ?? 0) > 0.35;
+      const leading = !peopleIds.has(unit.id)
+        && (place.get(allocation.tier?.get(unit.id) ?? -1) ?? 0) > 0.35;
       const landmark = !inside && (isLandmark(unit.depth) || leading);
       if (!inside && !landmark) continue;
       const sx = unit.x * scale + camera.x;

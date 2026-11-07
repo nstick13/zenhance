@@ -106,8 +106,23 @@ export const PEOPLE_AT_CELL_PX: readonly [number, number] = [140, 230];
  */
 export const TILES_AT_CELL_PX: readonly [number, number] = [5, 16];
 
-/** **When a tile carries its own name.** A name needs more room than a tile. */
-export const NAMES_AT_CELL_PX: readonly [number, number] = [26, 44];
+/**
+ * **When a tile carries its own name.** A name needs more room than a tile.
+ *
+ * **Centred on 55px — Greg's `0.15×` — and that is what the two numbers are
+ * for.** A label cannot cross-fade: it is type in a box, and half-painted type
+ * is worse than no type. So unlike every other figure here this one is read as
+ * a switch, at the middle of its band, and the band exists to say where the
+ * middle is. A cell on this lattice is 364 world units, so 0.15× is 54.6px.
+ *
+ * Greg set it on 2026-11-07 after seeing both ends of it: *"we need a
+ * middleground on the labels. They all appeared too soon prior to this fix,
+ * but on this fix they appeared too late."* Too soon was every person counting
+ * as a landmark and bypassing this band altogether; too late was the leftover
+ * clause described in `docs/HEX-ZOOM.md` § *Every person was a landmark*,
+ * which held human names back to `0.52×`.
+ */
+export const NAMES_AT_CELL_PX: readonly [number, number] = [42, 68];
 
 /** **When a person's work could be read inside their own tile.** Nothing draws
  *  this yet; see the note on `work` in `HEX_LADDER`. */
@@ -299,6 +314,25 @@ export function placeTaken(
  */
 export const SOFTEN_FROM_CELL_PX = 18;
 export const SOFTEN_TO_CELL_PX = HEX_LADDER[HEX_LADDER.length - 1].cellPx;
+
+/**
+ * **The top of the ramp, and why it sits just past where it bites.**
+ *
+ * A convex corner cannot take a radius over `0.866` of the hexagon's — the
+ * drawing clamps each to what its own two half-edges can pay for — so what
+ * this multiplier can usefully reach depends on the base it multiplies. On
+ * `NODE_CORNER = 1/2`, which is what every area boundary is drawn with, the
+ * clamp lands at `1.73×`: almost exactly here, so the ramp runs its whole
+ * length and arrives at a boundary with no straight edge left in it just as
+ * the outermost rung does.
+ *
+ * It is written as a multiplier rather than as that `1.73` so the two stay
+ * honest if the base ever moves. It moved for an hour on 2026-11-07, when the
+ * base went to `2/3` before Greg scoped that to people only — at which point
+ * the clamp would have been `1.30×` and the ramp would have finished at about
+ * 7px a cell instead of 4px. The end state would still have been right, which
+ * is the property worth having.
+ */
 export const SOFTEN_MAX = 1.8;
 
 /**

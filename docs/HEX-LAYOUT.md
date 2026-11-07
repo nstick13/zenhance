@@ -3761,7 +3761,26 @@ circle.** It is the radius of the circle tucked into the corner, which meets
 each edge `r / tan(60°)` back from the point. At `0.866` the tangent points
 meet at the edge midpoints and the tile has become its own inscribed circle.
 Greg asked for `0.25`, looked at it, and took it to **`0.5`** — about 42% of
-every edge still dead straight.
+every edge still dead straight — which is where it has stayed.
+
+**Since 2026-11-07 a person reads three turns of the same dial.** Greg: *"let's
+give the host hexagons a bit more rounding, but not so that the thing appears
+as a circle … I think border radius is half the hexagon radius, let's make
+it ⅔?"* Asked whether that was every hexagon or only the ones hosting people,
+he said **only the ones hosting people**. So:
+
+| what | corner | straight edge left |
+|---|---|---|
+| a person's mark (`PERSON_CORNER`) | `√3/2` | none — it is the inscribed circle |
+| the tile a person stands on (`PERSON_TILE_CORNER`) | `2/3` | 23% |
+| everything else, places included (`NODE_CORNER`) | `1/2` | 42% |
+
+Each is the same number read further round, which is why they nest without
+looking like three different ideas — and the half on a place is what tells a
+place from a person at a glance, now that size alone is doing less of that
+work. It was briefly applied globally and Greg pulled it back to people, which
+is the right call: two corner radii side by side across the whole map would
+have read as an inconsistency rather than as a distinction.
 
 Drawn with `arcTo` from the edge *midpoints*: `arcTo` works out the tangents
 itself, so the straight part of each edge is whatever the rounding leaves
@@ -4101,6 +4120,18 @@ So `traceRounded` takes two radii now, one for corners that stick out and one
 for the notches, and `pathOfLoops` hands it `corner + outward` and `corner`.
 Nothing that was already drawn changes: the second radius defaults to the
 first, so every caller that wants one radius gets exactly what it had.
+
+**And since 2026-11-07 a human takes the dial's other end.** Greg, on the
+half-size human marks: *"they're now nestled far enough inside their host
+hexagons that we could dial up the border radius so that they appear circular.
+This would not be true for parent nodes, or anything that wasn't a human node
+(for now)."* So a person's mark is drawn at `PERSON_CORNER = √3/2`, which is
+not an approximation of a circle but the exact top of the range documented
+above — every straight edge used up, each corner's arc reaching both edge
+midpoints, the rounded hexagon *being* its own inscribed circle. One dial, two
+ends: a place is a hexagon and holds the lattice's geometry, a person is a
+circle and reads as a body standing on it. The tile behind the person stays a
+hexagon.
 
 **And since 2026-11-06 `corner` is multiplied by the zoom.** `NODE_CORNER` is
 still the radius every area is *defined* with, and it is what you see at 18px

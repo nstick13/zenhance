@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HEX_LADDER,
+  NAMES_AT_CELL_PX,
   PEOPLE_AT_CELL_PX,
   SOFTEN_FROM_CELL_PX,
   SOFTEN_MAX,
@@ -78,6 +79,19 @@ describe("nothing pops", () => {
     expect(hexRevealAt(start).people).toBe(0);
     expect(hexRevealAt(full).people).toBe(1);
     expect(hexRevealAt((start + full) / 2).people).toBeCloseTo(0.5, 5);
+  });
+
+  it("switches names on at Greg's 0.15x, which is 55px a cell", () => {
+    // A label cannot cross-fade, so it is read as `> 0.5` — the middle of the
+    // band — and the band exists to put that middle in the right place. A cell
+    // is 364 world units on this lattice, so 0.15x is 54.6px.
+    const switchesAt = (NAMES_AT_CELL_PX[0] + NAMES_AT_CELL_PX[1]) / 2;
+    expect(switchesAt).toBeCloseTo(55, 0);
+    expect(hexRevealAt(switchesAt).names).toBeCloseTo(0.5, 5);
+    // A nudge either side of it, so a future edit to the band cannot move the
+    // switch without this failing.
+    expect(hexRevealAt(54).names).toBeLessThan(0.5);
+    expect(hexRevealAt(56).names).toBeGreaterThan(0.5);
   });
 
   it("shows a tile before it shows its name, and a name before its work", () => {

@@ -446,6 +446,70 @@ the subject goes on top**. The faint context wash still goes down first,
 outermost-first, because that is context. Close in nothing changes, because
 every region's `solid` is zero there and the list stays empty.
 
+### Every person was a landmark, and that is where the crowding came from
+
+Found on 2026-11-07, the day after the ladder shipped, while measuring
+something else. The label rule gained a `leading` term with the ladder — *a
+place names itself while it is the place* — written as
+
+```
+place.get(allocation.tier.get(unit.id)) > 0.35
+```
+
+`allocation.tier` is set for **every** unit the engine places, people included,
+and a person's tier is **0**: the tier counts the rungs of places beneath you,
+and a person has none, which is the same number a team gets. So every person on
+the map satisfied that test at every zoom where teams were the place — which is
+everything from the Function rung inward — and their names drew as *landmarks*,
+bypassing `NAMES_AT_CELL_PX` completely. At 18px a cell, where the band says
+nothing should be named until 26px, every human on screen was labelled.
+
+That is most of what Greg was describing when he said *"as the zoom reveals the
+humans at around 0.05x zoom, my feeling is the map quickly becomes too
+crowded"*, and it is also why his follow-on — *"you'd have to zoom to, say,
+>0.15x before human labels appeared"* — could not have worked as a change to
+the band, because the band was not being consulted.
+
+One clause: `leading` now requires the unit not to be a person. Measured at
+0.05× on the thousand-person company from the same camera, dark marks on the
+map — text, lines and node centres — went from **2.14% to 1.39% of the view**,
+a third less.
+
+**And then they arrived too late, which was a second leftover of the same
+kind.** Greg, within the hour: *"we need a middleground on the labels. They all
+appeared too soon prior to this fix, but on this fix they appeared too late."*
+He was right, and the band was not the reason. The label test was
+
+```
+reveal.names > 0.5 && drawn * scale >= 7
+```
+
+and `drawn` on this map is the white **centre mark**, which `layoutHex` gives
+every unit as a flat 13.44 world units. So the second clause was a camera gate
+wearing a size's clothing. Worked through: the mark's own screen floor pins
+`drawn × scale` at 4.5px through the middle of the range, so the test could not
+pass on that term, and it had to wait for the mark's true radius to take over —
+at **`0.52×`**, three and a half times further in than anything the band says.
+Until the landmark bug was fixed, nothing noticed, because every person was
+being labelled by the other route anyway. **Two bugs had been cancelling each
+other out.**
+
+The clause is gone, and on this map the thing with room for a name is the cell,
+which `NAMES_AT_CELL_PX` already measures. The band now sits at **[42, 68]**,
+centred on **55px — Greg's `0.15×`** — because a label cannot cross-fade and so
+is read as a switch at the middle of its band. A test pins the switch at 55px
+so a future edit to either number has to mean it. Checked on Digital Tailoring
+at one notch either side: at 0.14× the people in a team are unnamed dots, at
+0.16× they all carry their names.
+
+**The lesson is about the tier map, not about labels.** `tier` reads like *what
+rung of place is this*, and it answers that for a place and returns 0 for a
+person, which is indistinguishable from *a team*. Anything else that keys off
+`allocation.tier` should ask whether a person falling into tier 0 is the answer
+it wants. `placePresence` is fine — it is fed from `footprints`, which is built
+from team outlines and bubbles rather than from units — but it is the same trap
+one step away.
+
 ### What this did not fix
 
 **The top of a deep hierarchy still cannot take the map, and no amount of
