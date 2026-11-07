@@ -303,28 +303,20 @@ Four things that were right on paper and wrong on the glass. Each is in the
 code with the symptom attached, because the symptom is the part that is hard
 to rediscover.
 
-### A region's ground is not lighter than a team's
+### Every coloured ground takes its owner's colour at the same opacity
 
-The first version gave a region two thirds of a team's `TEAM_GROUND`, on the
-theory that a division covers many times the area and would otherwise read as a
-slab. Looked at, that was plainly wrong and wrong in a useful way: **alpha is
-not about area, it is about how firmly a place says it is there**, and a place
-should say that equally firmly wherever it sits in the hierarchy. What the
-lighter value actually did was make the map go *pale as you pulled back* — the
-per-cell wash and the team grounds both stepping aside for something fainter
-than either, which is the opposite of the point. `REGION_GROUND` is now
-`TEAM_GROUND` exactly.
+The first ladder averaged descendants for a team and used a separate rule for
+a higher region. That made the thing behind people drift toward their paler
+tone and meant the same visual idea changed colour arithmetic as the ladder
+handed it outward. Greg replaced both rules on 2026-11-07: **the structural
+node that owns a ground is its colour source**. A team takes the team node's
+exact hue and tone; a division takes the division node's.
 
-### A region takes its own tone, and only its family's hue
-
-Greg's rule for a team is *the average colour of the active hexagons it
-contains*, and for a team that is right. For a region it produced a pale
-grey-lavender blob every time, and the arithmetic says why: `toneOf` lightens
-with depth, a region of five hundred people is almost all leaves, so the average
-tone of a division is the tone of its **deepest** rung — the palest there is —
-with nothing drawn over the top to rescue it. A region now averages the hue,
-which says *this family*, and takes its tone from its own node, which says
-*this rung*.
+The fill is true colour at `REGION_FILL_OPACITY = 0.10`, not a pale opaque
+colour calculated against paper. The same stitched family boundary supplies
+one translucent stroke at `REGION_EDGE_OPACITY`; there are no internal member
+paths. The ladder multiplies both alphas during a handover, so every rung
+remains the same material.
 
 ### The grey room has to recede, because it is opaque
 
@@ -366,26 +358,29 @@ with how it looked, and all three turn out to be the same mistake wearing
 different clothes: **a number that stands for one thing being used to carry
 another**.
 
-### The wash is mixed into the page, not laid over it
+### The coloured ground is translucent again — deliberately
 
 *"At the zoom level where teams are seen as outlined blobs, the colouring is
 sort of muted, muddyish. My guess is because there's an alpha channel in use
 and a grey zone below it. Let's not alpha the conjoined blobs, so lighten by
 pushing the rgb values higher rather than adding the alpha channel."*
 
-The guess is right. A team's ground is a thirty-per-cent wash, and what is
-underneath it is not the page — it is the grey collar each team keeps and the
-grey ring round each group. Thirty per cent of a pale blue over `#e8eaee` is a
-blue-grey, and the further out you pull the more of the map is collar, so the
-whole company drifts toward one mud. The alpha was never describing anything
-real; it was a way of writing *a light version of this colour* that happened to
-let the room show through.
+That diagnosis led to an opaque pre-mixed fill on 2026-11-06. It fixed the mud,
+but the next day's human-host change exposed its cost: a coloured opaque host
+cell and the coloured ground behind it became practically indistinguishable.
+Greg's replacement makes the material hierarchy explicit instead of asking
+one opaque colour to do two jobs. The ground is the owning structural node at
+10% opacity; a human's host is white at 25% transparency / 75% opacity; and
+the human mark itself is the exact colour of its organisational parent. The
+two translucent layers now differ by material as well as strength, so the
+host remains visible.
 
-So `tintOf` now mixes the colour against the page itself (`overPaper`, with
-`PAPER` being the `#fbfbfd` of `app/lab/hex/page.tsx`) and hands the canvas an
-**opaque** fill. It is the same colour it always was where the page is white,
-and that same colour rather than a mixture everywhere else. Alpha is left for
-the one thing it does describe: the ladder cross-fading one rung into the next.
+The next visual pass separated zooming colour from fixed space. The team
+ground is only a 2% hint once people are legible (about `0.05×`) and darkens
+continuously to 26% as their tiles fade on the way out. Its edge follows the
+same handover. Grey spacing does not participate: it remains `#f6f6f6` at
+every zoom. The outermost `groupRings` zone remains calculable but is not
+painted while `SHOW_OUTERMOST_ZONE` is false.
 
 ### The boundary softens as you pull back
 

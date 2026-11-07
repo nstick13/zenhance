@@ -214,10 +214,10 @@ const ACTIVE_GAP_MAX = 0.12;
  *
  * **Two hexagons, two numbers, and the cell itself does not move.** The
  * *central* one is the mark that says a person is here (`nodePath`); the
- * *outer* one is the whole cell in that person's colour (`washPath`). Both
- * shrink inside a cell that stays exactly where the lattice put it, so this is
- * a drawing change and not a layout one — nothing re-lays, no law is touched,
- * and a cell is still one unit's (Law 1).
+ * *outer* one is the white translucent host (`washPath`). Both shrink inside
+ * a cell that stays exactly where the lattice put it, so this is a drawing
+ * change and not a layout one — nothing re-lays, no law is touched, and a cell
+ * is still one unit's (Law 1).
  *
  * **Only a human.** A structural node keeps its full size, which widens the
  * gap between a place and a person rather than scaling everything down
@@ -232,6 +232,16 @@ const ACTIVE_GAP_MAX = 0.12;
  */
 const PERSON_MARK = 0.5;
 const PERSON_TILE = 0.8;
+
+/**
+ * **A person's host cell is white glass, not a second coloured node.**
+ *
+ * Greg, 2026-11-07: the opaque coloured host cell disappeared into the ground
+ * behind it. The replacement is white and twenty-five per cent transparent —
+ * seventy-five per cent opacity — while the person itself carries the exact
+ * colour of its organisational parent.
+ */
+const PERSON_TILE_OPACITY = 0.75;
 
 /**
  * **A human is drawn as a circle.** Greg, 2026-11-07, on the half-size marks:
@@ -308,6 +318,22 @@ const PLACE_SPAN = 1.5;
 const MASTER_SPAN = 3;
 
 /**
+ * The rendered radius of a structural node in cell radii. Kept outside the
+ * painter because area geometry has to answer the same question: a bubble
+ * must wrap the mark people can see, not the smaller host cell it replaced.
+ */
+function structuralNodeSpan(
+  id: string,
+  rootId: string,
+  people: ReadonlySet<string>,
+  tiers: ReadonlyMap<string, number> | undefined,
+): number {
+  if (people.has(id)) return 0;
+  if (id === rootId) return MASTER_SPAN;
+  return (tiers?.get(id) ?? 0) >= 1 ? PLACE_SPAN : 1;
+}
+
+/**
  * **How heavy a connection line is**, as a fraction of a cell's radius, before
  * the per-rung grading that keeps a trunk heavier than a twig.
  *
@@ -349,57 +375,30 @@ const LEAD_WEIGHT = 0.05;
  * the same way all the way along.
  */
 /**
- * **How strongly a team's own ground is coloured.** Strong enough that the
- * shape reads as one place from across the map, light enough that the tiles
- * standing on it still read as the thing that is there — they carry the same
- * hue over the top of this, so a cell someone is standing on comes out a step
- * deeper than the ground between the cells.
- */
-const TEAM_GROUND = 0.30;
-
-/**
- * **How much darker the line round a team is than the ground it draws.**
- * Greg, 2026-11-06: *"make the outline the same colour as the fill it draws,
- * darkened by 10%."* Ten per cent off the lightness, in the same HSL the
- * palette is written in.
+ * **A coloured ground is atmosphere, not another solid node.**
  *
- * Drawn at **full opacity**, which is the one judgement call in it: the fill
- * is deliberately a 30% wash so that the tiles standing on it still read, and
- * a line 10% darker than that wash *at that wash's alpha* works out at about
- * two per cent of difference — a line nobody could see. Opaque, it is the
- * same colour the ground would be if the ground were solid, which is what
- * "the same colour, darker" means to the eye.
+ * Its colour comes from the structural node that owns it, and the alpha is
+ * real: ten per cent colour over whatever lies beneath.
  */
+const REGION_FILL_OPACITY = 0.10;
+const REGION_EDGE_OPACITY = 0.18;
 const TEAM_EDGE_DARKER = 0.10;
 
-/**
- * **A region's ground, which is a team's ground one rung out.**
- *
- * When the zoom ladder hands the place outward — Greg, 2026-11-06: *"companies,
- * which would bubble all teams on the same branch together as a super-gummy
- * bear blob"* — a division takes its ground exactly the way a team takes its
- * own, at exactly the same strength.
- *
- * **It was two thirds of a team's for an afternoon, on the theory that a
- * division covers many times the area and would read as a slab.** Looked at,
- * that was plainly wrong, and wrong in an instructive way: alpha is not about
- * area, it is about how firmly a place says it is there, and a place should
- * say that equally firmly wherever it sits in the hierarchy. What the lighter
- * value actually did was make the map go **pale as you pulled back** — the
- * per-cell wash and the team grounds both stepping aside for something fainter
- * than either — which is the opposite of the whole point. The same number it
- * is, and if a region ever does read as a slab the answer is the edge, not the
- * fill.
- */
-const REGION_GROUND = TEAM_GROUND;
+/** A team's colour takes over as individual tiles disappear, and recedes to a
+ * barely-there wash once those tiles are fully legible. */
+const TEAM_GROUND_OPACITY_NEAR = 0.02;
+const TEAM_GROUND_OPACITY_FAR = 0.26;
+
+/** The outer group zone is retained in the geometry but deliberately not
+ * painted while the layer stack is being simplified. */
+const SHOW_OUTERMOST_ZONE = false;
 
 /**
  * **How far a team's ground stands clear of the cells it holds.** Greg,
  * 2026-11-06: *"that outline (and by definition the fill within it) needs to
  * be offset outwards a little — show me what it looks like if we offset it by
- * half of one hexagon radius."* In cell radii, so half a cell's radius is
- * `0.5`, and it eats into the collar of clear hexagons rather than into
- * anybody else's ground, because the collar is a whole cell wide.
+ * half of one hexagon radius."* Greg settled it back at a quarter on
+ * 2026-11-07 after seeing the corrected single family boundary.
  */
 const TEAM_SPREAD = 0.25;
 
@@ -808,74 +807,6 @@ function toneOf(depth: number, maxDepth: number): { l: number; s: number } {
 const css = (hue: number, depth: number, maxDepth: number, alpha = 1) => {
   const { l, s } = toneOf(depth, maxDepth);
   return `hsla(${hue}, ${(s * 100).toFixed(0)}%, ${(l * 100).toFixed(0)}%, ${alpha})`;
-};
-
-/**
- * **The page the map is drawn on.** The canvas is cleared rather than filled,
- * so this is the colour behind every pixel of it — `app/lab/hex/page.tsx`.
- */
-const PAPER = { r: 0xfb, g: 0xfb, b: 0xfd };
-
-/** The palette's own HSL — hue in degrees, saturation and lightness 0..1 — in
- *  sRGB, so a wash can be mixed rather than laid on. See `overPaper`. */
-function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const hp = ((((h % 360) + 360) % 360) / 60);
-  const x = c * (1 - Math.abs((hp % 2) - 1));
-  const [r1, g1, b1] =
-    hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x]
-      : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
-  const m = l - c / 2;
-  const to255 = (v: number) => Math.round(Math.min(1, Math.max(0, v + m)) * 255);
-  return { r: to255(r1), g: to255(g1), b: to255(b1) };
-}
-
-/**
- * **A wash worked out, rather than laid on.** Greg, 2026-11-06: *"the
- * colouring is sort of muted, muddyish. My guess is because there's an alpha
- * channel in use and a grey zone below it. Let's not alpha the conjoined
- * blobs, so lighten by pushing the rgb values higher rather than adding the
- * alpha channel."*
- *
- * He is right about the cause. A team's ground is a thirty-per-cent wash, and
- * the thing underneath it is not the page — it is the grey collar each team
- * keeps and the grey ring round each group. Thirty per cent of a pale blue
- * over `#e8eaee` is a blue-grey, and the further out you pull the more of the
- * map is collar, so the whole company drifts toward the same mud. The alpha
- * was never describing anything real; it was a way of writing *a light version
- * of this colour* that happened to let the room show through.
- *
- * So the lightening is done here instead, against the page, and what the
- * canvas gets is **opaque**: the same colour it has always been where the page
- * is white, and that same colour — rather than a mixture — everywhere else.
- * Alpha is left for the one thing it does describe, which is the zoom ladder
- * cross-fading one rung into the next.
- */
-const overPaper = (c: { r: number; g: number; b: number }, share: number) => ({
-  r: Math.round(PAPER.r + (c.r - PAPER.r) * share),
-  g: Math.round(PAPER.g + (c.g - PAPER.g) * share),
-  b: Math.round(PAPER.b + (c.b - PAPER.b) * share),
-});
-
-/**
- * **`css` at a given strength, mixed into the page rather than laid over it.**
- *
- * The same colour the alpha version produces on white, and the same colour
- * everywhere else too — which is the whole point. Greg, 2026-11-07, on a
- * person standing over the master centre: *"the person node, even when it
- * hovers/clips above another node, takes the parent node because the human
- * node host cell's colour is governed by an alpha channel. Let's make it
- * opaque, but a lighter shade so it matches the lightened colour of the node
- * itself."*
- *
- * Z-order put the people above everything a moment earlier, and this is the
- * half of it that was missing: a tile cannot sit *above* something if you can
- * see that something through it.
- */
-const cssOver = (hue: number, depth: number, maxDepth: number, share: number) => {
-  const { l, s } = toneOf(depth, maxDepth);
-  const c = overPaper(hslToRgb(hue, s, l), share);
-  return `rgb(${c.r}, ${c.g}, ${c.b})`;
 };
 
 /**
@@ -1534,25 +1465,33 @@ export default function HexLab({
     for (const [unitId, teamId] of groups) {
       const cell = hexScene.hex.cells.get(unitId);
       if (!cell) continue;
-      const list = byTeam.get(teamId) ?? [];
-      list.push(cell);
-      byTeam.set(teamId, list);
+      const cells = byTeam.get(teamId) ?? [];
+      cells.push(cell);
+      byTeam.set(teamId, cells);
     }
     // The team's own cell belongs inside its outline too.
     for (const teamId of byTeam.keys()) {
       const own = hexScene.hex.cells.get(teamId);
       if (own) byTeam.get(teamId)!.push(own);
     }
-    return [...byTeam].map(([teamId, cells]) => ({
-      teamId,
-      cells,
-      // The boundary only, found here rather than in the paint loop: on the
-      // largest company this is hundreds of teams. What radius it is traced
-      // at is a question for the zoom — see `areaPaths`.
-      // Standing clear of its own cells by `TEAM_SPREAD`, so the ground reads
-      // as something the team sits inside rather than a tracing of its tiles.
-      loops: unionLoops(cells, hexScene.hex.size, hexScene.hex.size * TEAM_SPREAD),
-    }));
+    return [...byTeam].map(([teamId, cells]) => {
+      const size = hexScene.hex.size;
+      const outward = size * TEAM_SPREAD;
+      const loops = unionLoops(cells, size, outward);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const loop of loops) {
+        for (const point of loop.points) {
+          minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+          minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+        }
+      }
+      /**
+       * One boundary around the union of the team node's cell and every child
+       * cell — not one shape per member. It is pushed out once by a quarter-cell
+       * radius, then the one resulting line is filled.
+       */
+      return { teamId, cells, loops, box: { minX, maxX, minY, maxY } };
+    });
   }, [groups, hexScene]);
 
   /**
@@ -1658,15 +1597,9 @@ export default function HexLab({
   /**
    * **The bubbles** (Greg, 2026-10-16, requirements 4 and 6).
    *
-   * Built from the *live* cells, so a bubble follows a hand that moved half a
-   * division across the map and there is nothing to keep in step. Memoised on
-   * the arrangement rather than computed in the paint loop: on the largest
-   * company this is 131 bubbles over 37,000 cells and about 30ms, which is fine
-   * once and hopeless sixty times a second.
-   *
-   * Each one is turned into a `Path2D` here too, for the same reason. Filling a
-   * region cell by cell is tens of thousands of calls a frame; one path per
-   * bubble is 131, and the browser unions the hexagons itself.
+   * Built from the same live cell groups the hover outline uses, so a bubble
+   * follows a hand move and remains one boundary around the branch rather than
+   * a collection of member halos.
    */
   const bubbles = useMemo(() => {
     if (!hexScene || !allocation.tier) return [];
@@ -1681,11 +1614,13 @@ export default function HexLab({
     }).map((bubble) => {
       const loops = unionLoops(bubble.cells, size);
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const seg of bubble.edge) {
-        minX = Math.min(minX, seg.from.x, seg.to.x);
-        maxX = Math.max(maxX, seg.from.x, seg.to.x);
-        minY = Math.min(minY, seg.from.y, seg.to.y);
-        maxY = Math.max(maxY, seg.from.y, seg.to.y);
+      for (const loop of loops) {
+        for (const point of loop.points) {
+          minX = Math.min(minX, point.x);
+          maxX = Math.max(maxX, point.x);
+          minY = Math.min(minY, point.y);
+          maxY = Math.max(maxY, point.y);
+        }
       }
       return { ...bubble, loops, box: { minX, maxX, minY, maxY } };
     }).filter((b) => b.loops.length > 0);
@@ -1734,135 +1669,41 @@ export default function HexLab({
   }, [scene, pinned, born]);
 
   /**
-   * **A team's ground takes the average colour of the people standing on it.**
-   * Greg, 2026-11-06: *"the area drawn by this line can get a fill of its own
-   * — the average colour of the active hexagons that it contains."*
+   * **A ground takes its colour from the structural node that owns it.**
    *
-   * Which turns the team from a shape with a line round it into a **place**.
-   * The line stays what it was; what changes is that the ground inside it is
-   * no longer the same neutral as the room outside it.
-   *
-   * **Averaged in the colour space the palette is written in**, not in sRGB:
-   * hue as a vector on the circle (so a mean of 350° and 10° is 0°, not 180°),
-   * lightness and saturation as plain means. In practice a team is already one
-   * hue — `hueById` gives its people their team's shade exactly — so what this
-   * actually averages is the *tone*, across a team node and the people under
-   * it, which sit on different rungs. Doing it properly anyway costs four
-   * additions and survives the day a team stops being one hue.
+   * Descendant averaging made the area behind people drift toward their pale
+   * tone and hid their opaque host cells inside it. A team ground now uses the
+   * team node exactly; a higher bubble uses its own organisational node. The
+   * fill keeps its real alpha channel so the hierarchy beneath remains visible.
    */
-  /**
-   * **The averaged colour of a set of active hexagons**, as a ground and the
-   * line round it. Pulled out of `teamTints` on 2026-11-06 because the zoom
-   * ladder needs the same thing one rung out: when a division becomes the
-   * place you are looking at, it takes its ground the way a team takes its
-   * own, and the two must be the same arithmetic or they will not look like
-   * the same idea.
-   */
-  const tintOf = useCallback((
-    ids: Iterable<string>,
-    ground: number,
-    /**
-     * **Whose tone the ground takes**, when it should not be the average.
-     *
-     * For a team, averaging is right and is what Greg asked for: a handful of
-     * people a rung or two apart, with their own tiles sitting on top of the
-     * result carrying the colour.
-     *
-     * For a **region** it is wrong, and it was wrong on screen before it was
-     * wrong in theory — at the outermost zooms every gummy bear came out a
-     * pale grey-lavender. The arithmetic is why: `toneOf` lightens with depth,
-     * a region of five hundred people is almost all leaves, and so the average
-     * tone of a division is the tone of its *deepest* rung — the palest one
-     * there is — with nothing drawn over the top to rescue it.
-     *
-     * So a region averages the **hue**, which is what says *this family*, and
-     * takes its **tone** from its own node, which is what says *this rung*.
-     */
-    tone?: { l: number; s: number },
-  ) => {
-    let x = 0, y = 0, l = 0, sat = 0, n = 0;
-    for (const id of ids) {
-      const unit = scene.unitById.get(id);
-      if (!unit) continue;
-      const hue = ((hueById.get(id) ?? 0) * Math.PI) / 180;
-      const own = tone ?? toneOf(unit.depth, maxDepth);
-      x += Math.cos(hue); y += Math.sin(hue);
-      l += own.l; sat += own.s; n++;
-    }
-    if (n === 0) return null;
-    const hue = ((Math.atan2(y / n, x / n) * 180) / Math.PI + 360) % 360;
+  const tintOfNode = useCallback((id: string) => {
+    const unit = scene.unitById.get(id);
+    if (!unit) return null;
+    const hue = hueById.get(id) ?? 0;
+    const { l, s } = toneOf(unit.depth, maxDepth);
     const h = hue.toFixed(1);
-    const sp = ((sat / n) * 100).toFixed(0);
-    const lp = (l / n) * 100;
-    /**
-     * **Opaque, and lightened in the colour rather than in the alpha** — see
-     * `overPaper`. `ground` is still the same dial it always was; it now says
-     * *how far from the page this colour sits* instead of *how much of it to
-     * let through*, which is the same picture on white and a cleaner one over
-     * the grey room. The alpha left in `fill` is the ladder's cross-fade, and
-     * nothing else.
-     */
-    const ink = overPaper(hslToRgb(hue, sat / n, l / n), ground);
+    const sp = (s * 100).toFixed(0);
+    const lp = l * 100;
+    const presence = (value: number) => Math.min(1, Math.max(0, value));
     return {
-      fill: (alpha = 1) => `rgba(${ink.r}, ${ink.g}, ${ink.b}, ${alpha})`,
-      line: (alpha = 1) =>
-        `hsla(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%, ${alpha})`,
+      fill: (alpha = 1, opacity = REGION_FILL_OPACITY) =>
+        `hsla(${h}, ${sp}%, ${lp.toFixed(0)}%, ${opacity * presence(alpha)})`,
+      line: (alpha = 1, opacity = REGION_EDGE_OPACITY) =>
+        `hsla(${h}, ${sp}%, ${(lp * (1 - TEAM_EDGE_DARKER)).toFixed(0)}%, ${opacity * presence(alpha)})`,
     };
   }, [scene, hueById, maxDepth]);
 
   const teamTints = useMemo(() => {
-    const out = new Map<string, ReturnType<typeof tintOf>>();
-    if (!groups?.length) return out;
-    const members = new Map<string, string[]>();
-    for (const [unitId, teamId] of groups) {
-      const list = members.get(teamId) ?? [];
-      list.push(unitId);
-      members.set(teamId, list);
-    }
-    // The team's own node stands on this ground too, and is one of the active
-    // hexagons the average is over.
-    for (const [teamId, list] of members) list.push(teamId);
-    for (const [teamId, ids] of members) out.set(teamId, tintOf(ids, TEAM_GROUND));
+    const out = new Map<string, ReturnType<typeof tintOfNode>>();
+    for (const team of teamOutlines) out.set(team.teamId, tintOfNode(team.teamId));
     return out;
-  }, [groups, tintOf]);
+  }, [teamOutlines, tintOfNode]);
 
-  /**
-   * **The same ground, for a region rather than a team.**
-   *
-   * The zoom ladder hands the place outward as you pull back — a team, then a
-   * team of teams, then a division, then the company — and whichever rung is
-   * currently *the* place draws the way a team does. So every bubble needs the
-   * averaged colour of everything standing inside it, not just teams.
-   *
-   * A region's ground is the same strength as a team's, for the reason written
-   * on `REGION_GROUND` — and like a team's it is opaque, so a division that
-   * takes the map reads as one piece of coloured ground rather than as a wash
-   * over the honeycomb underneath it.
-   */
   const bubbleTints = useMemo(() => {
-    const out = new Map<string, ReturnType<typeof tintOf>>();
-    if (!bubbles.length) return out;
-    const kids = new Map<string, string[]>();
-    for (const unit of scene.units) {
-      if (!unit.parentId) continue;
-      const list = kids.get(unit.parentId) ?? [];
-      list.push(unit.id);
-      kids.set(unit.parentId, list);
-    }
-    for (const bubble of bubbles) {
-      // Everything under this node, including the node itself — the same set
-      // the bubble's own shape was built from.
-      const ids: string[] = [];
-      const stack = [bubble.unitId];
-      while (stack.length) {
-        const id = stack.pop()!;
-        ids.push(id);
-        for (const kid of kids.get(id) ?? []) stack.push(kid);
-      }
-      out.set(bubble.unitId, tintOf(ids, REGION_GROUND, toneOf(bubble.depth, maxDepth)));
-    }
+    const out = new Map<string, ReturnType<typeof tintOfNode>>();
+    for (const bubble of bubbles) out.set(bubble.unitId, tintOfNode(bubble.unitId));
     return out;
-  }, [bubbles, scene, tintOf, maxDepth]);
+  }, [bubbles, tintOfNode]);
 
   /**
    * **Which rungs outside a team could take over from it.**
@@ -1922,17 +1763,11 @@ export default function HexLab({
       spans.set(tier, list);
     };
     if (hexScene) {
-      const size = hexScene.hex.size;
       for (const team of teamOutlines) {
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        for (const cell of team.cells) {
-          const at = cellToWorld(cell, size);
-          minX = Math.min(minX, at.x); maxX = Math.max(maxX, at.x);
-          minY = Math.min(minY, at.y); maxY = Math.max(maxY, at.y);
-        }
-        // Plus the cell itself at either end, so a one-cell team is one cell
-        // wide rather than nothing wide.
-        add(0, Math.max(maxX - minX, maxY - minY) + 2 * size);
+        add(0, Math.max(
+          team.box.maxX - team.box.minX,
+          team.box.maxY - team.box.minY,
+        ));
       }
     }
     for (const bubble of bubbles) {
@@ -1986,13 +1821,10 @@ export default function HexLab({
    * increment is, the border radius of those hexagons is so high the team
    * boundary begins to appear smooth."*
    *
-   * One number for all four areas — a team's ground, a region's blob, the
-   * collar between teams and the ring round a group — so they cannot drift
-   * apart and leave a sharp grey edge peeking out from behind a soft coloured
-   * one. Softening only the two coloured ones was tried on the grounds that
-   * the greys are each a single merged path over thousands of cells and would
-   * be most of the cost; measured on the thousand-person company it made no
-   * difference worth having, so they all soften together.
+   * The higher region, collar and group ring still soften together as they
+   * recede. A team container is the exception since 2026-11-07: Greg fixed its
+   * rounding at half a cell radius, matching the hover outline, so it is traced
+   * with `soften = 1` below rather than inheriting the overview ramp.
    *
    * `softeningAt` comes back **in steps** rather than continuously, so this
    * memo rebuilds a few times across the ramp instead of on every frame; the
@@ -2003,7 +1835,10 @@ export default function HexLab({
     const size = hexScene?.hex.size ?? 1;
     const teams = new Map<string, Path2D>();
     for (const team of teamOutlines) {
-      const path = pathOfLoops(team.loops, size, size * TEAM_SPREAD, soften);
+      // The loops have already been pushed out by a quarter radius. Their corner
+      // is also exactly half a radius, matching the hover outline's union
+      // calculation rather than adding the stand-off to the rounding again.
+      const path = pathOfLoops(team.loops, size, 0, 1);
       if (path) teams.set(team.teamId, path);
     }
     const blobs = new Map<string, Path2D>();
@@ -2015,7 +1850,11 @@ export default function HexLab({
       teams,
       blobs,
       spacers: teamSpacers ? pathOfLoops(teamSpacers, size, 0, soften) : null,
-      rings: groupRings ? pathOfLoops(groupRings, size, 0, soften) : null,
+      // Keep the geometry live so the outer zone can be restored with one
+      // switch; it is intentionally absent from the current visual stack.
+      rings: SHOW_OUTERMOST_ZONE && groupRings
+        ? pathOfLoops(groupRings, size, 0, soften)
+        : null,
     };
   }, [soften, hexScene, teamOutlines, bubbles, teamSpacers, groupRings]);
   const fit = useCallback(() => {
@@ -2744,32 +2583,14 @@ export default function HexLab({
      *  place, or nobody outside it having taken that job on. */
     const groundOf = (teamId: string) => Math.max(teamPlace, 1 - takenOver(teamId));
     /**
-     * **And the grey room lasts exactly as long as the strongest team does.**
-     *
-     * Both grey layers are opaque, which is deliberate — the room must read
-     * the same whatever wash it falls inside — and opaque is what makes them
-     * dangerous out here: pulled back, those thin collars are most of the map,
-     * so leaving them up paints flat grey over every region's ground and the
-     * company comes out pale. Tried first as *teams plus their groups*, which
-     * kept them at full strength through exactly the rung where a group
-     * becomes the gummy bear, and so hid the thing the rung exists to show.
-     *
-     * The honest rule is: the room between teams means something until a
-     * region has taken the job of being the place, and nothing afterwards.
-     *
-     * **Asked of the map, not of each team**, which is forced rather than
-     * chosen: both greys are a single merged path apiece, so there is one
-     * alpha to give them and it cannot vary team by team. Taking the strongest
-     * team's own ground was tried and is worse than it sounds — it is a
-     * maximum, so a single team that no region contains holds the grey up at
-     * full strength across the whole company, which on the 45-person company
-     * meant nothing changed at all. The question a shared path can answer is
-     * the shared one: has any rung outside a team become the place?
+     * **Team colour carries the people as their tiles disappear.** `tiles` is
+     * fully present by about 0.05× on this lattice, so the team ground is only
+     * a two-per-cent hint there and further in. Pull out through the tile fade
+     * and it darkens continuously toward the owning team node's colour.
      */
-    const roomBetween = 1 - placeTaken(
-      place,
-      [...place.keys()].filter((tier) => tier >= 1),
-    );
+    const teamGroundOpacity = TEAM_GROUND_OPACITY_NEAR
+      + (TEAM_GROUND_OPACITY_FAR - TEAM_GROUND_OPACITY_NEAR) * (1 - reveal.tiles);
+    const teamEdgeOpacity = Math.min(0.42, teamGroundOpacity * 1.8);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -2789,6 +2610,17 @@ export default function HexLab({
     );
     const visibleIds = new Set(visible.map((u) => u.id));
     const hueFor = (id: string) => hueById.get(id) ?? 0;
+    /** A person wears the exact colour of the first organisational node above
+     * them, including that node's tone rather than the person's paler rung. */
+    const colourOwnerOf = (id: string) => {
+      let owner = scene.unitById.get(id);
+      while (owner && peopleIds.has(owner.id) && owner.parentId) {
+        const parent = scene.unitById.get(owner.parentId);
+        if (!parent) break;
+        owner = parent;
+      }
+      return owner;
+    };
     /** The cell's own hexagon, full size — the container. */
     const hexPath = (cell: Cell) => {
       const pts = corners(cell, hexSize);
@@ -2867,15 +2699,14 @@ export default function HexLab({
      * make it a constant.
      */
     const markRadius = (id: string, depth: number): number => {
-      void depth;
       if (peopleIds.has(id)) {
         return hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
       }
-      if (id === tree.rootId) return hexSize * MASTER_SPAN;
-      // A team holds people; anything above one holds places.
-      const tier = allocation.tier?.get(id) ?? 0;
-      if (tier >= 1) return hexSize * PLACE_SPAN;
-      return hexSize * activeShrink;
+      void depth;
+      const span = structuralNodeSpan(id, tree.rootId, peopleIds, allocation.tier);
+      // A team still keeps the active-cell gap. Larger places deliberately
+      // overflow, and their bubbles now make room for that same span.
+      return hexSize * span * (span <= 1 ? activeShrink : 1);
     };
 
     const nodePath = (cell: Cell, id: string, depth: number, shrink = 1) => {
@@ -2891,8 +2722,9 @@ export default function HexLab({
 
 
     /**
-     * **The active hexagon's border**, which is the whole cell in the unit's
-     * own colour. Greg, 2026-11-05: *"this border, which is a hexagon layer
+     * **The active hexagon's host**, which is the whole cell behind the mark.
+     * Structural cells use the unit's colour; a person's is white glass.
+     * Greg, 2026-11-05: *"this border, which is a hexagon layer
      * sitting behind the active hexagon, should also be rounded"* — and it is
      * not an **area** hexagon, however it is sized: an area hexagon is grey
      * ground, this one takes the colour of whoever stands on it, so it reads
@@ -3071,55 +2903,18 @@ export default function HexLab({
     //     Drawn over the region washes on purpose: these cells are room, not
     //     territory, and they should read as the same room everywhere.
     /**
-     * **Three tones, and the order they go down in.** Greg, 2026-10-18: the
-     * zone is *"a grey between the team-zone and the background"*, and the team
-     * zone goes *"slightly darker if necessary"* to stay apart from it. So:
-     * white, then the group's ground, then the clear hexagon round each team,
-     * each a step darker than the last, and nothing in any of them says which
-     * colour the team is.
+     * **Grey is fixed material, not part of the zoom handover.** The remaining
+     * spacing ground stays `#f6f6f6` at full opacity at every rung. The outer
+     * group zone uses the same material if `SHOW_OUTERMOST_ZONE` is restored,
+     * but that layer is switched off for now.
      */
-    /**
-     * **The grey room recedes with the thing it is room around.**
-     *
-     * Greg's rule since 2026-10-18 is that *colour is for what is there, grey
-     * is for the room around it*, and these two layers are the room: the
-     * collar of clear hexagons each team keeps, and the ring round a group of
-     * them. Both are **opaque**, deliberately, so that the room reads the same
-     * whatever territory wash it falls inside.
-     *
-     * Opaque is exactly what broke the outermost rungs of the ladder. Close
-     * in, the collar is a thin margin between tiles. Pulled back, those
-     * margins are most of the map — so a flat grey went down over every
-     * region's ground and the whole company came out pale, which is the
-     * opposite of a super-gummy-bear blob. It is the same trap as the five-
-     * times-thicker team line of 2026-11-06: a constant that is right at one
-     * zoom and swamps the picture at another.
-     *
-     * So the room fades with whatever it is room *around*. The collar between
-     * teams goes when a team stops being the subject — inside a blob it would
-     * only cut the blob into pieces. The ring round a group lasts one rung
-     * longer, because at the rung where a group *is* the gummy bear its ring
-     * is that bear's own outside edge.
-     */
-    if (areaPaths.rings && roomBetween > 0.004) {
-      ctx.globalAlpha = roomBetween;
-      ctx.fillStyle = "#f7f8fa";
+    if (areaPaths.rings) {
+      ctx.fillStyle = "#f6f6f6";
       ctx.fill(areaPaths.rings, "evenodd");
-      ctx.globalAlpha = 1;
     }
-    if (areaPaths.spacers && roomBetween > 0.004) {
-      ctx.globalAlpha = roomBetween;
-      /**
-       * **Opaque, not a wash.** Greg: *"it should be light grey"*, and it was
-       * not — a tint of `rgba(15,23,42,0.05)` over a cell that already carries
-       * the nested region washes of every rung above it comes out mid grey, and
-       * darker the deeper the company. A flat colour is the only way the ring
-       * reads the same everywhere, which is the whole point of it being grey:
-       * **colour is for what is there, grey is for the room around it.**
-       */
-      ctx.fillStyle = "#e8eaee";
+    if (areaPaths.spacers) {
+      ctx.fillStyle = "#f6f6f6";
       ctx.fill(areaPaths.spacers, "evenodd");
-      ctx.globalAlpha = 1;
     }
     /**
      * **The silhouette of the whole, and nothing inside it.**
@@ -3130,42 +2925,23 @@ export default function HexLab({
      * groups that meet simply become one shape, which is what *bubbling
      * together* means.
      */
-    if (areaPaths.rings && roomBetween > 0.004) {
-      ctx.globalAlpha = roomBetween;
+    if (areaPaths.rings) {
       ctx.lineWidth = Math.max(0.6, 1.6 / scale);
       ctx.strokeStyle = "rgba(15,23,42,0.16)";
       ctx.stroke(areaPaths.rings);
-      ctx.globalAlpha = 1;
     }
 
     /**
-     * **The ground a team stands on, in the team's own colour** — the last of
-     * the area hexagons, and the only one that is not grey.
+     * **The ground a team stands on, in its organisational node's colour** —
+     * the last of the area hexagons, and the only one that is not grey.
      *
-     * Greg, 2026-11-06: *"the area drawn by this line can get a fill of its
-     * own — the average colour of the active hexagons that it contains. But
-     * all active hexagons and their immediate containing cells (not the grey
-     * ones from behind) should sit above the newly coloured-in area."*
+     * It goes down after every grey and before the first active cell, so every
+     * node still lands on top. The earlier descendant average was replaced on
+     * 2026-11-07: the owner is now the colour source, and the fill is true
+     * translucent colour rather than an opaque colour pre-mixed with paper.
      *
-     * So it goes down **here**: after every grey — the region washes, the
-     * group's ground, the collar of clear hexagons round each team — and
-     * before the first thing that is active, which is the coloured cell a
-     * node stands in. Everything active therefore lands on top of it without
-     * anything needing to know this exists.
-     *
-     * It is the same `Path2D` the line round the team is drawn from, so the
-     * fill and that line cannot disagree about where the team ends.
-     */
-    /**
-     * **And the line round the team, one step above its own ground.** Greg,
-     * 2026-11-06: *"the grey outline should fall one z-axis position above the
-     * colour fill it draws, which should put it below the active cells within
-     * the drawn area"* — so a tile sitting on the team's edge covers the line
-     * where it crosses, and the line survives everywhere else.
-     *
-     * It is no longer grey. Same colour as the ground it encloses, ten per
-     * cent darker, which makes the edge part of the place rather than a
-     * boundary drawn round it.
+     * It is one `Path2D` from the same stitched boundary as the hover outline,
+     * so its fill and its single stroke cannot expose internal cell edges.
      */
     if (teamOutlines.length > 0) {
       ctx.lineWidth = Math.max(0.7, 2.2 / scale);
@@ -3174,9 +2950,9 @@ export default function HexLab({
         const ground = groundOf(team.teamId);
         const shape = areaPaths.teams.get(team.teamId);
         if (!shape || !tint || ground <= 0.004) continue;
-        ctx.fillStyle = tint.fill(ground);
+        ctx.fillStyle = tint.fill(ground, teamGroundOpacity);
         ctx.fill(shape, "evenodd");
-        ctx.strokeStyle = tint.line(ground);
+        ctx.strokeStyle = tint.line(ground, teamEdgeOpacity);
         ctx.stroke(shape);
       }
     }
@@ -3354,18 +3130,14 @@ export default function HexLab({
      * that a neighbour's tile can never cover a mark either.
      */
     if (hexScene) {
-      const wash = (0.30 - 0.24 * reveal.people) * reveal.tiles;
+      const tileAlpha = PERSON_TILE_OPACITY * reveal.tiles;
       const folk = visible.filter((u) => peopleIds.has(u.id));
-      if (wash > 0.02) {
+      if (tileAlpha > 0.02) {
         for (const unit of folk) {
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
           washPath(cell, true);
-          // Opaque, and lightened in the colour rather than in the alpha —
-          // see `cssOver`. The territory wash above keeps its alpha, because
-          // it is a wash over the ground and meant to let it through; this
-          // one is a tile standing on top of whatever it lands on.
-          ctx.fillStyle = cssOver(hueFor(unit.id), unit.depth, maxDepth, wash);
+          ctx.fillStyle = `rgba(255,255,255,${tileAlpha})`;
           ctx.fill();
         }
       }
@@ -3373,8 +3145,9 @@ export default function HexLab({
         const cell = hexScene.hex.cells.get(unit.id);
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
+        const owner = colourOwnerOf(unit.id) ?? unit;
         nodePath(cell, unit.id, unit.depth);
-        ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
+        ctx.fillStyle = css(hueFor(owner.id), owner.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
       }
     }

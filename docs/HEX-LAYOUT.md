@@ -4073,19 +4073,52 @@ difference: a line nobody could see. Opaque, it is the colour that ground
 *would* be if the ground were solid, which is what "the same colour, darker"
 means to the eye. The alpha is the knob if that reading is wrong.
 
+**That reading was replaced after the new human cells were seen on it
+(2026-11-07).** The opaque coloured host solved overlap but disappeared into
+the opaque coloured ground. Grounds now take the exact hue and tone of their
+owning structural node rather than averaging descendants, with true alpha:
+`REGION_FILL_OPACITY = 0.10` and a lightly stronger translucent edge. A human
+host is white at `PERSON_TILE_OPACITY = 0.75` — 25% transparent; the human mark takes the exact
+colour of its first organisational parent. The historical arithmetic above is
+why the previous picture looked as it did, not the current implementation.
+
 **What the z-order actually buys, today:** less than it sounds, and it is worth
 saying so. The team's path runs along the boundary of its cells, while a tile
 is drawn `activeInset` *inside* its cell — so a 2.2px line sits in the gap and
 nothing covers it. The ordering is right for when that stops being true: a
 heavier line, or a smaller gap, and the tiles win where they cross it.
 
-**And then it stood clear of its own cells (same day, later still).** Greg:
-*"that outline — and by definition the fill within it — needs to be offset
-outwards a little."* Half a radius was tried, looked at, and taken down to a
-quarter the same day. `TEAM_SPREAD = 0.25`, in cell radii, and it eats into
-the collar of clear hexagons rather than anyone else's ground, because the
-collar is a whole cell wide. The ground stops being a tracing of the team's
-tiles and becomes something the team sits inside.
+**And then it stood clear of its own cells.** Greg: *"that outline — and by
+definition the fill within it — needs to be offset outwards a little."* Half a
+radius was tried, taken down to a quarter, briefly restored while the container
+geometry was corrected, then settled back at a quarter after the single family
+boundary was seen. `TEAM_SPREAD = 0.25`, in cell radii, and it eats into the
+collar of clear hexagons rather than anyone else's ground, because the collar
+is a whole cell wide.
+
+**The persistent team container is the hover outline, filled.** Two attempts
+to account for larger nodes clarified this by being wrong in opposite ways.
+Pushing one union out by its largest node made every child inherit that node's
+spacing. Building one offset shape per node made a second bubble around every
+member and left gaps between them. Greg pointed to the answer already on the
+screen: hovering a node or team draws one line around the family.
+
+So `teamOutlines` takes the union of the team node's cell and every child cell,
+the same cell set and `outline` → `boundaryLoops` stitch as the hover shape.
+That one boundary is pushed out by a quarter of a cell radius, traced with a fixed half-
+radius corner on convex and concave turns, then filled and stroked as a single
+`Path2D`. There are no internal member edges to reveal and no gaps to bridge.
+The team node fills its own cell, so using the cell boundary also accommodates
+its larger visible body without inventing a second geometry.
+
+**The 2026-11-07 layer pass made space fixed and colour responsive.** The
+grey collar is always `#f6f6f6`; it no longer fades or changes shade with the
+zoom ladder. The outermost zoning bubble is retained as `groupRings` but not
+painted while `SHOW_OUTERMOST_ZONE = false`. Team ground does make a handover:
+it is a barely visible 2% wash while human tiles are present around `0.05×`,
+then darkens continuously to 26% of the structural owner's colour as those
+tiles fade. The human host is white at 75% opacity, so it remains a distinct
+surface over either end of that transition.
 
 `pushOut` does it, in `loops.ts` beside the stitcher and tested for the same
 reason: every vertex moves along the bisector of its two edges by the *miter*

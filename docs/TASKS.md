@@ -335,13 +335,27 @@ weight would read as a line with dots on it.
 > `PLACE_SPAN` is 1.5 and `MASTER_SPAN` is 3, and the region arithmetic is
 > gone.
 >
-> **And the half of the z-order rule that was missing**, an hour later:
-> *"the person node, even when it hovers/clips above another node, takes the
-> parent node because the human node host cell's colour is governed by an
-> alpha channel. Let's make it opaque, but a lighter shade so it matches the
-> lightened colour of the node itself."* A tile cannot sit above something if
-> you can see that something through it. `cssOver` mixes the colour into the
-> page at the same strength the alpha used and hands back an opaque one.
+> **The host-cell colour changed again after it was seen against the new
+> grounds.** The opaque coloured host solved z-order but disappeared into the
+> coloured bubble behind it. Greg's 2026-11-07 replacement is simpler: the
+> host is white at 25% transparency / 75% opacity (`PERSON_TILE_OPACITY`), and the human mark
+> takes the exact hue and tone of its first organisational parent. The person
+> remains above larger nodes while the white glass makes its cell readable.
+>
+> **And the team container reuses the hover outline rather than wrapping each
+> member.** Two corrections went the wrong way first: expanding the whole by
+> the largest node made every child inherit its spacing; offsetting every node
+> separately made a halo per member and left visible gaps. Greg's answer was
+> already on the map. The persistent team ground now takes the same union of
+> the team node's cell and every child cell as the hover outline, stitches one
+> outside boundary, pushes it out by `TEAM_SPREAD = 0.25` cell radii, rounds all
+> of its corners at `NODE_CORNER = 0.5` cell radii, then fills and strokes that
+> single path. Ground colour comes from the structural owner: a barely visible
+> 2% while people are present, darkening to 26% as their tiles fade.
+>
+> **The surrounding layers were simplified at the same time.** The remaining
+> spacing material is fixed `#f6f6f6` at every zoom. The outermost zoning
+> bubble (`groupRings`) is retained but switched off by `SHOW_OUTERMOST_ZONE`.
 >
 > **Plus a z-order rule that makes the rest safe:** *"all human nodes and
 > their host cells should sit on a z-axis point above other nodes, including
@@ -392,20 +406,18 @@ weight would read as a line with dots on it.
 things stacked in the same place: *"there's a team bubble and its border, the
 area spacing behind it, and beyond that, the outline of the functional group.
 This is a bit much; we likely don't need all of it."* Which of them goes is his
-call. Worth knowing before that conversation: the team's coloured ground and
-its line come from the same path, so they are one decision not two
-(`teamOutlines`, `TEAM_GROUND`, `TEAM_EDGE_DARKER`); the grey behind it is the
-collar every team keeps (`teamSpacers`) and it is load-bearing for the spacing
-rule, not decoration; and the functional group's outline is `groupRings`. All
-four are in `app/lab/hex/HexLab.tsx` and all four already fade with the zoom
-ladder — so one answer is that they should not *all* be visible at the same
-rung, rather than that one of them should go for good.
+call. The team's one coloured ground and its one line are both drawn from the
+stitched family boundary (`teamOutlines`, `REGION_FILL_OPACITY`); the grey behind it is the collar every team keeps
+(`teamSpacers`) and it is load-bearing for the spacing rule, not decoration;
+and the functional group's outline is `groupRings`. Greg's 2026-11-07 answer
+was to keep the grey fixed, switch `groupRings` off without deleting it, and
+let team colour recede as the human tiles arrive.
 
 **A trick worth keeping for when this is built.** Greg: *"we can make team head
 nodes (eg anything that isn't a human) appear to be bigger because we can offset
 backgrounds around them. So we can 'cheat' the strict hexagon layout system by
 making some appear larger than others, even if they are just so in an illusory
-capacity."* The machinery for it exists — `TEAM_SPREAD` already stands a team's
+capacity."* The machinery for it exists — `TEAM_SPREAD` now stands a team's
 ground off its own cells by a quarter of a cell radius, and `pushOut` in
 `app/lab/hex/loops.ts` will offset any boundary by any distance with the corner
 radii following correctly. So a head node could carry a ground that reaches
