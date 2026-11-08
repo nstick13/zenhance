@@ -1773,6 +1773,34 @@ guard so a stray `npm install` can't recreate `package-lock.json`; check
 Vercel detects pnpm (it does, from the lockfile) **before** promoting to
 `main`.
 
+### ☐ A ring answers a mouse and ignores a finger — *Claude, 2026-11-08*
+
+Every node on the hex map now wears three rings — how the people are, how
+far the work has moved, how much of it is finished. Point a **mouse** at one
+and it lifts off the page and tells you what it says. Point a **finger** at
+one and nothing happens at all.
+
+That is half a feature on a product whose own house rule says touch is a
+first-class input: *"anything you can reach by hovering must also be reachable
+by tapping"* (AGENTS.md). A tablet is exactly the device somebody walks into a
+room with.
+
+There is also no **click** state, but that one is deliberate — Greg,
+2026-11-08: *"we don't have a click state yet, but I do want to see the hover
+state."* So the question for him is only what a tap should do, given that a
+finger cannot hover: light the ring and leave it lit until you tap elsewhere,
+or go straight to whatever the click state turns out to be.
+
+*For whoever picks it up:* the hard part is done and shared. `ringAtPointer`
+in `app/lab/hex/HexLab.tsx` resolves a world position to `{unitId, slot}`
+through `ringBand` in `app/lab/hex/health.ts` — the same function the
+painter uses, deliberately, so a target cannot drift from its gauge — and
+`RING_HIT_SLOP_PX` is already generous enough for a fingertip. What is missing
+is a path from `onPointerUp` (or `onPointerDown` for a touch pointer;
+`pointerKind` already records what put the hand down) into `setHoverRing`, and
+a decision about when a lit ring goes out. Worth settling at the same time as
+the click state rather than twice.
+
 ### ☐ Nothing checks our work automatically
 
 Most software projects have a robot that inspects every change the moment it

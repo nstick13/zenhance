@@ -60,6 +60,20 @@ import {
   drawnUnitRadius, isLandmark, smoothstep, unitLabelVisible,
 } from "@/lib/map/camera/lod";
 import {
+  HEX_RING_LABELS,
+  HEX_RING_MEANS,
+  HEX_RING_SLOTS,
+  illustrativeWellbeing,
+  ringAtDistance,
+  ringBand,
+  ringColour,
+  ringReach,
+  signalRollup,
+  type HexRingSlot,
+} from "./health";
+import { boardsFor } from "@/lib/map/work/board";
+import { tasksForPerson } from "@/lib/mock/personTasks";
+import {
   HEX_LADDER,
   cellPxOf,
   hexRevealAt,
@@ -242,6 +256,46 @@ const PERSON_TILE = 0.8;
  * colour of its organisational parent.
  */
 const PERSON_TILE_OPACITY = 0.85;
+
+/**
+ * **The health rings are back, and they are on everything** — Greg,
+ * 2026-11-08: *"re-instate the health rings from the orbital model … Ideally
+ * we want health rings for all nodes, human and non-human included."* Three
+ * of them, the same three the orbital map wears, since the same day: *"there
+ * should be three concentric health rings, not just the one."*
+ *
+ * The arithmetic, the invented figures and the rule that decides where a ring
+ * lands on a lattice are all in `./health.ts`; this page only paints them and
+ * catches the hand. The flag is here because a ring is a strong mark and the
+ * fastest way to judge a strong mark is to be able to turn it off.
+ */
+const SHOW_HEALTH_RINGS = true;
+
+/**
+ * **How visible the unfilled part of a ring is.** A gauge with no track is a
+ * stripe: you can see there is *some* health without seeing how much of it
+ * there could have been. Faint, because on this map the track is drawn over
+ * either a person's white glass or a team's own colour, and neither should
+ * acquire a second boundary.
+ */
+const RING_TRACK_ALPHA = 0.2;
+
+/**
+ * **A ring the hand is on lifts off the page** — Greg, 2026-11-08: *"the
+ * rings should have hover states — we don't have a click state yet, but I do
+ * want to see the hover state."*
+ *
+ * The orbital map's own answer, and its three parts: the arc goes to full
+ * colour, it thickens, and it takes a shadow. The shadow is what reads as
+ * *lifted* rather than merely *brighter* — without it a highlighted ring looks
+ * like a ring that happens to be a different colour, which says nothing about
+ * what the hand is doing. Its two neighbours fade instead of staying put, so
+ * that one gauge is being read rather than three being shown.
+ */
+const RING_HOVER_WIDTH = 1.5;
+const RING_HOVER_DIM = 0.45;
+const RING_HOVER_SHADOW = "rgba(15,23,42,0.35)";
+const RING_HOVER_BLUR = 10;
 
 /**
  * **A human is drawn as a circle.** Greg, 2026-11-07, on the half-size marks:
@@ -988,6 +1042,44 @@ export default function HexLab({
   const driver = DRIVER;
   const sideways = SIDEWAYS;
   const [hover, setHover] = useState<string | null>(null);
+  /** The ring the hand is on, if any — `{ unitId, slot }`, where `slot` is an
+   *  index into `HEX_RING_SLOTS`. Separate from `hover` because the two answer
+   *  different questions: which node, and which of its gauges. */
+  const [hoverRing, setHoverRing] = useState<{ unitId: string; slot: number } | null>(null);
+
+  /**
+   * **How long the last frame took to paint, in milliseconds.**
+   *
+   * The panel has reported the *layout* cost since this page existed, and
+   * that was the expensive half while the map was pure geometry. It is not
+   * any more: the layout runs once per arrangement and the paint runs on
+   * every pan, zoom and hover.
+   *
+   * It is here because the obvious way to measure a canvas — count
+   * `requestAnimationFrame` ticks — **does not work in this repo's review
+   * setup**. Measured on 2026-11-08, the browser pane was handing out a frame
+   * every six seconds while the page itself was perfectly responsive, so an
+   * rAF-derived frame rate says something about the pane and nothing about
+   * the map. `docs/HEX-LAYOUT.md` has carried a warning about this since
+   * 2026-10-03; this is the number that replaces the warning. The draw is a
+   * `useEffect`, not an animation callback, so timing it from the inside is
+   * both honest and unaffected.
+   *
+   * **Written straight into the panel's own element**, not through state:
+   * setting state from the draw would make the draw run again, and a
+   * diagnostic that changes what it measures is not a diagnostic. It is the
+   * one number on this page that updates outside React, which is exactly why
+   * it can be trusted.
+   */
+  const drawMsRef = useRef(0);
+  const drawMsEl = useRef<HTMLElement | null>(null);
+  const showDrawMs = (ms: number) => {
+    drawMsRef.current = ms;
+    const el = drawMsEl.current;
+    if (!el) return;
+    el.textContent = `${ms.toFixed(1)}ms`;
+    el.style.color = ms > 16 ? "#b45309" : "#166534";
+  };
 
   /** Hand placements and reparents, kept in this browser between visits. */
   const [moves, setMoves] = useState<Map<string, Cell>>(() => new Map());
@@ -1397,6 +1489,51 @@ export default function HexLab({
   );
 
   /**
+   * **The work each person is carrying**, from the same generator the orbital
+   * map's demo uses — `lib/mock/personTasks`, through the work engine's own
+   * `boardsFor`. Greg, 2026-11-08: *"as with orbital, fake the data if you
+   * have to."*
+   *
+   * Whole boards, not just what is in flight: a completion ring is only
+   * meaningful against everything somebody holds. Team names go in as the tag
+   * pool so a card reads as *their* work rather than as generic filler, which
+   * matters the day a card is shown rather than counted.
+   */
+  const boards = useMemo(() => {
+    if (peopleIds.size === 0) return new Map<string, ReturnType<typeof tasksForPerson>>();
+    const tags = scene.units.filter((u) => !peopleIds.has(u.id)).map((u) => u.name);
+    const folk = scene.units.filter((u) => peopleIds.has(u.id)).map((u) => ({ id: u.id }));
+    return boardsFor(folk, tags, tasksForPerson, true);
+  }, [scene, peopleIds]);
+
+  /**
+   * **What each node's three rings are saying.**
+   *
+   * A person wears their own figures; everything above them wears its whole
+   * branch, which is the orbital map's rule unchanged. The numbers are
+   * invented — this page has no database and its company comes out of a
+   * fixture — but they are invented the same two ways the orbital demo
+   * invents them: work from the mock boards above, wellbeing from seeded
+   * pressures run through the signal engine's own thresholds. So the spread of
+   * green, amber and red is the spread real data would produce. `./health.ts`
+   * is where that is argued out, and where the two functions to replace stand
+   * when a real source exists.
+   *
+   * Recomputed only when the tree changes, never per frame: it is one walk of
+   * the company, and the renderer just looks the answer up.
+   */
+  const signal = useMemo(
+    () => signalRollup(
+      scene.units.map((u) => u.id),
+      (id) => scene.unitById.get(id)?.childIds ?? [],
+      (id) => peopleIds.has(id),
+      (id) => boards.get(id) ?? [],
+      illustrativeWellbeing,
+    ),
+    [scene, peopleIds, boards],
+  );
+
+  /**
    * Which region each unit's colour comes from.
    *
    * With people promoted to units, `regionOf` was choosing its rung by unit
@@ -1679,6 +1816,7 @@ export default function HexLab({
     return deepest(laid.length ? laid : scene.units);
   }, [scene, pinned, born]);
 
+
   /**
    * **A ground takes its colour from the structural node that owns it.**
    *
@@ -1825,6 +1963,91 @@ export default function HexLab({
    */
   const cellPx = cellPxOf(hexScene?.hex.size ?? 1, camera.scale);
   const level = levelAt(cellPx);
+
+  /**
+   * **How big every node is drawn, in one place the painter and the hand both
+   * read.**
+   *
+   * This used to live inside the draw effect, which was fine while nothing
+   * outside the draw needed it. The ring hover changed that: pointing at a
+   * ring means measuring the same circles the painter draws, and the orbital
+   * map's rule for exactly this situation is that both sides share the
+   * function — *"what you can point at is exactly what you can see, the one
+   * number both sides have to agree on"* (`ringGeometry`, `render.ts`). Two
+   * copies of a size rule is how a gauge ends up a few pixels from its own
+   * target.
+   *
+   * It depends on the camera because the clear ground an active hexagon keeps
+   * has a pixel floor, so it is rebuilt each zoom step — which is also exactly
+   * when the draw effect reruns.
+   */
+  const sizes = useMemo(() => {
+    const hexSize = hexScene?.hex.size ?? 1;
+    const scale = Math.max(camera.scale, 1e-6);
+    /**
+     * **How much comes off an active hexagon so it never touches its
+     * neighbour** — `ACTIVE_GAP` and its two clamps, in world units.
+     *
+     * Two neighbouring cells are `√3 · size` apart centre to centre, and a
+     * tile's flat edge is `√3/2 · radius` from its own centre, so a tile drawn
+     * at the full size of its cell meets its neighbour exactly. Taking `i` off
+     * the radius opens `√3 · i` of ground between the two, which is where the
+     * √3 below comes from: the pixel floor is a gap on the glass, and this
+     * turns it back into a radius.
+     */
+    const activeInset = Math.min(
+      hexSize * ACTIVE_GAP_MAX,
+      Math.max(hexSize * ACTIVE_GAP, ACTIVE_GAP_PX / scale / Math.sqrt(3)),
+    );
+    /** The same thing as a factor, for everything drawn *inside* a cell —
+     *  Greg: *"and proportionally everything within them"*. */
+    const activeShrink = hexSize > 0 ? 1 - activeInset / hexSize : 1;
+
+    /**
+     * **How big a node's own mark is, and what that says about it.** Greg,
+     * 2026-11-07, replacing the even grading by rung with four statements:
+     *
+     * - a **person** is small — half the old floor, and a circle;
+     * - a **team** *"should now fill their host cell"*, so it is the cell;
+     * - a **place above a team** overflows its cell by half a radius, a fixed
+     *   amount whatever it holds (`PLACE_SPAN`);
+     * - the **master centre** *"should be huge"*, at `MASTER_SPAN` cell radii.
+     *
+     * The old `nodeScale` grading — every rung a step bigger than the one
+     * below — has gone from everything except a person's floor. Size used to
+     * say *how senior*; it now says *what kind of thing this is*, which is a
+     * question the eye can actually answer at a glance.
+     *
+     * Everything still multiplies by `activeShrink`, so the clear ground an
+     * active hexagon keeps is kept whatever the rule.
+     *
+     * **A place above a team is a team-level node that has been drawn
+     * bigger, and that is all.** Two richer readings were tried first and
+     * both are written up in `docs/HEX-LAYOUT.md`: drawing the node *as* its
+     * region's own path, which costs 3.3 seconds a frame because stroking the
+     * boundary of thousands of cells is nothing like filling it; and growing
+     * it in proportion to its region, which put eight screen-wide hexagons
+     * over each other on the eight-rung company. Greg's answer to both was to
+     * make it a constant.
+     */
+    const markRadius = (id: string): number => {
+      if (peopleIds.has(id)) {
+        return hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
+      }
+      const span = structuralNodeSpan(id, tree.rootId, peopleIds, allocation.tier);
+      // A team still keeps the active-cell gap. Larger places deliberately
+      // overflow, and their bubbles now make room for that same span.
+      return hexSize * span * (span <= 1 ? activeShrink : 1);
+    };
+
+    /** The ground a node stands in: a person's white tile, everyone else's
+     *  own cell. It is what weights a ring, so every gauge on the lattice
+     *  reads at one weight whatever it is drawn around. */
+    const hostRadius = (id: string): number =>
+      (hexSize - activeInset) * (peopleIds.has(id) ? PERSON_TILE : 1);
+
+    return { hexSize, scale, activeInset, activeShrink, markRadius, hostRadius };
+  }, [hexScene, camera.scale, peopleIds, tree.rootId, allocation.tier, maxDepth]);
 
   /**
    * **How soft every area boundary is right now, and the paths at that
@@ -2549,6 +2772,7 @@ export default function HexLab({
     canvas.style.width = `${size.width}px`;
     canvas.style.height = `${size.height}px`;
 
+    const drawFrom = performance.now();
     const { scale } = camera;
     const view = cullBox(camera, size);
     const hexSize = hexScene?.hex.size ?? 1;
@@ -2616,7 +2840,7 @@ export default function HexLab({
      * which is a company nobody made. The tree keeps its root; the canvas
      * simply has nothing to say until somebody makes something.
      */
-    if (blankPaper) return;
+    if (blankPaper) { showDrawMs(0); return; }
     ctx.save();
     ctx.transform(scale, 0, 0, scale, camera.x, camera.y);
 
@@ -2675,69 +2899,21 @@ export default function HexLab({
     };
 
     /**
-     * **How much comes off an active hexagon so it never touches its
-     * neighbour** — `ACTIVE_GAP` and its two clamps, in world units.
-     *
-     * Two neighbouring cells are `√3 · size` apart centre to centre, and a
-     * tile's flat edge is `√3/2 · radius` from its own centre, so a tile drawn
-     * at the full size of its cell meets its neighbour exactly. Taking `i` off
-     * the radius opens `√3 · i` of ground between the two, which is where the
-     * √3 below comes from: the pixel floor is a gap on the glass, and this
-     * turns it back into a radius.
+     * **The size rule, read from the one place that owns it** — see the
+     * `sizes` memo. It was inlined here until the rings needed a hover, at
+     * which point the hand had to measure the same circles the painter draws,
+     * and two copies of a size rule is how a gauge ends up a few pixels from
+     * its own target.
      */
-    const activeInset = Math.min(
-      hexSize * ACTIVE_GAP_MAX,
-      Math.max(hexSize * ACTIVE_GAP, ACTIVE_GAP_PX / scale / Math.sqrt(3)),
-    );
-    /** The same thing as a factor, for everything drawn *inside* a cell —
-     *  Greg: *"and proportionally everything within them"*. */
-    const activeShrink = hexSize > 0 ? 1 - activeInset / hexSize : 1;
+    const { activeInset, markRadius, hostRadius } = sizes;
 
-    /**
-     * **How big a node's own mark is, and what that says about it.** Greg,
-     * 2026-11-07, replacing the even grading by rung with four statements:
-     *
-     * - a **person** is small — half the old floor, and a circle;
-     * - a **team** *"should now fill their host cell"*, so it is the cell;
-     * - a **place above a team** overflows its cell by half a radius, a fixed
-     *   amount whatever it holds (`PLACE_SPAN`);
-     * - the **master centre** *"should be huge"*, at `MASTER_SPAN` cell radii.
-     *
-     * The old `nodeScale` grading — every rung a step bigger than the one
-     * below — has gone from everything except a person's floor. Size used to
-     * say *how senior*; it now says *what kind of thing this is*, which is a
-     * question the eye can actually answer at a glance.
-     *
-     * Everything still multiplies by `activeShrink`, so the clear ground an
-     * active hexagon keeps is kept whatever the rule.
-     *
-     * **A place above a team is a team-level node that has been drawn
-     * bigger, and that is all.** Two richer readings were tried first and
-     * both are written up in `docs/HEX-LAYOUT.md`: drawing the node *as* its
-     * region's own path, which costs 3.3 seconds a frame because stroking the
-     * boundary of thousands of cells is nothing like filling it; and growing
-     * it in proportion to its region, which put eight screen-wide hexagons
-     * over each other on the eight-rung company. Greg's answer to both was to
-     * make it a constant.
-     */
-    const markRadius = (id: string, depth: number): number => {
-      if (peopleIds.has(id)) {
-        return hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
-      }
-      void depth;
-      const span = structuralNodeSpan(id, tree.rootId, peopleIds, allocation.tier);
-      // A team still keeps the active-cell gap. Larger places deliberately
-      // overflow, and their bubbles now make room for that same span.
-      return hexSize * span * (span <= 1 ? activeShrink : 1);
-    };
-
-    const nodePath = (cell: Cell, id: string, depth: number, shrink = 1) => {
+    const nodePath = (cell: Cell, id: string, shrink = 1) => {
       const person = peopleIds.has(id);
       // A person is the dial at its limit, which is a circle — `PERSON_CORNER`.
       // The tile behind them stays a hexagon, and so does every place.
       roundedHex(
         cellToWorld(cell, hexSize),
-        markRadius(id, depth) * shrink,
+        markRadius(id) * shrink,
         person ? PERSON_CORNER : NODE_CORNER,
       );
     };
@@ -2761,6 +2937,179 @@ export default function HexLab({
         (hexSize - activeInset) * (person ? PERSON_TILE : 1),
         person ? PERSON_TILE_CORNER : NODE_CORNER,
       );
+
+    /**
+     * **The health rings, ported from the orbital map** — Greg, 2026-11-08,
+     * and three of them since later the same day.
+     *
+     * Three things came across unchanged, because they were already right:
+     * the three figures themselves (`UnitProgress` — delivery, sprint,
+     * health), the shape (a faint full circle for what the gauge *could* say,
+     * a coloured arc from twelve o'clock clockwise for what it *does*), and
+     * the colour of the health one, which is the signal engine's own verdict
+     * so that amber means the same thing on both maps.
+     *
+     * Two things could not come across. **Where they sit** is `ringBand` in
+     * `./health.ts`, because on a lattice a team *is* its cell and a place
+     * overflows it, so there is no wide empty orbit to step into. **When they
+     * appear** is `ringAlpha` below: `reveal.names`, so a ring and a name
+     * arrive together — Greg: *"let's start with health rings becoming
+     * visible when human labels become visible too."* Unlike a label a ring
+     * can cross-fade, so it uses the band as a curve rather than as a switch,
+     * which puts it half-arrived exactly where the names flip on.
+     *
+     * **The hand is read through the same `ringBand`** the painter draws
+     * with, which is the orbital map's rule for this and the reason it is
+     * worth stating twice: what you can point at is exactly what you can see.
+     */
+    const ringAlpha = SHOW_HEALTH_RINGS ? reveal.names : 0;
+    const TAU = Math.PI * 2;
+    const FROM = -Math.PI / 2;
+    /** An arc as its own sub-path, so many of them can share one stroke. */
+    const arcAt = (x: number, y: number, r: number, turn: number) => {
+      ctx.moveTo(x + r * Math.cos(FROM), y + r * Math.sin(FROM));
+      ctx.arc(x, y, r, FROM, FROM + turn);
+    };
+
+    /** One node's rings, measured — the list both painters work from. */
+    const stackOf = (id: string) => {
+      const read = signal.get(id);
+      if (!read) return null;
+      const person = peopleIds.has(id);
+      const mark = markRadius(id);
+      const host = hostRadius(id);
+      const out: { slot: HexRingSlot; i: number; value: number; radius: number; width: number }[] = [];
+      HEX_RING_SLOTS.forEach((slot, i) => {
+        const measured = read[slot];
+        if (measured == null) return;
+        const band = ringBand(mark, host, person, i, scale);
+        if (!band) return;
+        out.push({ slot, i, value: Math.min(1, Math.max(0, measured)), ...band });
+      });
+      return out.length > 0 ? { person, rings: out } : null;
+    };
+
+    /**
+     * **One node's rings, drawn on their own.** Used for the structural nodes,
+     * where there are few of them and each must land inside the largest-first
+     * order, and for whichever node the hand is on, which is the only one that
+     * does not share the crowd's weight and colour.
+     */
+    const paintRings = (cell: Cell, id: string) => {
+      const stack = stackOf(id);
+      if (!stack) return;
+      const centre = cellToWorld(cell, hexSize);
+      const lit = hoverRing?.unitId === id ? hoverRing.slot : null;
+      ctx.lineCap = "round";
+      for (const ring of stack.rings) {
+        // One gauge is being read, so the other two step back rather than
+        // staying put — otherwise "lifted" has nothing to be lifted above.
+        const hovered = lit === ring.i;
+        const alpha = ringAlpha * (lit === null || hovered ? 1 : RING_HOVER_DIM);
+        ctx.lineWidth = ring.width * (hovered ? RING_HOVER_WIDTH : 1);
+        // The track takes its contrast from whatever it is drawn on: dark on
+        // a person's white glass, white on a structural node's own colour.
+        ctx.globalAlpha = alpha * RING_TRACK_ALPHA;
+        ctx.strokeStyle = stack.person ? "#0f172a" : "#ffffff";
+        ctx.beginPath();
+        arcAt(centre.x, centre.y, ring.radius, TAU);
+        ctx.stroke();
+        if (ring.value <= 0.004) continue;
+        if (hovered) {
+          ctx.shadowColor = RING_HOVER_SHADOW;
+          ctx.shadowBlur = RING_HOVER_BLUR / scale;
+          ctx.shadowOffsetY = 2 / scale;
+        }
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = ringColour(ring.slot, ring.value);
+        ctx.beginPath();
+        arcAt(centre.x, centre.y, ring.radius, ring.value * TAU);
+        ctx.stroke();
+        if (hovered) {
+          ctx.shadowColor = "transparent";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetY = 0;
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    /**
+     * **The whole crowd's rings, in a handful of strokes.**
+     *
+     * Measured on 2026-11-08 on the thousand-person company at the Team rung,
+     * where about 180 cells are on the glass: drawing each person's three
+     * rings one at a time took the paint from **2.6ms to 8.4ms**. Six
+     * `stroke` calls a head is the cost, not the arcs — a stroke is where the
+     * canvas resolves its state and rasterises.
+     *
+     * The saving is there because **every person on a lattice is the same
+     * size**. `ringBand` weights a ring by the ground it stands in, and every
+     * person's ground is one cell, so at a given zoom every person's three
+     * radii and widths are *identical* and only the centre moves. So the
+     * crowd's tracks are one path and one stroke; the two work rings are a
+     * fixed hue each, so one path and one stroke apiece; and health takes one
+     * per verdict, of which there are three. Nine strokes for a thousand
+     * people instead of six thousand.
+     *
+     * The node the hand is on is left out and drawn by `paintRings` after,
+     * because it alone has a different weight, a shadow and two dimmed
+     * neighbours. One node is not a batch.
+     *
+     * Safe only because **people's rings never overlap each other** — each
+     * stack lives inside its owner's own tile — so merging them into one path
+     * cannot change what covers what.
+     */
+    const paintCrowdRings = (folk: typeof visible) => {
+      if (folk.length === 0) return;
+      const sample = stackOf(folk[0].id);
+      if (!sample) return;
+      const lone = hoverRing?.unitId ?? null;
+      ctx.lineCap = "round";
+      ctx.globalAlpha = ringAlpha * RING_TRACK_ALPHA;
+      ctx.strokeStyle = "#0f172a";
+
+      /** Every person wears the same geometry, so the track is one shape
+       *  repeated — but the *figures* differ, so each person still has to be
+       *  asked which of the three they have. */
+      const stacks: { x: number; y: number; rings: ReturnType<typeof stackOf> }[] = [];
+      for (const unit of folk) {
+        if (unit.id === lone) continue;
+        const cell = hexScene?.hex.cells.get(unit.id);
+        if (!cell || drag?.members.has(unit.id)) continue;
+        const stack = stackOf(unit.id);
+        if (!stack) continue;
+        const at = cellToWorld(cell, hexSize);
+        stacks.push({ x: at.x, y: at.y, rings: stack });
+      }
+      if (stacks.length === 0) return;
+
+      // 1. Every track, at the one weight they share.
+      ctx.lineWidth = sample.rings[0].width;
+      ctx.beginPath();
+      for (const s of stacks) for (const r of s.rings!.rings) arcAt(s.x, s.y, r.radius, TAU);
+      ctx.stroke();
+
+      // 2. Every value arc, gathered by the colour it is drawn in.
+      const byColour = new Map<string, { x: number; y: number; r: number; turn: number }[]>();
+      for (const s of stacks) {
+        for (const r of s.rings!.rings) {
+          if (r.value <= 0.004) continue;
+          const colour = ringColour(r.slot, r.value);
+          const bucket = byColour.get(colour);
+          const arc = { x: s.x, y: s.y, r: r.radius, turn: r.value * TAU };
+          if (bucket) bucket.push(arc); else byColour.set(colour, [arc]);
+        }
+      }
+      ctx.globalAlpha = ringAlpha;
+      for (const [colour, arcs] of byColour) {
+        ctx.strokeStyle = colour;
+        ctx.beginPath();
+        for (const a of arcs) arcAt(a.x, a.y, a.r, a.turn);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    };
 
     /**
      * **A chain, with its knees rounded.** Greg, 2026-11-06: *"put a nice
@@ -3130,10 +3479,10 @@ export default function HexLab({
        */
       const extent = new Map<string, number>();
       const drawn = new Map(visible.map((u) => [u.id, u]));
-      for (const unit of visible) extent.set(unit.id, markRadius(unit.id, unit.depth));
+      for (const unit of visible) extent.set(unit.id, markRadius(unit.id));
       for (const unit of scene.units) {
         if (drawn.has(unit.id)) continue;
-        const r = markRadius(unit.id, unit.depth);
+        const r = markRadius(unit.id);
         if (r <= hexSize) continue;
         if (unit.x + r < view.minX || unit.x - r > view.maxX) continue;
         if (unit.y + r < view.minY || unit.y - r > view.maxY) continue;
@@ -3148,7 +3497,7 @@ export default function HexLab({
         const cell = hexScene.hex.cells.get(unit.id);
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
-        nodePath(cell, unit.id, unit.depth);
+        nodePath(cell, unit.id);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
         // White separates a structural node from the coloured ground without
@@ -3158,6 +3507,11 @@ export default function HexLab({
           ctx.strokeStyle = "rgba(255,255,255,0.95)";
           ctx.stroke();
         }
+        // Its gauges, a third of the way out from its own centre — drawn here
+        // rather than in a pass of its own so that the largest-first order
+        // still holds: a team standing inside a division lands on top of the
+        // division's rings, exactly as it lands on top of its colour.
+        if (ringAlpha > 0.02 && !moving) paintRings(cell, unit.id);
       }
     }
 
@@ -3205,9 +3559,23 @@ export default function HexLab({
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
         const owner = colourOwnerOf(unit.id) ?? unit;
-        nodePath(cell, unit.id, unit.depth);
+        nodePath(cell, unit.id);
         ctx.fillStyle = css(hueFor(owner.id), owner.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
+      }
+      /**
+       * **And their rings, after every mark.** A person's ring steps outward
+       * into the white glass of their own tile, so it has to come after all
+       * the tiles — the same reasoning that split the tile fills from the tile
+       * edges above — and after the marks, so that nothing a neighbour draws
+       * can cut across a gauge.
+       */
+      if (ringAlpha > 0.02) {
+        paintCrowdRings(folk);
+        // And the one the hand is on, over the rest and on its own terms.
+        const lone = hoverRing && peopleIds.has(hoverRing.unitId)
+          ? hexScene.hex.cells.get(hoverRing.unitId) : null;
+        if (lone && !drag?.members.has(hoverRing!.unitId)) paintRings(lone, hoverRing!.unitId);
       }
     }
 
@@ -3386,7 +3754,7 @@ export default function HexLab({
         ctx.strokeStyle = "rgba(255,255,255,0.95)";
         // The person flag matters here since 2026-11-07: a human's mark is
         // half the size, and a band drawn without it would ring empty ground.
-        nodePath(cell, id, unit.depth);
+        nodePath(cell, id);
         ctx.stroke();
         ctx.setLineDash([]);
       };
@@ -3404,7 +3772,7 @@ export default function HexLab({
           // the centre at the real cell size and only shrinks the radius —
           // shrinking through `corners` would move the centre too, which is
           // what left this band floating off its tile on 2026-09-30.
-          nodePath(cell, parentId, parent.depth, 0.86);
+          nodePath(cell, parentId, 0.86);
           ctx.lineWidth = Math.max(0.8, 2.6 / scale);
           ctx.strokeStyle = "rgba(15,23,42,0.9)";
           ctx.stroke();
@@ -3627,10 +3995,15 @@ export default function HexLab({
       ctx.stroke();
     }
 
+    // Smoothed, because a single frame is noise and the figure is meant to be
+    // read while the hand is moving. Eight frames of memory, which settles
+    // within a wheel notch.
+    showDrawMs(drawMsRef.current * 0.875 + (performance.now() - drawFrom) * 0.125);
+
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, areaPaths, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, pulse, still, born, unfinished, blankPaper, menu]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, areaPaths, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, signal, sizes, hoverRing, pulse, still, born, unfinished, blankPaper, menu]);
 
   // --- input ---------------------------------------------------------------
 
@@ -3655,6 +4028,49 @@ export default function HexLab({
     }
     return best;
   }, [hexScene, allocation, scene, camera.scale]);
+
+  /**
+   * **Which ring the hand is on.**
+   *
+   * Greg, 2026-11-08: *"the rings should have hover states."* The orbital map
+   * answers this in `hitTest`, arithmetically, from the same `ringGeometry`
+   * its painter uses; this is the same trick with `ringBand`, so a gauge's
+   * target cannot drift from the gauge.
+   *
+   * **Not a cell lookup**, which is what everything else on this page uses to
+   * find what the hand is over. A ring is not inside its node's cell: a
+   * person's stack reaches out into their tile, and a place's is a third of
+   * the way across a mark that spans several cells. So it measures distance
+   * to each candidate's centre instead, skipping anything whose whole stack
+   * ends before the hand (`ringReach`) — which on the thousand-person company
+   * at a readable zoom leaves a few dozen arithmetic tests per pointer move,
+   * against the hundreds of path hits a canvas hit region would have cost.
+   *
+   * **Nearest centre wins** when two stacks overlap, which they do wherever a
+   * person stands on a place: the person's own gauges are the smaller,
+   * closer, more specific thing, and they are also what is drawn on top.
+   */
+  const ringAtPointer = useCallback((world: Point): { unitId: string; slot: number } | null => {
+    if (!hexScene || !SHOW_HEALTH_RINGS) return null;
+    const px = cellPxOf(hexScene.hex.size, camera.scale);
+    if (hexRevealAt(px).names <= 0.02) return null;
+    let best: { unitId: string; slot: number } | null = null;
+    let bestD = Infinity;
+    for (const unit of scene.units) {
+      const d = Math.hypot(unit.x - world.x, unit.y - world.y);
+      if (d >= bestD) continue;
+      const person = peopleIds.has(unit.id);
+      const mark = sizes.markRadius(unit.id);
+      const host = sizes.hostRadius(unit.id);
+      if (d > ringReach(mark, host, person, camera.scale)) continue;
+      const slot = ringAtDistance(mark, host, person, camera.scale, d);
+      if (slot === null) continue;
+      if (signal.get(unit.id)?.[HEX_RING_SLOTS[slot]] == null) continue;
+      bestD = d;
+      best = { unitId: unit.id, slot };
+    }
+    return best;
+  }, [hexScene, camera.scale, scene, peopleIds, sizes, signal]);
 
   /**
    * **The hand is down, and nothing has been decided yet.**
@@ -3801,11 +4217,14 @@ export default function HexLab({
 
     if (pan.current) {
       const p = pan.current;
+      // A hand that is moving the map is not reading a gauge.
+      setHoverRing(null);
       setCamera({ scale: p.cam.scale, x: p.cam.x + (e.clientX - p.x), y: p.cam.y + (e.clientY - p.y) });
       return;
     }
     const world = worldAt(e.clientX, e.clientY, rect);
     if (drag && hexScene) {
+      setHoverRing(null);
       const target = worldToCell(world, hexScene.hex.size);
 
       // A hold is a hold. If the hand has travelled, the clock starts again —
@@ -3940,6 +4359,18 @@ export default function HexLab({
       return;
     }
     setHover(unitAtPointer(world));
+    /**
+     * **Only when it changes.** `ringAtPointer` builds a fresh object every
+     * call, and a fresh object is never `Object.is` the old one — so handing
+     * it straight to `setHoverRing` re-rendered the whole page on every
+     * pointer move that was over a ring at all, which on a readable zoom is
+     * most of them. `setHover` above never had the problem because a unit id
+     * is a string. Measured before this guard: a sweep across one person's
+     * three rings could not keep up with a 30ms tick.
+     */
+    const ring = ringAtPointer(world);
+    setHoverRing((was) =>
+      was?.unitId === ring?.unitId && was?.slot === ring?.slot ? was : ring);
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -4231,6 +4662,24 @@ export default function HexLab({
 
 
   const hovered = hover ? scene.unitById.get(hover) : null;
+
+  /** The gauge the hand is on, resolved into the words the panel prints. */
+  const ringRead = useMemo(() => {
+    if (!hoverRing) return null;
+    const unit = scene.unitById.get(hoverRing.unitId);
+    const slot: HexRingSlot = HEX_RING_SLOTS[hoverRing.slot];
+    const read = signal.get(hoverRing.unitId);
+    const value = read?.[slot];
+    if (!unit || !read || value == null) return null;
+    return {
+      slot,
+      value,
+      name: unit.name,
+      people: read.people,
+      person: peopleIds.has(unit.id),
+      colour: ringColour(slot, value),
+    };
+  }, [hoverRing, scene, signal, peopleIds]);
   /**
    * **Counted from what is on the screen, not from what was calculated.**
    *
@@ -4902,7 +5351,8 @@ export default function HexLab({
           {peopleIds.size} {peopleIds.size === 1 ? "person" : "people"} ·{" "}
           {scene.units.length - peopleIds.size}
           {scene.units.length - peopleIds.size === 1 ? " place" : " places"} ·
-          {" "}laid out in {ms.toFixed(0)}ms
+          {" "}laid out in {ms.toFixed(0)}ms · painted in{" "}
+          <b ref={drawMsEl} suppressHydrationWarning>—</b>
         </Small>
         {stats ? (
           <>
@@ -5004,10 +5454,53 @@ export default function HexLab({
               : "drag a tile to move it and its branch · hold over another to merge"
             : "drag to pan"}
         </Small>
+        {ringRead && (
+          /**
+           * **What the ring under the hand says.** The lift on the map is the
+           * answer to *which one am I on*; this is the answer to *and what
+           * does it say*. It names what the figure speaks for, because a
+           * place's ring covers its whole branch and a person's covers only
+           * them — a number that does not say which is a number nobody can
+           * check.
+           */
+          <Small style={{ color: "#0f172a" }}>
+            <b style={{ color: ringRead.colour }}>
+              {Math.round(ringRead.value * 100)}% {HEX_RING_LABELS[ringRead.slot]}
+            </b>
+            {" — "}{HEX_RING_MEANS[ringRead.slot]}, for{" "}
+            {ringRead.person
+              ? ringRead.name
+              : `the ${ringRead.people} ${ringRead.people === 1 ? "person" : "people"} under ${ringRead.name}`}
+          </Small>
+        )}
         {hovered && (
           <Small>
             <b>{hovered.name}</b> — CEO+{hovered.depth} · {hovered.totalSeats} in branch
             {hexScene?.hex.exclaves.has(hovered.id) ? " · exclave" : ""}
+            {(() => {
+              const read = signal.get(hovered.id);
+              if (!read || read.health === null) return " · health not measured";
+              return (
+                <>
+                  {" · health "}
+                  <b style={{ color: ringColour("health", read.health) }}>
+                    {Math.round(read.health * 100)}%
+                  </b>
+                  {peopleIds.has(hovered.id)
+                    ? ""
+                    : ` across ${read.people} ${read.people === 1 ? "person" : "people"}`}
+                </>
+              );
+            })()}
+          </Small>
+        )}
+        {SHOW_HEALTH_RINGS && peopleIds.size > 0 && (
+          <Small style={{ color: "#94a3b8" }}>
+            the three rings are <b>invented</b>{" "}— no health column, no
+            tracker. Health runs invented pressures through the signal
+            engine&apos;s real thresholds; sprint and delivery come from the
+            same mock boards the orbital demo uses. Point at a ring to read
+            it.
           </Small>
         )}
       </Panel>

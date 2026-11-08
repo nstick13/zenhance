@@ -4428,3 +4428,294 @@ setting (see TASKS.md); anything on a five-year-old iPad; and frame rate under
 load — the
 browser pane throttles `requestAnimationFrame` when hidden, so the numbers I
 could take were meaningless and none are quoted.
+
+---
+
+## The health rings came back (2026-11-08)
+
+Greg, after a morning of making the nodes rounder: *"Next step on lab/hex is to
+re-instate the health rings from the orbital model. Note how we've made the
+nodes very rounded? That's because now we can port the circular human health
+rings onto hex … Ideally we want health rings for all nodes, human and
+non-human included … Do not port work/task visuals yet — but reserve a health
+ring for task progress."*
+
+The rounding is the whole argument, and it is worth saying out loud because it
+is the sort of thing that reads as decoration and is not. A ring is a circle.
+A circle drawn around a hexagon misses at six places, and the eye reads that
+miss as a mistake — which is why the orbital map's rings never came over when
+the hex study began. `NODE_CORNER` cut those corners off; `PERSON_CORNER` took
+a human all the way to a circle. At that point a circular gauge is not an
+import from another map, it is the shape the node already is.
+
+### What ported, and what could not
+
+**Ported unchanged**, because it was already right and already tested: the
+arithmetic (`lib/map/signal/progress.ts` — what wellbeing means, where watch
+becomes risk), the shape (a faint full circle for what the gauge could say, a
+coloured arc from twelve o'clock clockwise for what it does), and the rule that
+**a place speaks for its whole branch** while a person speaks only for
+themselves.
+
+**Could not port, and had to be re-derived:**
+
+1. **The numbers.** `/lab/hex` has no database. Its company comes out of
+   `buildDeepOrg`, people are promoted to units, and there is no
+   `lastVacationAt` to read or assignment to total. So the figures are
+   **invented** — per the house rule, and said so on the panel. They are
+   invented *through* the engine's own thresholds rather than as noise: a
+   seeded months-since-break and a seeded allocation, run through `wellbeing`.
+   The spread of green, amber and red on the map is therefore the spread real
+   data would produce, and the day a real source exists the only thing that
+   changes is one function. `app/lab/hex/health.ts`.
+
+2. **Where a ring sits.** This is the part that is genuinely new, and the
+   reason is the size rule from the day before: *size says what kind of thing a
+   node is*. A person is a small circle in a cell; a team **is** its cell; a
+   place overflows it by half a radius; the master centre by three. "Step
+   outward from the mark", which is all the orbital map ever had to do, has
+   nowhere to go on three of those four.
+
+### One rule, two consequences
+
+> **A node's rings live in the clear ground the node owns, and they hug the
+> mark.**
+
+- A **person** owns their host tile and fills about a fifth of it, so the clear
+  ground is *outside* the mark: the rings step **outward**, which is the
+  orbital look exactly, and the rest of the white glass stays free — which is
+  where work will want to go.
+- A **team, a place, the master centre** fill or overflow their cell, so there
+  is no clear ground outside them. The band is the inside of the node's own
+  face: the rings step **inward** from its inscribed circle and read as a rim
+  printed on the hexagon.
+
+A regular hexagon's inscribed circle is `√3/2` of its circumradius and touches
+the middle of every edge. At `NODE_CORNER` the corners it was never going to
+reach have already been cut off, so the rim does not look like a circle that
+missed — which is the rounding paying for itself a second time.
+
+**Two rings, one drawn.** `health` hugs the node; `progress` is Greg's reserved
+slot and sits one step *beyond* it, so nothing on screen today moves when work
+arrives. That is the reverse of the orbital stack, where health was outermost,
+and it is deliberate: the ring guaranteed to exist should be the one against
+the node, and health is a fact about the node while progress is a fact about
+what the node is carrying.
+
+**Weight is held in screen pixels** (2.2px to 8px, from the size of the ground
+the node stands in), so a person's gauge and a division's read as the same
+instrument, and one zoom does not fatten either.
+
+### When they appear
+
+Greg: *"Let's start with health rings becoming visible when human labels become
+visible too."* So the alpha is `reveal.names` — `NAMES_AT_CELL_PX`, 42px to
+68px a cell. A label cannot cross-fade and is read as a switch at the middle of
+that band; a ring can, so it uses the band as the curve it already is and is
+half-arrived exactly where the names flip on. Pull back past 42px and the rings
+go before anything else does, which is right: at Function and Whole the map is
+a picture of places, and a gauge on a smudge is a smudge.
+
+### What did not come across at all
+
+**You cannot point at a ring and read it.** On the orbital map `hitTest` finds
+a ring arithmetically from the same geometry the painter uses, which is what
+makes the hover card work. Here the hovered node's figure is printed on the
+panel instead, naming what it speaks for — a team's ring covers its whole
+branch and a person's covers only them, and a number that does not say which is
+a number nobody can check. The real hover is in TASKS.md.
+
+### Checked
+
+`npx tsc --noEmit` clean, `npx eslint` clean, 985 tests (19 new, in
+`app/lab/hex/health.test.ts`). In a browser on `:3001`: **Sparrow-ish (10)** and
+**Digital Tailoring-ish (45)** at the Work, Person and Team rungs, and the
+**1,000-person** company at Person, Team and Whole. A person reads as a
+coloured circle inside a grey track with a coloured arc; a team and the master
+centre wear a rim read inward; the panel names the figure and how many people
+it covers (*"Bluff Team 6 — health 62% across 50 people"*); at Whole, where a
+cell is 4.9px, nothing draws. Console clean.
+
+**A frame-rate figure was quoted here and has been withdrawn.** It read
+*"16.6ms median, 20ms p95, vsync-locked"*, and it was derived by counting
+`requestAnimationFrame` ticks in the review browser — the exact measurement
+this document has warned against since 2026-10-03, two screens above. It was
+also taken while driving the camera with synthesised `wheel` events that, it
+turned out, the page never acted on, so the map was not redrawing at all. Both
+faults point the same way: **nothing was measured.** What replaced it is in the
+next section — the draw times itself now, and the panel prints the number.
+
+**Not checked:** touch, a real five-year-old iPad, and the blank-paper grow
+path with a newly made person (the code path is the same walk, but nobody has
+watched a ring appear on a node as it is born).
+
+---
+
+## Three rings, and a hand on them (2026-11-08, later)
+
+Greg, on the single health ring: *"there should be three concentric health
+rings, not just the one. I don't see three on hex yet. As with orbital, fake
+the data if you have to."* Plus three sizing and interaction notes, each
+answered below.
+
+### Three, and what they are
+
+The same three the orbital map wears, because they are the same object:
+`UnitProgress` — **delivery**, **sprint**, **health**. Nothing new was
+invented to fill the two extra rings; the work figures come from
+`lib/mock/personTasks` through the work engine's own `boardsFor`, which is
+what the orbital demo already does, and then through `unitProgress`'s counting
+rules (a finished item moves all of its points, one in flight moves half).
+
+This does not undo *"do not port work/task visuals yet"* from earlier the same
+day. Work **visuals** — the capsules, the dot grid, the board — are still
+absent. What is here is the node *speaking*, which `docs/ENGINES.md` has
+called Signal rather than Work since the two were split on 2026-09-24, and
+Greg's *"fake the data if you have to"* is the instruction that fills them.
+
+**The order is the orbital map's, reversed: health hugs the node, then sprint,
+then delivery.** There, health is outermost. Here, health is a fact about the
+*node* and the work rings are facts about what the node is *carrying*, so the
+one nearest the mark is the one about the mark — and health is the figure that
+survives a real work integration untouched, so it is the one that should never
+have to move. That also keeps the earlier *"reserve a health ring for task
+progress"* true: the reserved slot was the outer one, and all that changed is
+that it is now filled with invented work instead of left blank.
+
+### Two anchors, and the rule that replaced the rim
+
+Greg: *"the sizing on the human health rings can be a bit bigger — make the
+radius +15%"*, and *"the sizing on the non-human nodes seems to be driven by
+the radius of the entire area it occupies. Let's make the health ring on the
+non-human nodes radius as 33% the node radius."*
+
+The second sentence is a correct reading of what the first version did. A
+structural node's rings were read **inward from its inscribed circle**, which
+made them a rim: on a team, the edge of its cell; on the master centre, a
+circle nearly three cells wide thrown across everything standing on it. It was
+the honest consequence of *"the clear ground the node owns"* — a team **is**
+its cell, so the only room is its own face — but "the only room available" and
+"where a gauge belongs" are not the same question, and Greg answered the
+second one.
+
+So the rule is now simpler, and both halves of it step **outward**:
+
+> **Every ring steps outward from an anchor, and what the node is decides the
+> anchor.** A person anchors just outside their own mark, plus 15%. Everything
+> else anchors at a third of its own radius.
+
+A third of the radius is inside every structural node by construction,
+whatever size rule drew it — a team at one cell, a place at one and a half, the
+master centre at three — so one constant covers all of them and the stack
+reads as a gauge belonging to that node rather than as an edge on it.
+
+### The hand on a ring
+
+Greg: *"the rings should have hover states — we don't have a click state yet,
+but I do want to see the hover state."*
+
+The orbital map's own answer, in three parts: the arc goes to full colour, it
+thickens by half, and it takes a shadow. The shadow is what reads as *lifted*
+rather than merely *brighter*. Its two neighbours fade to 45% instead of
+staying put, so that one gauge is being read rather than three being shown. The
+panel prints what it says and who it speaks for — *"64% health — how the people
+are, for the 20 people under Granite Division"*, against *"…for Femi
+Nakamura"* on a person, because a place's ring covers a branch and a person's
+covers only them.
+
+**What you can point at is exactly what you can see.** `ringAtPointer` in
+`HexLab.tsx` and the painter both read `ringBand`, which is the orbital map's
+own rule for this (`ringGeometry`, shared by `hitTest` and `paintUnitRings`,
+*"the one number both sides have to agree on"*). Making that true here meant
+lifting the node size rule out of the draw effect into the `sizes` memo, since
+the hand needs the same `markRadius` the painter uses and two copies of a size
+rule is how a gauge ends up a few pixels from its own target.
+
+It is **not** a cell lookup, which is how everything else on this page finds
+what the hand is over. A ring is not inside its node's cell: a person's reaches
+into their tile and a place's is a third of the way across a mark spanning
+several cells. So it measures distance to each candidate's centre, skipping
+anything whose whole stack ends before the hand. Nearest centre wins, which
+puts the person standing on a place ahead of the place — the smaller, more
+specific thing, and also the one drawn on top.
+
+**No click state, by instruction.** And no touch equivalent yet: a tap on a
+ring does nothing, which AGENTS.md's *"touch is a first-class input"* says is
+not finished. In TASKS.md.
+
+### The page now times its own paint
+
+Two performance faults turned up while checking this, and the second is the
+reason the first was invisible.
+
+**A fresh object on every pointer move.** `setHoverRing` was handed a new
+`{unitId, slot}` each time the hand moved, and a new object is never
+`Object.is` the old one, so React re-rendered the whole page on every move that
+was over a ring at all. `setHover` beside it never had the problem because a
+unit id is a string. It now compares the two fields and keeps the old object.
+
+**Six strokes a head.** Measured on the thousand-person company at the Team
+rung, where about 180 cells are on the glass, drawing each person's three rings
+one at a time took the paint from **2.6ms to 8.4ms**. The arcs are not the
+cost; `stroke` is, because that is where the canvas resolves its state and
+rasterises.
+
+The fix uses a property of the lattice: **every person is the same size**.
+`ringBand` weights a ring by the ground it stands in and every person's ground
+is one cell, so at a given zoom every person's three radii and widths are
+identical and only the centre moves. So the crowd's tracks become one path and
+one stroke; each work ring is a fixed hue, so one apiece; and health takes one
+per verdict, of which there are three. **Nine strokes for a thousand people
+instead of six thousand.** It is safe only because people's rings never overlap
+each other — each stack lives inside its owner's own tile — so merging them
+into one path cannot change what covers what. The structural nodes stay
+one-at-a-time, because there are few of them and each has to land inside the
+largest-first order. The node the hand is on is also drawn on its own: it alone
+has a different weight, a shadow and two dimmed neighbours, and one node is not
+a batch.
+
+**The panel now prints `painted in N ms`**, beside the layout figure it has
+always shown. It is here because the obvious way to measure a canvas — counting
+`requestAnimationFrame` — does not work in this repo's review browser: measured
+on 2026-11-08, the pane handed out **a frame every six seconds** while the page
+itself was perfectly responsive and its pointer handler was returning in 0.1ms.
+This document has warned since 2026-10-03 that rAF numbers from that pane are
+meaningless; one got quoted anyway, in the section above, and has been
+withdrawn. The draw is a `useEffect`, not an animation callback, so timing it
+from the inside is both honest and unaffected. The number is written straight
+into the panel's own element rather than through state, because a diagnostic
+that re-triggers what it measures is not a diagnostic.
+
+### Checked
+
+`npx tsc --noEmit` clean, `npx eslint` clean, 989 tests (24 in
+`app/lab/hex/health.test.ts`, including that the roll-up's counter arithmetic
+agrees with `unitProgress` on the same data, and that `ringAtDistance` returns
+the slot whose band the painter drew at that exact radius).
+
+In a browser on `:3001`, on a fresh load with zero console errors:
+
+| | Sparrow-ish (22) | Digital Tailoring-ish (97) | 1,000 · 8 rungs (1,108) |
+|---|---|---|---|
+| Person rung (cell 230px) | 0.6ms | 1.0ms | **1.6ms** |
+| Team rung (cell 52px) | — | 2.9ms | **3.5ms** |
+| Function rung (cell 14px) | — | — | 11.3ms |
+
+Paint time while panning, read off the panel. Against the same map with
+`SHOW_HEALTH_RINGS = false`: 2.5ms at Person and 2.6ms at Team on the
+thousand, so three rings on every node now cost **about a millisecond** at the
+rung where they cost most, down from the 5.8ms the unbatched version cost.
+Function at 11.3ms is *not* the rings — they do not draw at 14px a cell — it is
+the existing boundary tracing, and it is the one figure here that would be
+tight on the ten-year-old Lenovo in AGENTS.md.
+
+Hover was driven by sweeping a synthetic pointer out from a node's centre and
+reading the panel at each step: three distinct bands on **Granite Division**
+(252–264, 268–276 and 280–292 screen px from its centre, naming health, sprint
+and delivery in that order) and three on **Femi Nakamura** and **Nina
+Lindqvist**, each naming the person rather than a branch. The lift was
+confirmed by eye on both: the pointed-at arc thickens and keeps its colour
+while its two neighbours fade.
+
+**Not checked:** touch and tap, a real five-year-old iPad or the Lenovo, and
+the blank-paper grow path with a newly made person.
