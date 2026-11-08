@@ -357,8 +357,10 @@ weight would read as a line with dots on it.
 > the team node's cell and every child cell as the hover outline, stitches one
 > outside boundary, pushes it out by `TEAM_SPREAD = 0.25` cell radii, rounds all
 > of its corners at `NODE_CORNER = 0.5` cell radii, then fills and strokes that
-> single path. Ground colour comes from the structural owner: 66% while people
-> are present at `0.05×`, darkening to 90% as their tiles fade.
+> single path. Ground colour comes from the structural owner: 30% while people
+> are present at `0.05×`, darkening to 90% as their tiles fade. (66% was tried
+> first, then a half, and both were lightened within the day — they washed out
+> the connection lines between people in the team.)
 >
 > **The surrounding layers were simplified at the same time.** The remaining
 > spacing material is fixed `#f6f6f6` at every zoom. The outermost zoning

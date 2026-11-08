@@ -378,10 +378,17 @@ host remains visible.
 The next visual pass separated zooming colour from fixed space. After seeing
 the pale result, Greg set the team ground to 66% once people are legible
 (about `0.05×`), darkening continuously to 90% as their tiles fade on the way
-out. Its edge uses the same opacity and a ten-per-cent darker lightness. Grey
-spacing itself does not participate: its own paint remains `#f6f6f6` at every
-zoom. The outermost `groupRings` zone remains calculable but is not painted
-while `SHOW_OUTERMOST_ZONE` is false.
+out. **That near end came down the same day, first to a half and then to 30%**: at
+66% the ground washed out the connection lines between people in the team,
+worst on the lines furthest from the parent, because a chain carries the
+child's own hue and that hue pales as it runs outward. A half was still too
+much of a wash over the faintest of them. The far end stayed at 90%, where the
+people and their lines have gone and the colour is the only thing carrying the
+team. Its
+edge uses the same opacity and a ten-per-cent darker lightness. Grey spacing
+itself does not participate: its own paint remains `#f6f6f6` at every zoom. The
+outermost `groupRings` zone remains calculable but is not painted while
+`SHOW_OUTERMOST_ZONE` is false.
 
 ### The boundary softens as you pull back
 

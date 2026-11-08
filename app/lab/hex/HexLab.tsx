@@ -384,9 +384,20 @@ const REGION_FILL_OPACITY = 0.10;
 const REGION_EDGE_OPACITY = 0.18;
 const TEAM_EDGE_DARKER = 0.10;
 
-/** A team's colour is already a substantial place once its people are visible,
- * then moves still closer to the owning node's colour as their tiles fade. */
-const TEAM_GROUND_OPACITY_NEAR = 0.66;
+/** A team's colour is a quiet place once its people are visible, then moves
+ * closer to the owning node's colour as their tiles fade.
+ *
+ * Greg, 2026-11-08, on the 66% first try: the ground *"washes out the
+ * connection lines between people in that team ... especially if they're
+ * further from the parental node"*. A chain is the child's own hue, and the
+ * further out it runs the paler that hue is, so a strong ground eats the
+ * faintest lines first — exactly the ones that say who reports to whom at the
+ * edge of a team. Taken to a half the same day and then to **30%**, which is
+ * where it settled: enough colour to say which team you are standing in,
+ * little enough that every chain inside it still reads. The far end is
+ * untouched at 90% — by then the people and their lines have faded and the
+ * colour is all that is left to carry the team. */
+const TEAM_GROUND_OPACITY_NEAR = 0.30;
 const TEAM_GROUND_OPACITY_FAR = 0.90;
 
 /** The outer group zone is retained in the geometry but deliberately not
@@ -2585,8 +2596,10 @@ export default function HexLab({
     /**
      * **Team colour carries the people as their tiles disappear.** `tiles` is
      * fully present by about 0.05× on this lattice, where the team ground is
-     * 66% opaque. Pull out through the tile fade and it darkens continuously
-     * toward 90% of the owning team node's colour.
+     * 30% opaque — light enough that the palest chain inside the team still
+     * reads against it. Pull out through the tile fade and it darkens
+     * continuously toward 90% of the owning team node's colour, by which
+     * point those chains have gone and the colour is doing the work alone.
      */
     const teamGroundOpacity = TEAM_GROUND_OPACITY_NEAR
       + (TEAM_GROUND_OPACITY_FAR - TEAM_GROUND_OPACITY_NEAR) * (1 - reveal.tiles);
@@ -3064,6 +3077,33 @@ export default function HexLab({
       }
     }
 
+    // 2b-ii. The leadership chain. Greg, 2026-10-03: *"let's put a
+    //     stronger-coloured connection line between team leads and their
+    //     parent nodes to indicate team leadership roles."* A lead is a person
+    //     whose chain goes to a structural node, so the chain itself is the
+    //     statement — this one line says "she runs this".
+    //
+    //     **It moved under the nodes and the people on 2026-11-08.** Greg's
+    //     rule for every connection line: above the coloured background zones,
+    //     below nodes and human hexagons. This one was the single exception —
+    //     drawn after the people, it crossed over the white host ring that the
+    //     same day's edge pass had sized to match it, and over the lead's own
+    //     face. Ordinary chains had always run underneath. Now both do, so a
+    //     line emerges from behind whoever it connects instead of being laid
+    //     across them.
+    if (hexScene && leadIds.size > 0) {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const chain of chains) {
+        if (!leadIds.has(chain.unitId)) continue;
+        ctx.beginPath();
+        traceElbows(chain.points, kneeFor(chain.points));
+        ctx.lineWidth = adjacentConnectionWidth(chain.unitId, scene.unitById.get(chain.unitId)?.depth ?? 0);
+        ctx.strokeStyle = "rgba(15,23,42,0.85)";
+        ctx.stroke();
+      }
+    }
+
     // 2c. The nodes themselves, sized by what kind of thing they are rather
     //     than by how senior they are — see `markRadius`. A person is a small
     //     circle, a team fills its cell, a place above a team is its own
@@ -3168,24 +3208,6 @@ export default function HexLab({
         nodePath(cell, unit.id, unit.depth);
         ctx.fillStyle = css(hueFor(owner.id), owner.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
-      }
-    }
-
-    // 2c-ii. The leadership chain. Greg, 2026-10-03: *"let's put a
-    //     stronger-coloured connection line between team leads and their
-    //     parent nodes to indicate team leadership roles."* A lead is a person
-    //     whose chain goes to a structural node, so the chain itself is the
-    //     statement — this one line says "she runs this".
-    if (hexScene && leadIds.size > 0) {
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      for (const chain of chains) {
-        if (!leadIds.has(chain.unitId)) continue;
-        ctx.beginPath();
-        traceElbows(chain.points, kneeFor(chain.points));
-        ctx.lineWidth = adjacentConnectionWidth(chain.unitId, scene.unitById.get(chain.unitId)?.depth ?? 0);
-        ctx.strokeStyle = "rgba(15,23,42,0.85)";
-        ctx.stroke();
       }
     }
 

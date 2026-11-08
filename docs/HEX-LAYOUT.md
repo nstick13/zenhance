@@ -4091,6 +4091,36 @@ cannot drift. Structural nodes retain their existing border thickness but use
 white rather than black. The distinction between person and place still comes
 from size, shape and material rather than a dark keyline.
 
+### Where a connection line sits in the stack
+
+**Greg's rule, 2026-11-08: a connection line sits above the coloured
+background zones, and below nodes and human hexagons.** So a line emerges from
+behind the two things it joins rather than being laid across them, and a
+coloured ground can never be painted over it.
+
+The ordinary sibling chains had always obeyed this. The **leadership chain**
+had not: it was drawn after the people, which put a dark line over the lead's
+own face and over the white host ring that the same day's edge pass had sized
+to match that very line. It moved to sit beside the ordinary chains, just
+before the node pass. Nothing about the line itself changed — only when it is
+painted.
+
+The whole of `draw` is nineteen passes. Bottom to top, in world space: region
+bubble washes · grey spacing fill · grey ring outline · **team ground** ·
+region solid blobs · per-cell occupied wash · **chains, ordinary and
+leadership** · structural nodes · person host tiles · person host edges ·
+person marks · drag and landing affordances · meta-connection outline · hover
+family · route home · orbits-mode links · white centre marks. Then, in screen
+space so the text stays crisp: labels.
+
+Two things that surprise people reading that list. **The people are not at the
+top**, although the 2026-11-07 rule is often quoted as if they were: that rule
+places them above other *nodes*, which they are, but affordances, the white
+centre marks and the labels all still paint over them. And **the pass comments
+in the source no longer run in order** — they read 1, 1b, 1c, 1d, 1a, 2, 2b,
+2c, 2d, 3, 4, 5, 6, 6, 7, 8, with `1a` executing after `1d` and two passes
+numbered 6. Trust the order of the code, not the numbering.
+
 **What the z-order actually buys, today:** less than it sounds, and it is worth
 saying so. The team's path runs along the boundary of its cells, while a tile
 is drawn `activeInset` *inside* its cell — so a 2.2px line sits in the gap and
@@ -4124,7 +4154,7 @@ its larger visible body without inventing a second geometry.
 grey collar is always `#f6f6f6`; it no longer fades or changes shade with the
 zoom ladder. The outermost zoning bubble is retained as `groupRings` but not
 painted while `SHOW_OUTERMOST_ZONE = false`. Team ground does make a handover:
-it is 66% opaque while human tiles are present around `0.05×`, then darkens
+it is 30% opaque while human tiles are present around `0.05×`, then darkens
 continuously to 90% of the structural owner's colour as those tiles fade. The
 human host is white at 85% opacity, so it remains a distinct
 surface over either end of that transition.
