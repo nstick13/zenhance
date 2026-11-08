@@ -370,17 +370,18 @@ but the next day's human-host change exposed its cost: a coloured opaque host
 cell and the coloured ground behind it became practically indistinguishable.
 Greg's replacement makes the material hierarchy explicit instead of asking
 one opaque colour to do two jobs. The ground is the owning structural node at
-10% opacity; a human's host is white at 25% transparency / 75% opacity; and
+10% opacity; a human's host is white at 15% transparency / 85% opacity; and
 the human mark itself is the exact colour of its organisational parent. The
 two translucent layers now differ by material as well as strength, so the
 host remains visible.
 
-The next visual pass separated zooming colour from fixed space. The team
-ground is only a 2% hint once people are legible (about `0.05×`) and darkens
-continuously to 26% as their tiles fade on the way out. Its edge follows the
-same handover. Grey spacing does not participate: it remains `#f6f6f6` at
-every zoom. The outermost `groupRings` zone remains calculable but is not
-painted while `SHOW_OUTERMOST_ZONE` is false.
+The next visual pass separated zooming colour from fixed space. After seeing
+the pale result, Greg set the team ground to 66% once people are legible
+(about `0.05×`), darkening continuously to 90% as their tiles fade on the way
+out. Its edge uses the same opacity and a ten-per-cent darker lightness. Grey
+spacing itself does not participate: its own paint remains `#f6f6f6` at every
+zoom. The outermost `groupRings` zone remains calculable but is not painted
+while `SHOW_OUTERMOST_ZONE` is false.
 
 ### The boundary softens as you pull back
 

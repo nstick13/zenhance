@@ -338,9 +338,16 @@ weight would read as a line with dots on it.
 > **The host-cell colour changed again after it was seen against the new
 > grounds.** The opaque coloured host solved z-order but disappeared into the
 > coloured bubble behind it. Greg's 2026-11-07 replacement is simpler: the
-> host is white at 25% transparency / 75% opacity (`PERSON_TILE_OPACITY`), and the human mark
-> takes the exact hue and tone of its first organisational parent. The person
-> remains above larger nodes while the white glass makes its cell readable.
+> host is white at 15% transparency / 85% opacity (`PERSON_TILE_OPACITY`), and
+> the human mark takes the exact hue and tone of its first organisational
+> parent. The person remains above larger nodes while the white glass makes
+> its cell readable.
+>
+> **The 2026-11-08 edge pass made those surfaces belong to the lines around
+> them.** Each white human host now has a white outline at exactly the weight
+> of that person's immediately adjacent connection line (including the
+> stronger leadership line). Structural nodes keep their existing outline
+> thickness but change from black to white. No node geometry changed.
 >
 > **And the team container reuses the hover outline rather than wrapping each
 > member.** Two corrections went the wrong way first: expanding the whole by
@@ -350,8 +357,8 @@ weight would read as a line with dots on it.
 > the team node's cell and every child cell as the hover outline, stitches one
 > outside boundary, pushes it out by `TEAM_SPREAD = 0.25` cell radii, rounds all
 > of its corners at `NODE_CORNER = 0.5` cell radii, then fills and strokes that
-> single path. Ground colour comes from the structural owner: a barely visible
-> 2% while people are present, darkening to 26% as their tiles fade.
+> single path. Ground colour comes from the structural owner: 66% while people
+> are present at `0.05×`, darkening to 90% as their tiles fade.
 >
 > **The surrounding layers were simplified at the same time.** The remaining
 > spacing material is fixed `#f6f6f6` at every zoom. The outermost zoning

@@ -4078,9 +4078,18 @@ means to the eye. The alpha is the knob if that reading is wrong.
 the opaque coloured ground. Grounds now take the exact hue and tone of their
 owning structural node rather than averaging descendants, with true alpha:
 `REGION_FILL_OPACITY = 0.10` and a lightly stronger translucent edge. A human
-host is white at `PERSON_TILE_OPACITY = 0.75` — 25% transparent; the human mark takes the exact
-colour of its first organisational parent. The historical arithmetic above is
-why the previous picture looked as it did, not the current implementation.
+host is white at `PERSON_TILE_OPACITY = 0.85` — 15% transparent; the human
+mark takes the exact colour of its first organisational parent. The historical
+arithmetic above is why the previous picture looked as it did, not the current
+implementation.
+
+**The edges turned white on 2026-11-08.** A person's white host carries a
+white outline with the exact computed width of its immediately adjacent chain;
+for a lead, that is the stronger leadership-chain width. `chainWidth` and
+`adjacentConnectionWidth` are shared by the chain and host painters so the two
+cannot drift. Structural nodes retain their existing border thickness but use
+white rather than black. The distinction between person and place still comes
+from size, shape and material rather than a dark keyline.
 
 **What the z-order actually buys, today:** less than it sounds, and it is worth
 saying so. The team's path runs along the boundary of its cells, while a tile
@@ -4115,9 +4124,9 @@ its larger visible body without inventing a second geometry.
 grey collar is always `#f6f6f6`; it no longer fades or changes shade with the
 zoom ladder. The outermost zoning bubble is retained as `groupRings` but not
 painted while `SHOW_OUTERMOST_ZONE = false`. Team ground does make a handover:
-it is a barely visible 2% wash while human tiles are present around `0.05×`,
-then darkens continuously to 26% of the structural owner's colour as those
-tiles fade. The human host is white at 75% opacity, so it remains a distinct
+it is 66% opaque while human tiles are present around `0.05×`, then darkens
+continuously to 90% of the structural owner's colour as those tiles fade. The
+human host is white at 85% opacity, so it remains a distinct
 surface over either end of that transition.
 
 `pushOut` does it, in `loops.ts` beside the stitcher and tested for the same

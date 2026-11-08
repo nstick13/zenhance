@@ -237,11 +237,11 @@ const PERSON_TILE = 0.8;
  * **A person's host cell is white glass, not a second coloured node.**
  *
  * Greg, 2026-11-07: the opaque coloured host cell disappeared into the ground
- * behind it. The replacement is white and twenty-five per cent transparent —
- * seventy-five per cent opacity — while the person itself carries the exact
+ * behind it. The replacement is white and fifteen per cent transparent —
+ * eighty-five per cent opacity — while the person itself carries the exact
  * colour of its organisational parent.
  */
-const PERSON_TILE_OPACITY = 0.75;
+const PERSON_TILE_OPACITY = 0.85;
 
 /**
  * **A human is drawn as a circle.** Greg, 2026-11-07, on the half-size marks:
@@ -384,10 +384,10 @@ const REGION_FILL_OPACITY = 0.10;
 const REGION_EDGE_OPACITY = 0.18;
 const TEAM_EDGE_DARKER = 0.10;
 
-/** A team's colour takes over as individual tiles disappear, and recedes to a
- * barely-there wash once those tiles are fully legible. */
-const TEAM_GROUND_OPACITY_NEAR = 0.02;
-const TEAM_GROUND_OPACITY_FAR = 0.26;
+/** A team's colour is already a substantial place once its people are visible,
+ * then moves still closer to the owning node's colour as their tiles fade. */
+const TEAM_GROUND_OPACITY_NEAR = 0.66;
+const TEAM_GROUND_OPACITY_FAR = 0.90;
 
 /** The outer group zone is retained in the geometry but deliberately not
  * painted while the layer stack is being simplified. */
@@ -2584,13 +2584,15 @@ export default function HexLab({
     const groundOf = (teamId: string) => Math.max(teamPlace, 1 - takenOver(teamId));
     /**
      * **Team colour carries the people as their tiles disappear.** `tiles` is
-     * fully present by about 0.05× on this lattice, so the team ground is only
-     * a two-per-cent hint there and further in. Pull out through the tile fade
-     * and it darkens continuously toward the owning team node's colour.
+     * fully present by about 0.05× on this lattice, where the team ground is
+     * 66% opaque. Pull out through the tile fade and it darkens continuously
+     * toward 90% of the owning team node's colour.
      */
     const teamGroundOpacity = TEAM_GROUND_OPACITY_NEAR
       + (TEAM_GROUND_OPACITY_FAR - TEAM_GROUND_OPACITY_NEAR) * (1 - reveal.tiles);
-    const teamEdgeOpacity = Math.min(0.42, teamGroundOpacity * 1.8);
+    // The edge is already ten per cent darker in lightness; sharing the fill's
+    // alpha keeps the whole `teamOutlines` material at the requested opacity.
+    const teamEdgeOpacity = teamGroundOpacity;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
@@ -2610,6 +2612,13 @@ export default function HexLab({
     );
     const visibleIds = new Set(visible.map((u) => u.id));
     const hueFor = (id: string) => hueById.get(id) ?? 0;
+    /** The weight already used by the connection immediately beside a node.
+     * Host outlines read as part of that line rather than as another border,
+     * so this is deliberately shared by both painters. */
+    const chainWidth = (depth: number) =>
+      Math.max(0.6, hexSize * CHAIN_WEIGHT * nodeScale(depth, maxDepth));
+    const adjacentConnectionWidth = (id: string, depth: number) =>
+      leadIds.has(id) ? Math.max(1.2, hexSize * LEAD_WEIGHT) : chainWidth(depth);
     /** A person wears the exact colour of the first organisational node above
      * them, including that node's tone rather than the person's paler rung. */
     const colourOwnerOf = (id: string) => {
@@ -3029,7 +3038,7 @@ export default function HexLab({
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         // Still scaled by the node, so the trunk stays heavier than the twigs.
-        ctx.lineWidth = Math.max(0.6, hexSize * CHAIN_WEIGHT * nodeScale(unit.depth, maxDepth));
+        ctx.lineWidth = chainWidth(unit.depth);
         /**
          * **A stretch that runs behind somebody is drawn faint.**
          *
@@ -3102,11 +3111,11 @@ export default function HexLab({
         nodePath(cell, unit.id, unit.depth);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
-        // A structural node is a *place*; a person is a human. The border is
-        // what says which, before you have read a single label.
+        // White separates a structural node from the coloured ground without
+        // introducing a second dark boundary into the map.
         if (peopleIds.size > 0) {
           ctx.lineWidth = Math.max(0.8, hexSize * 0.035);
-          ctx.strokeStyle = "rgba(15,23,42,0.75)";
+          ctx.strokeStyle = "rgba(255,255,255,0.95)";
           ctx.stroke();
         }
       }
@@ -3140,6 +3149,16 @@ export default function HexLab({
           ctx.fillStyle = `rgba(255,255,255,${tileAlpha})`;
           ctx.fill();
         }
+        // Draw all host fills before any host edge, so a neighbouring host can
+        // never paint over the white continuation of its connection line.
+        ctx.strokeStyle = `rgba(255,255,255,${reveal.tiles})`;
+        for (const unit of folk) {
+          const cell = hexScene.hex.cells.get(unit.id);
+          if (!cell) continue;
+          washPath(cell, true);
+          ctx.lineWidth = adjacentConnectionWidth(unit.id, unit.depth);
+          ctx.stroke();
+        }
       }
       for (const unit of folk) {
         const cell = hexScene.hex.cells.get(unit.id);
@@ -3164,7 +3183,7 @@ export default function HexLab({
         if (!leadIds.has(chain.unitId)) continue;
         ctx.beginPath();
         traceElbows(chain.points, kneeFor(chain.points));
-        ctx.lineWidth = Math.max(1.2, hexSize * LEAD_WEIGHT);
+        ctx.lineWidth = adjacentConnectionWidth(chain.unitId, scene.unitById.get(chain.unitId)?.depth ?? 0);
         ctx.strokeStyle = "rgba(15,23,42,0.85)";
         ctx.stroke();
       }
