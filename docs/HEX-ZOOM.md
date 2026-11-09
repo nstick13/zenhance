@@ -642,6 +642,17 @@ hierarchy. That is the same move `placePresence` makes one section up, and it
 is probably the general shape of the answer whenever this map wants something
 `/org` does by depth.
 
+**And one thing this file cannot do, learned the same day.** The gauges were
+briefly staggered *here*, each node fading over a narrower slice of the band
+according to its distance from the centre, so that a rung's worth of them
+would arrive as a wave. It does not work, and the reason is a property of the
+page rather than of the ladder: `onWheel` sets the camera straight from the
+event, so a wheel notch is an instantaneous jump in scale and **any figure in
+this file crosses its whole range between two frames**. Every curve here is
+continuous in zoom, which is what stops things popping; none of them is
+continuous in *time*, which is what an animation needs. The arrival is a clock
+in `HexLab.tsx` now — `docs/HEX-LAYOUT.md` § *The gauges arrive in a wave*.
+
 ## Verified, and not
 
 **Checked:** `npx tsc --noEmit` clean, lint clean on everything touched, the

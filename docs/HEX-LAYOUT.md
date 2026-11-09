@@ -5083,3 +5083,121 @@ starts empty.
 was not re-measured, on the grounds that the change replaces one multiply with
 two and a smoothstep per node drawn and removes no work from any pass — if
 that is wrong it is wrong by a few microseconds.
+
+## The gauges arrive in a wave (2026-11-09, last)
+
+Greg asked for *"a cool animated lazy-load"* and picked, of the two readings
+offered, **staggered arrival**: *"the fade that already happens, given life —
+nodes blooming in waves rather than all on the same frame."* The thing it
+fixes is two hundred teams crossing the same twenty pixels in lockstep, which
+is a switch with a fade on it rather than anything arriving.
+
+### The first attempt was wrong, and why
+
+It staggered the **zoom band**. Each node's fade was narrowed to eight pixels
+of its own tile and slid inside the thirty-two-to-fifty-two envelope according
+to how far it stood from the master centre, so that zooming in would bring the
+company's gauges on from the middle outward. Every test passed. A script that
+counted lit nodes across a zoom sweep showed exactly the wave it was supposed
+to show.
+
+Greg looked at it: *"it doesn't appear to work well — the rings just appear at
+the zoom level."*
+
+He was right, and the reason is one line in `HexLab.tsx`. `onWheel` sets the
+camera straight from the event — there is no easing on a wheel notch — so the
+scale goes from one value to another between two frames. **Anything written as
+a function of zoom therefore crosses its whole range in a single frame.** The
+wave existed; it lasted 16ms. The measurement that "proved" it was sampling
+across *zooms*, not across *time*, which is the trap: a wave in zoom-space is
+only a wave in the eye while the zoom is travelling, and on this page the zoom
+travels for exactly one thing, the rung buttons.
+
+Worth keeping because the class of mistake is reusable. A figure that is a
+pure function of camera state cannot animate anything the camera does
+instantly.
+
+### What it is now: a clock, gated by zoom
+
+Two separate questions, and they belong in two places.
+
+- **Does this node's gauge belong at this zoom?** `hexRingReveal` in
+  `hexLod.ts`, back to one plain band for everybody, exactly as it was before
+  the first attempt.
+- **Has it turned up yet?** A clock in `HexLab.tsx`. The first frame a node is
+  due, it is written into `arrivals` with the moment its own fade should
+  start: `now + phase × RING_WAVE_SPREAD_MS`, where phase is `wave` — its
+  distance from the master centre. It then fades over `RING_WAVE_FADE_MS`.
+
+So the zoom can arrive as abruptly as it likes and the gauges still wash in
+behind it, outward from the middle of the company, over about two thirds of a
+second.
+
+### Three details that are the whole of the behaviour
+
+**An entry is dropped the moment a node stops being due**, so zooming out and
+back in plays the arrival again — right for something called a lazy-load —
+while a node that is already there stays there.
+
+**A node only takes its turn in the queue if it became due because the *zoom*
+moved** (`ZOOM_SETTLE_MS`, 60ms since the scale last changed). One that became
+due because you *panned* it into view is dated back far enough to be already
+arrived: you are at a zoom where it belongs, and a dribble of gauges following
+the edge of the window would be a bug rather than an animation. Measured:
+**zero extra frames** for a full pan of the 1,108-person company.
+
+**The loop asks for exactly the frames the arrival needs.** The draw sets
+`waving` if any node is mid-fade and, if so, schedules one more frame — the
+same trick as the dwell clock, for the same reason: a camera that has stopped
+sends no events, so a wave begun on the last wheel notch would otherwise
+freeze halfway. `prefers-reduced-motion` skips the clock entirely and the
+gauges simply appear.
+
+Because the alpha is now a clock reading rather than a calculation, the hit
+test cannot recompute it from outside the frame. It reads `lit`, which is what
+the draw last drew each node at — so what you can point at is exactly what you
+can see, including halfway through an arrival, by construction rather than by
+two calculations agreeing.
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint` clean, **996 tests + 1 expected fail**
+across 66 files. The four tests written for the zoom-band stagger are gone
+with the thing they described, and the test pinning a person's band to the
+names band is back as it was.
+
+Watched and timed in the browser at 1280 × 820, no console errors on any of
+the four companies. On Sparrow-ish, from the Whole rung, one burst of wheel
+across the people band — then sampling three fixed boxes every frame for the
+exact moment each reaches full colour:
+
+| | nearest the master | mid-company | at the rim |
+|---|---|---|---|
+| arrives at | **55ms** | **572ms** | **656ms** |
+
+43 animation frames while that ran, and **0 once it settled** — the loop stops
+dead. On the 1,000-person company the same burst gives 35 frames and then
+nothing.
+
+**It costs nothing.** Same deterministic pan — `fit`, the rung, then a fixed
+40-step drag — stashed and restored inside one browser session:
+
+| | before | after |
+|---|---|---|
+| Team rung (cell 52px, 16 across) | 1.0ms | 0.9ms |
+| Function rung (cell 14px, 61 across) | 7.2ms | 7.9ms |
+
+*Both columns must come from the same sitting.* The same benchmark on the same
+code read 2.3ms and 16.9ms half an hour earlier — this machine's absolute
+paint figures drift by more than any of these changes cost, so only a
+back-to-back A/B says anything at all.
+
+**One thing to know if you are editing here:** `git stash` and `git stash pop`
+left the dev server serving a chunk that referenced a constant the stash had
+removed, and the page threw `ZOOM_SETTLE_MS is not defined` on every draw
+while `tsc` and `eslint` were clean. A measurement taken in that window is
+worthless. `touch` the files and hard-reload after a stash.
+
+**Not checked:** touch, a real five-year-old iPad or the Lenovo, and
+`prefers-reduced-motion` on the glass — the branch that skips the clock is one
+line and is not exercised by a test.

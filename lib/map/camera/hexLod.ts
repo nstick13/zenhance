@@ -191,6 +191,28 @@ export function hexRevealAt(cellPx: CellPx): HexReveal {
 export const RINGS_AT_HOST_PX: readonly [number, number] = [32, 52];
 
 /**
+ * **Why there is no stagger in here, and where it went instead.**
+ *
+ * This band was briefly split per node on 2026-11-09, each node fading over a
+ * narrower slice of it according to how far it stood from the master centre,
+ * so that a rung's worth of gauges would arrive as a wave rather than
+ * together. Greg looked at it: *"it doesn't appear to work well — the rings
+ * just appear at the zoom level."*
+ *
+ * He was right, and the reason is one line in `HexLab.tsx`: `onWheel` sets the
+ * camera straight from the event. A wheel notch is an instantaneous jump in
+ * scale, so anything written as a function of zoom crosses its whole range
+ * between two frames and there is nothing to watch. A zoom-driven wave can
+ * only be seen while the zoom is *travelling*, which on this page is the rung
+ * buttons and nothing else.
+ *
+ * So the arrival is a function of **time** now, and it lives in `HexLab.tsx`
+ * where a clock belongs — see `RING_WAVE_SPREAD_MS`. This file keeps the
+ * question it can answer honestly: *does this node's gauge belong at this
+ * zoom*. When it starts belonging is the renderer's business.
+ */
+
+/**
  * **How much of this node's ring stack is here.**
  *
  * The root is exempt, exactly as depth 0 is on the orbital map: the company's

@@ -298,6 +298,52 @@ const RING_HOVER_WIDTH = 1.5;
 const RING_HOVER_DIM = 0.45;
 const RING_HOVER_SHADOW = "rgba(15,23,42,0.35)";
 const RING_HOVER_BLUR = 10;
+/**
+ * **How long one node's gauges take to fade in**, once it is their turn.
+ *
+ * Short, because this is punctuation rather than a performance: long enough
+ * that a ring is seen to arrive and not so long that reading the map means
+ * waiting for it.
+ */
+const RING_WAVE_FADE_MS = 240;
+/**
+ * **How long the front takes to cross the company**, master centre to rim.
+ *
+ * Greg asked for *"a cool animated lazy-load"* and chose staggered arrival.
+ * The first attempt staggered the *zoom* band instead of using a clock, and
+ * he said what was wrong with it straight away: *"it doesn't appear to work
+ * well — the rings just appear at the zoom level."* `onWheel` sets the camera
+ * straight from the event, so a notch is an instantaneous jump in scale and a
+ * wave written as a function of zoom is over between two frames. The reasoning
+ * is kept at `RINGS_AT_HOST_PX` in `hexLod.ts`, where that stagger used to be.
+ *
+ * A clock has none of that trouble: the zoom can arrive however abruptly it
+ * likes and the gauges still wash in behind it. What `hexLod` still owns is
+ * *whether* a node's gauge belongs at this zoom; what this owns is *when* it
+ * turns up, which is `wave` — its distance from the master centre — times
+ * this.
+ */
+const RING_WAVE_SPREAD_MS = 460;
+/**
+ * **How recently the scale must have moved for an arrival to count as the
+ * zoom's doing.** Two frames and a bit at sixty hertz: long enough to cover
+ * the gap between the wheel event and the draw it causes, short enough that a
+ * pan a moment later is not mistaken for it.
+ */
+const ZOOM_SETTLE_MS = 60;
+/**
+ * **How many weights the crowd's rings are allowed between them**, while the
+ * wave is passing over it.
+ *
+ * `paintCrowdRings` draws a thousand people's gauges in nine strokes because
+ * every person shares one weight. A staggered arrival gives each of them a
+ * *different* weight for as long as the wave is crossing, which would be six
+ * strokes a head again if it were taken literally. Rounding to eight levels
+ * costs at most eight batches instead of one, and the moment the wave has
+ * passed every person is back on the same level and it collapses to the nine
+ * strokes it always was. Eight is well past what the eye separates in a fade.
+ */
+const RING_WAVE_STEPS = 8;
 
 /**
  * **The least the hover callout ever stands off a node.** The usual stand-off
@@ -2168,6 +2214,67 @@ export default function HexLab({
   }, [hexScene, camera.scale, peopleIds, tree.rootId, allocation.tier, maxDepth]);
 
   /**
+   * **How far each node is from the master centre, as a fraction** — the phase
+   * of the ring wave, 0 in the middle and 1 at the edge of the company.
+   *
+   * Measured in **lattice rings**, not in world units, because that is the
+   * distance this map is actually built out of: every cell is the same size,
+   * so a ring count is a count of steps rather than a length, and it is an
+   * integer, so a small company gets a handful of clean wavefronts rather than
+   * a smear. See `RING_ARRIVAL_PX` for what it is for.
+   *
+   * Built once per scene rather than asked per frame: the walk is one pass
+   * over the cells and the lookup is then a map hit, which matters because the
+   * crowd asks for it per person per frame.
+   */
+  const wave = useMemo(() => {
+    const out = new Map<string, number>();
+    const cells = hexScene?.hex.cells;
+    const centre = cells?.get(tree.rootId);
+    if (!cells || !centre) return out;
+    let far = 0;
+    for (const [id, cell] of cells) {
+      const steps = hexDistance(cell, centre);
+      out.set(id, steps);
+      if (steps > far) far = steps;
+    }
+    if (far > 0) for (const [id, steps] of out) out.set(id, steps / far);
+    return out;
+  }, [hexScene, tree.rootId]);
+
+  /**
+   * **When each node's gauges began arriving** — unit id → the moment its own
+   * fade starts, which is the moment it became due plus its place in the
+   * queue.
+   *
+   * A ref and not state: it is written during the draw, and a draw that set
+   * state would schedule itself for ever. An entry is made the first time a
+   * node is due and dropped the moment it stops being, so zooming out and
+   * back in plays the arrival again — which is the right behaviour for
+   * something called a lazy-load — while panning across a company that has
+   * already arrived does nothing at all.
+   */
+  const arrivals = useRef(new Map<string, number>());
+  /**
+   * **The scale the camera was last seen at, and when it changed.**
+   *
+   * This is what tells a node arriving *because you zoomed* from one arriving
+   * *because you panned it into view*. The first should take its turn in the
+   * wave; the second should simply be there, because you are already at a
+   * zoom where it belongs and a dribble of gauges following the edge of the
+   * window would be a bug rather than an animation.
+   */
+  const zoomAt = useRef({ scale: 0, at: 0 });
+  /**
+   * **What each node's gauges are actually drawn at**, filled by the draw and
+   * read by the hit test — so that what you can point at is exactly what you
+   * can see, including halfway through an arrival. It was two agreeing
+   * calculations before the clock; a clock cannot be recalculated from
+   * outside the frame that read it, so now there is one.
+   */
+  const lit = useRef(new Map<string, number>());
+
+  /**
    * **How soft every area boundary is right now, and the paths at that
    * softness.** Greg, 2026-11-06: *"by the time we hit whatever the next
    * increment is, the border radius of those hexagons is so high the team
@@ -2904,7 +3011,13 @@ export default function HexLab({
     canvas.style.height = `${size.height}px`;
 
     const drawFrom = performance.now();
+    /** One clock for the whole frame, so every gauge in it agrees. */
+    const now = drawFrom;
+    /** Set by `ringAlphaOf` when any node is still on its way in; it is what
+     *  asks for the next frame at the bottom of this effect. */
+    let waving = false;
     const { scale } = camera;
+    if (zoomAt.current.scale !== scale) zoomAt.current = { scale, at: now };
     const view = cullBox(camera, size);
     const hexSize = hexScene?.hex.size ?? 1;
 
@@ -3118,12 +3231,41 @@ export default function HexLab({
      * did — see `RINGS_AT_HOST_PX` — and everything bigger than a person
      * arrives sooner, the master centre never leaving at all.
      *
-     * Cheap enough to ask per node: two multiplications and a smoothstep, and
-     * the crowd asks it once for all of them because every person on a
-     * lattice stands on the same amount of ground.
+     * **Two gates, and they are different kinds of thing.** `hexRingReveal`
+     * says whether this node's gauge *belongs* at this zoom. The clock says
+     * whether it has *turned up* yet — see `RING_WAVE_SPREAD_MS` for why the
+     * second one exists at all, and `wave` for the order they come in.
+     *
+     * A node takes its turn in the queue only when it became due because the
+     * **zoom** moved. One that became due because you panned it into view is
+     * already at a zoom where it belongs, so it is simply there.
+     *
+     * Everything is written to `lit` on the way out, so the hit test can be
+     * told exactly what was drawn rather than working it out again.
      */
-    const ringAlphaOf = (id: string): number =>
-      SHOW_HEALTH_RINGS ? hexRingReveal(hostRadius(id) * scale, id === tree.rootId) : 0;
+    const ringAlphaOf = (id: string): number => {
+      if (!SHOW_HEALTH_RINGS) return 0;
+      const gate = hexRingReveal(hostRadius(id) * scale, id === tree.rootId);
+      const book = arrivals.current;
+      if (gate <= 0) { book.delete(id); lit.current.set(id, 0); return 0; }
+      if (still) { lit.current.set(id, gate); return gate; }
+      let from = book.get(id);
+      if (from === undefined) {
+        const zoomed = now - zoomAt.current.at < ZOOM_SETTLE_MS;
+        // Panned into view, not zoomed into existence: dated far enough back
+        // that it is already arrived, so the pan costs no frames and nothing
+        // fades in along the edge of the window.
+        from = zoomed
+          ? now + (wave.get(id) ?? 0) * RING_WAVE_SPREAD_MS
+          : now - RING_WAVE_FADE_MS;
+        book.set(id, from);
+      }
+      const came = smoothstep(from, from + RING_WAVE_FADE_MS, now);
+      if (came < 1) waving = true;
+      const alpha = gate * came;
+      lit.current.set(id, alpha);
+      return alpha;
+    };
     const TAU = Math.PI * 2;
     const FROM = -Math.PI / 2;
     /** An arc as its own sub-path, so many of them can share one stroke. */
@@ -3229,56 +3371,69 @@ export default function HexLab({
      */
     const paintCrowdRings = (folk: typeof visible) => {
       if (folk.length === 0) return;
-      /** One figure for the whole crowd, for the same reason one geometry
-       *  serves it: every person on a lattice stands on exactly one cell, so
-       *  `hexRingReveal` cannot give two of them different answers. */
-      const ringAlpha = ringAlphaOf(folk[0].id);
-      if (ringAlpha <= 0.02) return;
       const sample = stackOf(folk[0].id);
       if (!sample) return;
       const lone = hoverRing?.unitId ?? null;
       ctx.lineCap = "round";
-      ctx.globalAlpha = ringAlpha * RING_TRACK_ALPHA;
-      ctx.strokeStyle = "#0f172a";
 
-      /** Every person wears the same geometry, so the track is one shape
-       *  repeated — but the *figures* differ, so each person still has to be
-       *  asked which of the three they have. */
-      const stacks: { x: number; y: number; rings: ReturnType<typeof stackOf> }[] = [];
+      /**
+       * **Gathered by weight, because the wave gives each person their own.**
+       *
+       * Every person wears the same *geometry* — one cell of ground apiece —
+       * so the track is one shape repeated and the batch still holds. What
+       * the wave varies is the weight, so the crowd is bucketed by it to
+       * `RING_WAVE_STEPS` levels first and each bucket drawn as its own
+       * batch. Before and after the wave there is exactly one bucket and this
+       * is the nine strokes it has always been.
+       *
+       * Order within the crowd does not matter, which is what makes the
+       * regrouping safe: a person's rings live inside their own tile and
+       * never reach another's.
+       */
+      type Stack = { x: number; y: number; rings: NonNullable<ReturnType<typeof stackOf>> };
+      const byWeight = new Map<number, Stack[]>();
       for (const unit of folk) {
         if (unit.id === lone) continue;
         const cell = hexScene?.hex.cells.get(unit.id);
         if (!cell || drag?.members.has(unit.id)) continue;
+        const weight = Math.round(ringAlphaOf(unit.id) * RING_WAVE_STEPS) / RING_WAVE_STEPS;
+        if (weight <= 0.02) continue;
         const stack = stackOf(unit.id);
         if (!stack) continue;
         const at = cellToWorld(cell, hexSize);
-        stacks.push({ x: at.x, y: at.y, rings: stack });
+        const bucket = byWeight.get(weight);
+        const entry = { x: at.x, y: at.y, rings: stack };
+        if (bucket) bucket.push(entry); else byWeight.set(weight, [entry]);
       }
-      if (stacks.length === 0) return;
+      if (byWeight.size === 0) return;
 
-      // 1. Every track, at the one weight they share.
       ctx.lineWidth = sample.rings[0].width;
-      ctx.beginPath();
-      for (const s of stacks) for (const r of s.rings!.rings) arcAt(s.x, s.y, r.radius, TAU);
-      ctx.stroke();
-
-      // 2. Every value arc, gathered by the colour it is drawn in.
-      const byColour = new Map<string, { x: number; y: number; r: number; turn: number }[]>();
-      for (const s of stacks) {
-        for (const r of s.rings!.rings) {
-          if (r.value <= 0.004) continue;
-          const colour = ringColour(r.slot, r.value);
-          const bucket = byColour.get(colour);
-          const arc = { x: s.x, y: s.y, r: r.radius, turn: r.value * TAU };
-          if (bucket) bucket.push(arc); else byColour.set(colour, [arc]);
-        }
-      }
-      ctx.globalAlpha = ringAlpha;
-      for (const [colour, arcs] of byColour) {
-        ctx.strokeStyle = colour;
+      for (const [ringAlpha, stacks] of byWeight) {
+        // 1. Every track in this bucket, at the one weight they share.
+        ctx.globalAlpha = ringAlpha * RING_TRACK_ALPHA;
+        ctx.strokeStyle = "#0f172a";
         ctx.beginPath();
-        for (const a of arcs) arcAt(a.x, a.y, a.r, a.turn);
+        for (const s of stacks) for (const r of s.rings.rings) arcAt(s.x, s.y, r.radius, TAU);
         ctx.stroke();
+
+        // 2. Every value arc in it, gathered by the colour it is drawn in.
+        const byColour = new Map<string, { x: number; y: number; r: number; turn: number }[]>();
+        for (const s of stacks) {
+          for (const r of s.rings.rings) {
+            if (r.value <= 0.004) continue;
+            const colour = ringColour(r.slot, r.value);
+            const bucket = byColour.get(colour);
+            const arc = { x: s.x, y: s.y, r: r.radius, turn: r.value * TAU };
+            if (bucket) bucket.push(arc); else byColour.set(colour, [arc]);
+          }
+        }
+        ctx.globalAlpha = ringAlpha;
+        for (const [colour, arcs] of byColour) {
+          ctx.strokeStyle = colour;
+          ctx.beginPath();
+          for (const a of arcs) arcAt(a.x, a.y, a.r, a.turn);
+          ctx.stroke();
+        }
       }
       ctx.globalAlpha = 1;
     };
@@ -4191,10 +4346,24 @@ export default function HexLab({
     // within a wheel notch.
     showDrawMs(drawMsRef.current * 0.875 + (performance.now() - drawFrom) * 0.125);
 
+    /**
+     * **One more frame, while any gauge is still arriving.**
+     *
+     * The same trick as the dwell clock below and for the same reason: a
+     * camera that has stopped sends no events, so a wave that began on the
+     * last wheel notch would freeze halfway through it. This asks for exactly
+     * as many frames as the arrival needs and not one more — `waving` goes
+     * false on the frame the last node finishes, and the loop stops dead.
+     */
+    if (waving) {
+      const raf = requestAnimationFrame(() => tick((n) => n + 1));
+      return () => cancelAnimationFrame(raf);
+    }
+
     // `pulse` is the dwell clock: it carries no value, it is what makes this
     // effect run again while the hand is resting on somebody and nothing else
     // is moving. See the neck, above.
-  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, areaPaths, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, signal, sizes, hoverRing, pulse, still, born, unfinished, blankPaper, menu]);
+  }, [camera, scene, hexScene, chains, size, hover, regions, regionOrder, maxDepth, drag, pending, tree, justMoved, teamOutlines, teamTints, areaPaths, bubbles, bubbleTints, footprints, teamCover, allocation.tier, peopleIds, leadIds, hueById, signal, sizes, hoverRing, pulse, still, born, unfinished, blankPaper, menu, wave]);
 
   // --- input ---------------------------------------------------------------
 
@@ -4252,14 +4421,14 @@ export default function HexLab({
       const mark = sizes.markRadius(unit.id);
       const host = sizes.hostRadius(unit.id);
       /**
-       * **Asked per node, because it is answered per node.** It used to be
-       * one test above the loop against `reveal.names`, which was the whole
-       * map's answer while every ring arrived at once. Now the master centre
-       * can be read at a zoom where nothing else wears a gauge, and a team's
-       * arrives before a person's, so the hand has to be told the same thing
-       * the eye is.
+       * **Asked per node, and read from what was drawn.** It used to be one
+       * test above the loop against `reveal.names`, which was the whole map's
+       * answer while every ring arrived at once. The master centre can now be
+       * read at a zoom where nothing else wears a gauge, and the arrival is
+       * on a clock, so the only honest source is the frame itself — `lit` is
+       * what `ringAlphaOf` last drew each node at.
        */
-      if (hexRingReveal(host * camera.scale, unit.id === tree.rootId) <= 0.02) continue;
+      if ((lit.current.get(unit.id) ?? 0) <= 0.02) continue;
       if (d > ringReach(mark, host, person, camera.scale)) continue;
       const slot = ringAtDistance(mark, host, person, camera.scale, d);
       if (slot === null) continue;
@@ -4268,7 +4437,7 @@ export default function HexLab({
       best = { unitId: unit.id, slot };
     }
     return best;
-  }, [hexScene, camera.scale, scene, peopleIds, sizes, signal, tree.rootId]);
+  }, [hexScene, camera.scale, scene, peopleIds, sizes, signal]);
 
   /**
    * **The hand is down, and nothing has been decided yet.**
