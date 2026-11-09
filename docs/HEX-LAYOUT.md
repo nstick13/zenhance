@@ -4863,3 +4863,112 @@ handler is on the canvas. That is how every toolbar behaves, the bar is about
 350 × 32px at the very bottom of the window, and Greg's *"does not conflict
 with ordinary scroll, pan or zoom"* is about the map, which is untouched.
 
+## One format for every node (2026-11-09, later)
+
+Greg:
+
+> *"Currently the human nodes are a small coloured blob sat on a white hexagon.
+> We should have all nodes follow the same format… Master centre: we'll shrink
+> the coloured part of it. It should appear circular, but 3x the radius of a
+> human. The existing oversized coloured tile should be replaced by a white
+> spacer tile just as exists for human nodes. For everything in between (ie not
+> human and not master center), the coloured dot should be 2x the radius of a
+> human's coloured dot; the white placeholder tile should be the same size as
+> the current coloured tile."*
+
+### What changed, and what did not
+
+**No node's footprint moved.** `PLACE_SPAN` is still 1.5 and `MASTER_SPAN` is
+still 3; `structuralNodeSpan` still answers the same question with the same
+numbers. They stopped describing the coloured mark and started describing the
+**white tile**. So the room a node takes on the lattice, the bubbles that make
+space for it, the culling that decides whether it is on screen — all of that is
+untouched. What is inside that room changed: the colour shrank to a dot and the
+rest became white glass.
+
+| | coloured dot | white tile |
+|---|---|---|
+| a person | `PERSON_MARK` — the old floor, halved | `PERSON_TILE`, 80% of the cell |
+| a team | **×2 a person** | its cell, less the clear ground |
+| a place above a team | **×2 a person** | `PLACE_SPAN` — the cell and half a radius |
+| the master centre | **×3 a person** | `MASTER_SPAN` — three cell radii |
+
+The scale is now written in **one unit, a human**: one, two, three. That is the
+whole of it. The 2026-11-07 rule — *size says what kind of thing a node is, not
+how senior it is* — survives intact and is easier to state than it was, because
+it no longer needs two unrelated units (fractions of a human for people,
+multiples of a cell for places) to say one thing.
+
+### Three consequences, all decided here
+
+**Every mark is a circle now.** Shape used to carry the human-or-place
+distinction — a person was a circle, everything else a rounded hexagon — and
+that was right while a place's mark *was* its cell, because size could not
+carry it. The dot sizes carry it now, and a hexagon inside a hexagon says
+nothing the tile is not already saying. `nodePath` therefore always uses
+`PERSON_CORNER`, which is `√3/2`: the top of `NODE_CORNER`'s own range, where a
+rounded hexagon *is* its inscribed circle. One dial, wound all the way round —
+not a second shape.
+
+*Greg specified circular only for the master centre.* Extending it to the
+in-between nodes is my reading of *"all nodes follow the same format"*, and it
+is the one judgement here he might want back: a one-line change to
+`nodePath` returns teams and places to the hexagon.
+
+**The rings did not move, but they are measured off something else.**
+`ringBand` anchored a structural node's stack at `NODE_RING_SHARE` of its
+**mark** and bounded it by the mark too. The mark is now a dot two people wide,
+so that would have collapsed the stack into the dot. It now reads the **host**
+for both, and because the host is exactly the figure the mark used to be, every
+ring on the map is within floating-point of where it was yesterday. There is a
+test pinning that: `ringBand(110, 350, …)` must equal `ringBand(350, 350, …)`
+for every slot — the new call and the old one, side by side.
+
+**The ring track went dark for everyone.** It was `#ffffff` on a structural
+node, because a structural node's rings were drawn on its own saturated colour.
+They are now on the same white glass a person's sit on, where white is
+invisible.
+
+### Also removed
+
+The white hairline around a structural mark. It existed to separate a coloured
+node from the coloured ground behind it; a dot on a white tile needs no such
+help, and a person's mark never had one.
+
+### What it costs
+
+Nothing measurable. Paint time while panning the 1,108-person company at
+1280 × 820, same drag each time, read off the study dropdown:
+
+| | before | after |
+|---|---|---|
+| Team rung (cell 52px) | 2.7ms | 2.8ms |
+| Function rung (cell 14px) | 17.5ms | 16.3ms |
+
+Each structural node gained a tile fill and a tile stroke and lost a hairline
+stroke, and there are 165 of them against 1,108 people, so the difference is
+inside the noise. (The *before* column was measured by stashing the change,
+reloading and repeating the same drag — not by comparing against the 11.3ms in
+the section above, which was taken at a different window size and is not
+comparable. That is the whole reason it was re-measured.)
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint` clean, **991 tests passing + 1 expected
+fail** across 66 files, including two new ones: that a structural node's stack
+stays inside its tile on all three sizes, and that the innermost ring clears
+the dot it surrounds.
+
+In a browser with zero console errors, on all four companies: Sparrow-ish and
+Digital Tailoring-ish at the Team and Person rungs (master centre, a place, a
+team and people all reading as one format), the 1,000-person company at the
+Whole rung (the regions still carry the overview — the dots are small but the
+coloured ground was always what did that work at this distance), blank paper
+with the seed untouched, and a person made from nothing and undone again. A
+pointer swept out from Trident Group's centre still finds its three bands at
+106–114, 122–130 and 138–146 screen pixels, which is where they were before.
+
+**Not checked:** touch, a real five-year-old iPad or the Lenovo, and how the
+master centre's three-radius white tile reads on a company deeper than eight
+rungs (Northwind has no card on this page).
+

@@ -364,10 +364,19 @@ export type RingBand = { radius: number; width: number };
  * - A **person** anchors just outside their own mark, plus `PERSON_RING_SPREAD`.
  *   They fill about a fifth of their host tile, so the room is there, and the
  *   rest of the white glass stays free — which is where work will want to go.
- * - **Everything else** anchors at `NODE_RING_SHARE` of its own radius. A team
- *   *is* its cell and a place overflows it, so there is no room outside; a
- *   third of the way out is inside every one of them by construction, whatever
- *   size rule they are drawn by.
+ * - **Everything else** anchors at `NODE_RING_SHARE` of its **host tile**. A
+ *   place's tile overflows its cell and the master centre's overflows it by
+ *   three radii, so there is no room outside it; a third of the way out is
+ *   inside every one of them by construction, whatever size rule they are
+ *   drawn by.
+ *
+ * **It was a third of the *mark* until 2026-11-09**, which was the same number
+ * while a structural node's mark *was* its tile. On that day Greg shrank every
+ * structural mark to a small coloured dot on a white spacer tile — a person's
+ * format, at two or three times a person's size — and the host became the only
+ * thing that still describes the ground a ring has to fit inside. The
+ * arithmetic is unchanged for every node: the figure this now reads was
+ * previously handed in as `mark`.
  *
  * Returns null when the stack cannot be paid for — a ring that would reach
  * past the shape holding it. A ring that does not fit is not drawn thin, it is
@@ -377,11 +386,11 @@ export function ringBand(
   /** The node's own drawn radius, in world units. */
   mark: number,
   /**
-   * The radius of the ground the node stands in, in world units: a person's
-   * host tile, and otherwise the node's own cell less the clear gap every
-   * active hexagon keeps. It is what weights the ring, so that every ring on
-   * the lattice reads at the same weight at a given zoom whatever it is drawn
-   * around.
+   * The radius of the white tile the node stands on, in world units. It both
+   * weights the ring — so that every ring on the lattice reads at the same
+   * weight at a given zoom whatever it is drawn around — and, for everything
+   * that is not a person, decides where the stack starts and how far it may
+   * reach.
    */
   host: number,
   /** True for a human node, which anchors outside its mark rather than inside. */
@@ -405,11 +414,13 @@ export function ringBand(
 
   const anchor = person
     ? (mark + (RING_CLEAR_PX + widthPx / 2) / live) * PERSON_RING_SPREAD
-    : mark * NODE_RING_SHARE;
+    : host * NODE_RING_SHARE;
   const radius = anchor + (slot * (widthPx + gapPx)) / live;
 
-  // A person's stack lives in the tile; everything else's lives on its face.
-  const ceiling = (person ? host : mark) * INSCRIBED;
+  // Every stack lives inside the tile the node stands on. A person's starts
+  // outside their mark and everything else's a third of the way out, but both
+  // are bounded by the same white hexagon.
+  const ceiling = host * INSCRIBED;
   if (radius + width / 2 > ceiling) return null;
   if (radius - width / 2 <= 0) return null;
   return { radius, width };

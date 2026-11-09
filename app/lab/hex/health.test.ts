@@ -179,11 +179,17 @@ describe("signalRollup", () => {
 });
 
 describe("ringBand", () => {
-  // A person: a small circle standing in a much larger tile.
+  /**
+   * **Every node is a small coloured dot on a white tile** (Greg,
+   * 2026-11-09). A person's dot is the unit; a team's and a place's are twice
+   * it, the master centre's three times. What differs between them is the
+   * tile: a team's is its cell, a place's the cell and half a radius more,
+   * the master centre's three cell radii.
+   */
   const PERSON = { mark: 55, host: 280 };
-  // A team: its mark *is* its cell. A place overflows it by half a radius.
-  const TEAM = { mark: 350, host: 350 };
-  const PLACE = { mark: 546, host: 350 };
+  const TEAM = { mark: 110, host: 350 };
+  const PLACE = { mark: 110, host: 546 };
+  const MASTER = { mark: 165, host: 1050 };
 
   it("anchors a person's stack outside their mark, with Greg's 15% on it", () => {
     const band = ringBand(PERSON.mark, PERSON.host, true, 0, 1)!;
@@ -199,19 +205,47 @@ describe("ringBand", () => {
     }
   });
 
-  it("anchors a structural node's stack at a third of its own radius", () => {
-    expect(ringBand(TEAM.mark, TEAM.host, false, 0, 1)!.radius)
-      .toBeCloseTo(TEAM.mark * NODE_RING_SHARE, 6);
-    expect(ringBand(PLACE.mark, PLACE.host, false, 0, 1)!.radius)
-      .toBeCloseTo(PLACE.mark * NODE_RING_SHARE, 6);
+  it("anchors a structural node's stack at a third of its tile", () => {
+    for (const node of [TEAM, PLACE, MASTER]) {
+      expect(ringBand(node.mark, node.host, false, 0, 1)!.radius)
+        .toBeCloseTo(node.host * NODE_RING_SHARE, 6);
+    }
   });
 
-  it("keeps a structural node's whole stack on its own face", () => {
-    for (const node of [TEAM, PLACE]) {
+  /**
+   * **The gauges did not move on 2026-11-09**, though the thing they are drawn
+   * around shrank to a dot. A structural node anchored at a third of its
+   * *mark* while its mark and its tile were the same shape; it now anchors at
+   * a third of its *tile*, and the tile is that same figure. This pins that
+   * equivalence, so the day the two drift apart it is a decision somebody took
+   * rather than an accident.
+   */
+  it("puts a team's rings exactly where the old mark-anchored rule did", () => {
+    // The old call was ringBand(350, 350, …) — mark and tile the same figure,
+    // because a team's mark *was* its cell. The new one hands in a dot of 110
+    // and the same 350 tile, and must land on the same three circles.
+    for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
+      expect(ringBand(TEAM.mark, TEAM.host, false, slot, 1))
+        .toEqual(ringBand(TEAM.host, TEAM.host, false, slot, 1));
+    }
+  });
+
+  it("keeps a structural node's whole stack inside its own tile", () => {
+    for (const node of [TEAM, PLACE, MASTER]) {
       for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
         const band = ringBand(node.mark, node.host, false, slot, 1)!;
-        expect(band.radius + band.width / 2).toBeLessThanOrEqual(node.mark * INSCRIBED);
+        expect(band.radius + band.width / 2).toBeLessThanOrEqual(node.host * INSCRIBED);
       }
+    }
+  });
+
+  /** A dot two or three people wide must not be swallowed by the ring that
+   *  hugs it — the innermost band starts a third of the way out, and that
+   *  third is measured on a tile far bigger than the dot. */
+  it("leaves every structural dot clear of its innermost ring", () => {
+    for (const node of [TEAM, PLACE, MASTER]) {
+      const band = ringBand(node.mark, node.host, false, 0, 1)!;
+      expect(band.radius - band.width / 2).toBeGreaterThan(node.mark);
     }
   });
 
@@ -231,7 +265,7 @@ describe("ringBand", () => {
 });
 
 describe("ringAtDistance", () => {
-  const TEAM = { mark: 350, host: 350 };
+  const TEAM = { mark: 110, host: 350 };
   const PERSON = { mark: 55, host: 280 };
 
   it("points at exactly what it draws, on every slot and both kinds of node", () => {
@@ -245,7 +279,7 @@ describe("ringAtDistance", () => {
 
   it("finds nothing in the empty middle or out past the stack", () => {
     expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, 2)).toBeNull();
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, TEAM.mark * 2)).toBeNull();
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, TEAM.host * 2)).toBeNull();
   });
 
   it("picks the nearer of two rings when the hand is between them", () => {

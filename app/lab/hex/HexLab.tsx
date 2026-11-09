@@ -229,7 +229,7 @@ const ACTIVE_GAP_MAX = 0.12;
  *
  * **Two hexagons, two numbers, and the cell itself does not move.** The
  * *central* one is the mark that says a person is here (`nodePath`); the
- * *outer* one is the white translucent host (`washPath`). Both shrink inside
+ * *outer* one is the white translucent host (`hostPath`). Both shrink inside
  * a cell that stays exactly where the lattice put it, so this is a drawing
  * change and not a layout one — nothing re-lays, no law is touched, and a cell
  * is still one unit's (Law 1).
@@ -406,9 +406,45 @@ const PLACE_SPAN = 1.5;
 const MASTER_SPAN = 3;
 
 /**
- * The rendered radius of a structural node in cell radii. Kept outside the
- * painter because area geometry has to answer the same question: a bubble
- * must wrap the mark people can see, not the smaller host cell it replaced.
+ * **Every node is now a person's format: a coloured dot on a white tile** —
+ * Greg, 2026-11-09:
+ *
+ * > *"Currently the human nodes are a small coloured blob sat on a white
+ * > hexagon. We should have all nodes follow the same format… Master centre:
+ * > we'll shrink the coloured part of it. It should appear circular, but 3x
+ * > the radius of a human. The existing oversized coloured tile should be
+ * > replaced by a white spacer tile just as exists for human nodes. For
+ * > everything in between (ie not human and not master center), the coloured
+ * > dot should be 2x the radius of a human's coloured dot; the white
+ * > placeholder tile should be the same size as the current coloured tile."*
+ *
+ * So `PLACE_SPAN` and `MASTER_SPAN` above did not change and did not go away
+ * — **they moved from the mark to the tile**. What used to be a 1.5-radius
+ * coloured place and a 3-radius coloured master centre are now white spacer
+ * tiles of exactly those sizes, and the colour on them is a dot measured
+ * against a human:
+ *
+ * | | coloured dot | white tile |
+ * | --- | --- | --- |
+ * | a person | `PERSON_MARK` (the old floor, halved) | `PERSON_TILE` of the cell |
+ * | a team | **×2** | its cell, less the clear ground |
+ * | a place above a team | **×2** | `PLACE_SPAN` — the cell and half a radius |
+ * | the master centre | **×3** | `MASTER_SPAN` — three cell radii |
+ *
+ * Size still says *what kind of thing a node is* — Greg's rule of 2026-11-07
+ * — and it now says it in one unit, a human, instead of in two unrelated ones.
+ * One, two, three. That is the whole scale.
+ */
+const PLACE_MARK = 2;
+const MASTER_MARK = 3;
+
+/**
+ * The radius of a structural node's **white tile**, in cell radii. It was the
+ * radius of its coloured mark until 2026-11-09 and is the same arithmetic: the
+ * footprint a node occupies did not change, only what is drawn on it. Kept
+ * outside the painter because area geometry has to answer the same question —
+ * a bubble must wrap the ground a node takes up, not the small dot in the
+ * middle of it.
  */
 function structuralNodeSpan(
   id: string,
@@ -2066,47 +2102,66 @@ export default function HexLab({
     const activeShrink = hexSize > 0 ? 1 - activeInset / hexSize : 1;
 
     /**
-     * **How big a node's own mark is, and what that says about it.** Greg,
-     * 2026-11-07, replacing the even grading by rung with four statements:
+     * **How big a node is, and what that says about it.** Two statements, one
+     * from each of two days.
      *
-     * - a **person** is small — half the old floor, and a circle;
-     * - a **team** *"should now fill their host cell"*, so it is the cell;
-     * - a **place above a team** overflows its cell by half a radius, a fixed
-     *   amount whatever it holds (`PLACE_SPAN`);
-     * - the **master centre** *"should be huge"*, at `MASTER_SPAN` cell radii.
+     * Greg, **2026-11-07**, replacing the even `nodeScale` grading by rung:
+     * size says *what kind of thing this is*, not *how senior*. A person is
+     * small; a team *"should now fill their host cell"*; a place above a team
+     * overflows it by half a radius (`PLACE_SPAN`); the master centre
+     * *"should be huge"* at `MASTER_SPAN` radii. That rule still holds — it is
+     * now the rule for `hostRadius`, the white tile.
      *
-     * The old `nodeScale` grading — every rung a step bigger than the one
-     * below — has gone from everything except a person's floor. Size used to
-     * say *how senior*; it now says *what kind of thing this is*, which is a
-     * question the eye can actually answer at a glance.
+     * Greg, **2026-11-09**: every node is drawn in a person's format, a small
+     * coloured dot on a white spacer tile, and the dot is measured in people
+     * — one, two or three. See `PLACE_MARK` / `MASTER_MARK` above for his
+     * wording and the table.
      *
-     * Everything still multiplies by `activeShrink`, so the clear ground an
-     * active hexagon keeps is kept whatever the rule.
+     * So the footprint of every node is exactly what it was; what changed is
+     * that the colour inside it shrank to a dot, and the rest of that
+     * footprint became white glass. Everything still multiplies by
+     * `activeShrink`, so the clear ground an active hexagon keeps is kept
+     * whatever the rule.
      *
-     * **A place above a team is a team-level node that has been drawn
-     * bigger, and that is all.** Two richer readings were tried first and
-     * both are written up in `docs/HEX-LAYOUT.md`: drawing the node *as* its
-     * region's own path, which costs 3.3 seconds a frame because stroking the
-     * boundary of thousands of cells is nothing like filling it; and growing
-     * it in proportion to its region, which put eight screen-wide hexagons
-     * over each other on the eight-rung company. Greg's answer to both was to
-     * make it a constant.
+     * **A place above a team is a team-level node with a bigger tile, and
+     * that is all.** Two richer readings were tried first and both are written
+     * up in `docs/HEX-LAYOUT.md`: drawing the node *as* its region's own path,
+     * which costs 3.3 seconds a frame because stroking the boundary of
+     * thousands of cells is nothing like filling it; and growing it in
+     * proportion to its region, which put eight screen-wide hexagons over each
+     * other on the eight-rung company. Greg's answer to both was to make it a
+     * constant.
+     */
+    /** The one unit the whole scale is written in. */
+    const personMark = hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
+
+    /**
+     * **The coloured dot, in human units** — see `PLACE_MARK` / `MASTER_MARK`
+     * above for Greg's wording. One, two or three times a person, and nothing
+     * else: no arithmetic about regions, no grading by rung.
      */
     const markRadius = (id: string): number => {
-      if (peopleIds.has(id)) {
-        return hexSize * nodeScale(maxDepth, maxDepth) * PERSON_MARK * activeShrink;
-      }
+      if (peopleIds.has(id)) return personMark;
       const span = structuralNodeSpan(id, tree.rootId, peopleIds, allocation.tier);
-      // A team still keeps the active-cell gap. Larger places deliberately
-      // overflow, and their bubbles now make room for that same span.
-      return hexSize * span * (span <= 1 ? activeShrink : 1);
+      return personMark * (span === MASTER_SPAN ? MASTER_MARK : PLACE_MARK);
     };
 
-    /** The ground a node stands in: a person's white tile, everyone else's
-     *  own cell. It is what weights a ring, so every gauge on the lattice
-     *  reads at one weight whatever it is drawn around. */
-    const hostRadius = (id: string): number =>
-      (hexSize - activeInset) * (peopleIds.has(id) ? PERSON_TILE : 1);
+    /**
+     * **The white tile the dot stands on**, which is the ground the node
+     * actually occupies. A person's is `PERSON_TILE` of their cell; everything
+     * else's is the span that used to be the size of its coloured mark — a
+     * team's cell, a place's cell and half a radius, the master centre's three
+     * radii. A team still keeps the active-cell gap; the larger two
+     * deliberately overflow, and their bubbles make room for that same span.
+     *
+     * It is also what weights a ring and bounds the stack, so every gauge on
+     * the lattice reads at one weight whatever it is drawn around.
+     */
+    const hostRadius = (id: string): number => {
+      if (peopleIds.has(id)) return (hexSize - activeInset) * PERSON_TILE;
+      const span = structuralNodeSpan(id, tree.rootId, peopleIds, allocation.tier);
+      return hexSize * span * (span <= 1 ? activeShrink : 1);
+    };
 
     return { hexSize, scale, activeInset, activeShrink, markRadius, hostRadius };
   }, [hexScene, camera.scale, peopleIds, tree.rootId, allocation.tier, maxDepth]);
@@ -2982,36 +3037,49 @@ export default function HexLab({
      */
     const { activeInset, markRadius, hostRadius } = sizes;
 
-    const nodePath = (cell: Cell, id: string, shrink = 1) => {
-      const person = peopleIds.has(id);
-      // A person is the dial at its limit, which is a circle — `PERSON_CORNER`.
-      // The tile behind them stays a hexagon, and so does every place.
-      roundedHex(
-        cellToWorld(cell, hexSize),
-        markRadius(id) * shrink,
-        person ? PERSON_CORNER : NODE_CORNER,
-      );
-    };
+    /**
+     * **Every node's coloured mark, and every one of them is a circle.**
+     *
+     * It was a circle for a person and a rounded hexagon for everything else
+     * until 2026-11-09, which was the right distinction while a place's mark
+     * *was* its cell: shape said human-or-place because size could not.
+     * Greg's *"all nodes follow the same format"* takes that job back — every
+     * mark is now a dot on a white tile, and the dot's size (one, two or
+     * three people) is what says which kind of thing it is. A hexagon in the
+     * middle of a hexagon said nothing the tile was not already saying.
+     *
+     * `PERSON_CORNER` is `√3/2`, the top of `NODE_CORNER`'s range, where a
+     * rounded hexagon *is* its inscribed circle — so this is the same dial
+     * wound all the way round, not a second shape primitive.
+     */
+    const nodePath = (cell: Cell, id: string, shrink = 1) =>
+      roundedHex(cellToWorld(cell, hexSize), markRadius(id) * shrink, PERSON_CORNER);
 
 
     /**
-     * **The active hexagon's host**, which is the whole cell behind the mark.
-     * Structural cells use the unit's colour; a person's is white glass.
-     * Greg, 2026-11-05: *"this border, which is a hexagon layer
-     * sitting behind the active hexagon, should also be rounded"* — and it is
-     * not an **area** hexagon, however it is sized: an area hexagon is grey
-     * ground, this one takes the colour of whoever stands on it, so it reads
-     * as part of the thing rather than the room around it. Same shape as the
-     * node it sits behind, therefore, at the size of the cell less the clear
-     * ground every active hexagon keeps — see `activeInset`, which is what
-     * stops two of these ever touching.
+     * **The white tile every node stands on.** Greg, 2026-11-05, of the layer
+     * behind the mark: *"this border, which is a hexagon layer sitting behind
+     * the active hexagon, should also be rounded"* — and it is not an **area**
+     * hexagon however it is sized: an area hexagon is grey ground, this one
+     * belongs to whoever stands on it, so it reads as part of the thing
+     * rather than the room around it.
+     *
+     * **It was white only for a person until 2026-11-09**; a place's took the
+     * place's own colour, which is what made a place read as a coloured slab
+     * rather than as a node. Now there is one tile rule and one tile colour,
+     * and the only thing that varies is how big it is — see `hostRadius`.
      */
-    const washPath = (cell: Cell, person = false) =>
-      roundedHex(
-        cellToWorld(cell, hexSize),
-        (hexSize - activeInset) * (person ? PERSON_TILE : 1),
-        person ? PERSON_TILE_CORNER : NODE_CORNER,
-      );
+    const hostPath = (cell: Cell, id: string) =>
+      roundedHex(cellToWorld(cell, hexSize), hostRadius(id), PERSON_TILE_CORNER);
+
+    /**
+     * **A cell, less the clear ground it keeps** — the faint territory wash at
+     * step 1a, which asks *is anybody standing here* and so is about the cell
+     * rather than about the node's own footprint. Kept apart from `hostPath`
+     * since 2026-11-09, when a host stopped being the cell.
+     */
+    const cellWashPath = (cell: Cell) =>
+      roundedHex(cellToWorld(cell, hexSize), hexSize - activeInset, NODE_CORNER);
 
     /**
      * **The health rings, ported from the orbital map** — Greg, 2026-11-08,
@@ -3082,10 +3150,14 @@ export default function HexLab({
         const hovered = lit === ring.i;
         const alpha = ringAlpha * (lit === null || hovered ? 1 : RING_HOVER_DIM);
         ctx.lineWidth = ring.width * (hovered ? RING_HOVER_WIDTH : 1);
-        // The track takes its contrast from whatever it is drawn on: dark on
-        // a person's white glass, white on a structural node's own colour.
+        /**
+         * **Dark, for everyone.** It was white on a structural node until
+         * 2026-11-09, because a structural node's ring was drawn on its own
+         * saturated colour. Every stack now sits on the same white glass a
+         * person's does, so a white track would be invisible.
+         */
         ctx.globalAlpha = alpha * RING_TRACK_ALPHA;
-        ctx.strokeStyle = stack.person ? "#0f172a" : "#ffffff";
+        ctx.strokeStyle = "#0f172a";
         ctx.beginPath();
         arcAt(centre.x, centre.y, ring.radius, TAU);
         ctx.stroke();
@@ -3444,7 +3516,7 @@ export default function HexLab({
           if (peopleIds.has(unit.id)) continue;
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
-          washPath(cell, false);
+          cellWashPath(cell);
           ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, wash);
           ctx.fill();
         }
@@ -3554,10 +3626,13 @@ export default function HexLab({
        */
       const extent = new Map<string, number>();
       const drawn = new Map(visible.map((u) => [u.id, u]));
-      for (const unit of visible) extent.set(unit.id, markRadius(unit.id));
+      // The tile, not the dot: since 2026-11-09 the mark is a few pixels and
+      // the white tile is what reaches out of the cell.
+      const reach = (id: string) => Math.max(markRadius(id), hostRadius(id));
+      for (const unit of visible) extent.set(unit.id, reach(unit.id));
       for (const unit of scene.units) {
         if (drawn.has(unit.id)) continue;
-        const r = markRadius(unit.id);
+        const r = reach(unit.id);
         if (r <= hexSize) continue;
         if (unit.x + r < view.minX || unit.x - r > view.maxX) continue;
         if (unit.y + r < view.minY || unit.y - r > view.maxY) continue;
@@ -3567,25 +3642,42 @@ export default function HexLab({
       const bySize = [...drawn.values()].sort(
         (a, b) => (extent.get(b.id) ?? 0) - (extent.get(a.id) ?? 0),
       );
+      /**
+       * **Tile, then dot, then gauges — per node, inside the largest-first
+       * order.** Not all tiles and then all dots, which is what the people
+       * pass does: every person is the same size, so a neighbour's tile can
+       * cover a mark and the two have to be separated. Here the sort already
+       * guarantees it, because a tile that could cover another node's dot is
+       * by definition the bigger of the two and was therefore drawn first.
+       * Keeping each node whole is also what keeps the nesting readable — a
+       * team standing inside a division lands on top of the division's
+       * rings, exactly as it lands on top of its tile.
+       */
+      const tileInk = PERSON_TILE_OPACITY * reveal.tiles;
       for (const unit of bySize) {
         if (peopleIds.has(unit.id)) continue;
         const cell = hexScene.hex.cells.get(unit.id);
         if (!cell) continue;
         const moving = drag?.members.has(unit.id) ?? false;
+        /**
+         * **The white spacer tile** — Greg, 2026-11-09: *"the existing
+         * oversized coloured tile should be replaced by a white spacer tile
+         * just as exists for human nodes."* Same glass, same rounding and the
+         * same fade as a person's, so the two really are one format; what was
+         * the node's colour is now a dot in the middle of it.
+         */
+        if (tileInk > 0.02) {
+          hostPath(cell, unit.id);
+          ctx.fillStyle = `rgba(255,255,255,${tileInk})`;
+          ctx.fill();
+          ctx.strokeStyle = `rgba(255,255,255,${reveal.tiles})`;
+          ctx.lineWidth = adjacentConnectionWidth(unit.id, unit.depth);
+          ctx.stroke();
+        }
         nodePath(cell, unit.id);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
-        // White separates a structural node from the coloured ground without
-        // introducing a second dark boundary into the map.
-        if (peopleIds.size > 0) {
-          ctx.lineWidth = Math.max(0.8, hexSize * 0.035);
-          ctx.strokeStyle = "rgba(255,255,255,0.95)";
-          ctx.stroke();
-        }
-        // Its gauges, a third of the way out from its own centre — drawn here
-        // rather than in a pass of its own so that the largest-first order
-        // still holds: a team standing inside a division lands on top of the
-        // division's rings, exactly as it lands on top of its colour.
+        // Its gauges, a third of the way out from its tile's centre.
         if (ringAlpha > 0.02 && !moving) paintRings(cell, unit.id);
       }
     }
@@ -3614,7 +3706,7 @@ export default function HexLab({
         for (const unit of folk) {
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
-          washPath(cell, true);
+          hostPath(cell, unit.id);
           ctx.fillStyle = `rgba(255,255,255,${tileAlpha})`;
           ctx.fill();
         }
@@ -3624,7 +3716,7 @@ export default function HexLab({
         for (const unit of folk) {
           const cell = hexScene.hex.cells.get(unit.id);
           if (!cell) continue;
-          washPath(cell, true);
+          hostPath(cell, unit.id);
           ctx.lineWidth = adjacentConnectionWidth(unit.id, unit.depth);
           ctx.stroke();
         }
