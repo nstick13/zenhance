@@ -16,8 +16,19 @@
  * roomy, and the three placement choices are fixed in `HexLab.tsx`. What is
  * left here is the company you are looking at, which is the only thing still
  * worth switching.
+ *
+ * **The company switcher moved into `HexLab` on 2026-11-09.** It was a `<nav>`
+ * rendered right here, and it is now rendered by the lab itself from the
+ * `companies` list below. Greg asked for the study's readouts to collapse into
+ * *"a dropdown next to the different company options, to the top left, before
+ * where it says 'company'"* — one strip, one row, the dropdown first. Two
+ * components cannot share a row across the server/client line without one of
+ * them guessing the other's width, so the row belongs to whichever of the two
+ * is a client component, and the dropdown has to be.
+ *
+ * What stays here is the half that cannot move: `buildLabCompany` reaches the
+ * fixture generator, which uses Node's `randomUUID`. Only the labels cross.
  */
-import Link from "next/link";
 import { buildLabCompany, COMPANIES, type CompanyKey } from "./company";
 import HexLab from "./HexLab";
 
@@ -36,29 +47,6 @@ export default async function HexLabPage({
 
   return (
     <main style={{ position: "fixed", inset: 0, background: "#fbfbfd", overflow: "hidden" }}>
-      <nav
-        style={{
-          position: "absolute", zIndex: 5, top: 12, left: 12, display: "flex", gap: 6,
-          flexWrap: "wrap", alignItems: "center", fontFamily: "ui-sans-serif, system-ui",
-          fontSize: 12,
-        }}
-      >
-        <span style={{ color: "#6b7280", marginRight: 4 }}>company</span>
-        {(Object.keys(COMPANIES) as CompanyKey[]).map((k) => (
-          <Link
-            key={k}
-            href={`/lab/hex?company=${k}`}
-            style={{
-              padding: "4px 9px", borderRadius: 999, textDecoration: "none",
-              border: `1px solid ${k === key ? "#4f46e5" : "#e5e7eb"}`,
-              background: k === key ? "#4f46e5" : "#fff",
-              color: k === key ? "#fff" : "#374151",
-            }}
-          >
-            {COMPANIES[k].label}
-          </Link>
-        ))}
-      </nav>
       <HexLab
         org={payload}
         /**
@@ -71,6 +59,17 @@ export default async function HexLabPage({
         companyKey={`${key}-people`}
         groups={groups}
         leads={leads}
+        /**
+         * **Labels only.** The lab draws the switcher; it must not be able to
+         * reach `./company`, because importing that module client-side would
+         * pull the whole fixture generator into the browser bundle to read
+         * five strings out of it.
+         */
+        companies={(Object.keys(COMPANIES) as CompanyKey[]).map((k) => ({
+          key: k,
+          label: COMPANIES[k].label,
+          current: k === key,
+        }))}
       />
     </main>
   );

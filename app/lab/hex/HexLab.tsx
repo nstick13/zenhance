@@ -21,6 +21,7 @@
  *
  * No database, no auth, no persistence. A refresh puts everything back.
  */
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyOverrides, buildOrbitalTree, type OrgInput } from "@/lib/map/layout/model";
 import { holdActions } from "./questions";
@@ -296,6 +297,39 @@ const RING_HOVER_WIDTH = 1.5;
 const RING_HOVER_DIM = 0.45;
 const RING_HOVER_SHADOW = "rgba(15,23,42,0.35)";
 const RING_HOVER_BLUR = 10;
+
+/**
+ * **The least the hover callout ever stands off a node.** The usual stand-off
+ * is the node's own ring reach plus `CALLOUT_CLEAR`; this is the floor for a
+ * node too small or too far out for any ring to be drawn at all, where that
+ * figure is nought and the card would otherwise sit on top of the mark.
+ */
+const CALLOUT_GAP = 34;
+/** On top of the outermost ring's own reach, so the card sits beside the
+ *  gauges rather than on them. */
+const CALLOUT_CLEAR = 16;
+/** Room kept below the callout so it cannot be clipped by the bottom of the
+ *  window. Its own height is 86–110px depending on the wording; this is the
+ *  tall case plus the bottom bar. */
+const CALLOUT_ROOM = 180;
+
+/**
+ * **The ladder as a slider reads outward to inward.** `HEX_LADDER` is ordered
+ * most-zoomed-in first, which is right for the thresholds it exists to define
+ * and wrong for a strip along the bottom of a window, where left-to-right is
+ * read as out-to-in. Reversed once here rather than at the call site, so the
+ * ladder itself keeps one order.
+ */
+const LADDER_OUT_IN = [...HEX_LADDER].reverse();
+
+/** Writes the paint time into the readouts' own element. Outside the
+ *  component because it needs nothing from it — and because a body function
+ *  that calls another body function is no longer provably stable, which is
+ *  enough to make the draw effect ask for it as a dependency. */
+const paintDrawMs = (el: HTMLElement, ms: number) => {
+  el.textContent = `${ms.toFixed(1)}ms`;
+  el.style.color = ms > 16 ? "#b45309" : "#166534";
+};
 
 /**
  * **A human is drawn as a circle.** Greg, 2026-11-07, on the half-size marks:
@@ -1023,7 +1057,7 @@ const SIDEWAYS: "allow" | "forbid" = "forbid";
 const DENSITY: HexDensity = "roomy";
 
 export default function HexLab({
-  org, companyKey, groups: rawGroups, leads,
+  org, companyKey, groups: rawGroups, leads, companies = [],
 }: {
   org: LabOrg;
   companyKey: string;
@@ -1032,6 +1066,15 @@ export default function HexLab({
   groups?: readonly (readonly [string, string])[];
   /** The people who lead the unit they hang from. */
   leads?: readonly string[];
+  /**
+   * **The companies you can switch to, as labels and nothing else.**
+   *
+   * The switcher used to be a `<nav>` in `page.tsx`. It is drawn here since
+   * 2026-11-09 so that it and the readouts dropdown can share one row — see
+   * the note at the top of that file for why the labels travel rather than the
+   * module they come from.
+   */
+  companies?: readonly { key: string; label: string; current: boolean }[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<Size>({ width: 1200, height: 800 });
@@ -1046,6 +1089,16 @@ export default function HexLab({
    *  index into `HEX_RING_SLOTS`. Separate from `hover` because the two answer
    *  different questions: which node, and which of its gauges. */
   const [hoverRing, setHoverRing] = useState<{ unitId: string; slot: number } | null>(null);
+  /**
+   * **Whether the study's readouts are open** — Greg, 2026-11-09: *"minimise
+   * the other data in that callout into a dropdown."*
+   *
+   * Closed by default, which is the point of the change: the map got the
+   * top-right corner back. What is in there is diagnostics about the layout,
+   * and diagnostics you have to open are diagnostics you only read when you
+   * are asking a question of them.
+   */
+  const [showDetails, setShowDetails] = useState(false);
 
   /**
    * **How long the last frame took to paint, in milliseconds.**
@@ -1072,13 +1125,22 @@ export default function HexLab({
    * it can be trusted.
    */
   const drawMsRef = useRef(0);
-  const drawMsEl = useRef<HTMLElement | null>(null);
+  const drawMsNode = useRef<HTMLElement | null>(null);
+  /**
+   * **A callback ref, because the element comes and goes now.** Since
+   * 2026-11-09 the readouts live in a dropdown, so this `<b>` only exists
+   * while that dropdown is open — and the ordinary case is opening it on a map
+   * that is sitting still, which would then read "—" until something made the
+   * canvas repaint. Writing the last measurement in as the element mounts
+   * costs nothing and means the figure is there the moment you look for it.
+   */
+  const drawMsEl = useCallback((el: HTMLElement | null) => {
+    drawMsNode.current = el;
+    if (el && drawMsRef.current > 0) paintDrawMs(el, drawMsRef.current);
+  }, []);
   const showDrawMs = (ms: number) => {
     drawMsRef.current = ms;
-    const el = drawMsEl.current;
-    if (!el) return;
-    el.textContent = `${ms.toFixed(1)}ms`;
-    el.style.color = ms > 16 ? "#b45309" : "#166534";
+    if (drawMsNode.current) paintDrawMs(drawMsNode.current, ms);
   };
 
   /** Hand placements and reparents, kept in this browser between visits. */
@@ -2442,6 +2504,19 @@ export default function HexLab({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cellPx, jumpTo]);
+
+  /**
+   * **Escape shuts the readouts.** Every other sheet on this page closes that
+   * way, and a dropdown that only closes by pressing the same button again is
+   * the one piece of chrome that can end up covering the map with nobody
+   * meaning it to.
+   */
+  useEffect(() => {
+    if (!showDetails) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowDetails(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showDetails]);
 
   const commit = useCallback((
     cells: Map<string, Cell>,
@@ -4663,6 +4738,24 @@ export default function HexLab({
 
   const hovered = hover ? scene.unitById.get(hover) : null;
 
+  /**
+   * **Where a node is on the glass**, so a callout can sit beside it.
+   *
+   * Anchored to the node rather than to the pointer, deliberately. A callout
+   * that follows the mouse needs the pointer position in React state, and the
+   * comment on `setHoverRing` in `onPointerMove` is about what that costs: a
+   * fresh value every move re-renders a page that has a thousand-node canvas
+   * in it. The node's own position is already known at render time from the
+   * camera, so the callout costs nothing per move and it stops jittering while
+   * you read it.
+   */
+  const screenOf = useCallback((unitId: string) => {
+    const cell = hexScene ? hexScene.hex.cells.get(unitId) : null;
+    if (!cell || !hexScene) return null;
+    const at = cellToWorld(cell, hexScene.hex.size);
+    return { x: at.x * camera.scale + camera.x, y: at.y * camera.scale + camera.y };
+  }, [hexScene, camera]);
+
   /** The gauge the hand is on, resolved into the words the panel prints. */
   const ringRead = useMemo(() => {
     if (!hoverRing) return null;
@@ -4672,6 +4765,7 @@ export default function HexLab({
     const value = read?.[slot];
     if (!unit || !read || value == null) return null;
     return {
+      id: unit.id,
       slot,
       value,
       name: unit.name,
@@ -5253,257 +5347,379 @@ export default function HexLab({
         </Dialog>
       )}
 
-      <Panel>
-        <Row>
-          <strong style={{ fontSize: 13 }}>Hex grid study</strong>
-          <span style={{ color: "#9ca3af" }}>{camera.scale.toFixed(2)}×</span>
-        </Row>
-        {/**
-          * **The ladder, as somewhere to go rather than somewhere you end up.**
-          *
-          * Greg, 2026-11-06: *"I think we need several levels of zoom, and
-          * smooth animations between them."* The drawing itself never steps —
-          * it morphs continuously with the wheel — so this row is the other
-          * half of that sentence: the rungs have names, and pressing one
-          * travels there. `[` and `]` do the same from the keyboard.
-          *
-          * A rung the company cannot reach is still shown and still works; it
-          * simply clamps, which is what a ten-person company does to the outer
-          * rungs. Hiding them would make the ladder look different per company,
-          * which is the one thing the design is trying not to do.
-          */}
-        <Row>
-          <span style={{ color: "#6b7280" }}>zoom</span>
-          {HEX_LADDER.map((rung) => (
-            <Btn
-              key={rung.name}
-              small
-              onClick={() => jumpTo(rung.name)}
-              active={level === rung.name}
-              disabled={!hexScene}
-            >
-              {rung.label}
-            </Btn>
-          ))}
-        </Row>
-        {/**
-          * **The five settings rows came off here on 2026-11-06.** Layout,
-          * place, rung, wedge and cell were each a row of buttons, and Greg
-          * settled all five — see the constants above the component, which
-          * hold both the values and the reasoning. Everything that is left in
-          * this panel either *does* something (fit, undo, tidy) or *reports*
-          * something, which is the distinction worth keeping: the study still
-          * needs to tell you what the layout did, now that it has stopped
-          * asking you how to do it.
-          */}
-        <Row>
-          <Btn small onClick={fit}>fit</Btn>
-          {/** Greg, 2026-10-20: *"a button in the interface **and** ctrl+z /
-            * cmd+z"*. It sits with the other things you press rather than
-            * floating over the map, and it is always here once there is
-            * something to go back to — including on a company nobody has
-            * made anything on, because a drag is a step too. */}
-          <Btn small onClick={undo} disabled={!canUndo}>undo</Btn>
-        </Row>
-        {loaded && (moves.size > 0 || reparents.size > 0) && (
-          <>
-            <Row>
-              <Btn small onClick={tidy}>
-                {tidyStage === 0 ? "tidy up" : "tidy up again — compress"}
-              </Btn>
-              {/** **"held", not "moved", since 2026-10-30.** Making something
-                * settles the whole map into the hand's layer — see `settle`
-                * in `hand.ts` — so this counts what the hand is holding and
-                * what tidy would hand back to the engine, not how many tiles
-                * anybody has dragged. Saying "moved" of a map nobody had
-                * dragged was the readout telling a small lie. */}
-              <span style={{ color: "#94a3b8", fontSize: 11 }}>
-                {moves.size} held · {reparents.size} reparented
-              </span>
-            </Row>
-            {tidyReport && (
-              <Small style={{ color: "#166534" }}>
-                gathered {tidyReport.gathered}, turned {tidyReport.turned} ·
-                {" "}cousin clashes {tidyReport.before.cousins} → {tidyReport.after.cousins}
-                {tidyReport.spaced.full + tidyReport.spaced.squeezed > 0 && (
-                  <>
-                    {" "}· kept the layout&apos;s room for{" "}
-                    <b>{tidyReport.spaced.full}</b>, squeezed{" "}
-                    <b style={{ color: tidyReport.spaced.squeezed === 0 ? "#166534" : "#b45309" }}>
-                      {tidyReport.spaced.squeezed}
-                    </b>
-                  </>
-                )}
+      {/**
+        * **The top-left strip: what you are looking at, and a way in to what
+        * the study measured.**
+        *
+        * Greg, 2026-11-09: *"minimise the other data in that callout into a
+        * dropdown next to the different company options, to the top left,
+        * before where it says 'company'."* The dropdown is first on the row,
+        * then the word, then the companies — in that order, so the strip reads
+        * left to right as *study · company · which one*.
+        *
+        * The company links are `<Link>`s rather than buttons because switching
+        * company is a navigation: it changes `?company=`, and the server
+        * invents a different company. That is also why they are still links
+        * after moving out of `page.tsx`.
+        */}
+      <nav style={{
+        position: "absolute", zIndex: 6, top: 12, left: 12, display: "flex", gap: 6,
+        flexWrap: "wrap", alignItems: "center", fontFamily: "ui-sans-serif, system-ui",
+        fontSize: 12,
+      }}>
+        <Btn small active={showDetails} onClick={() => setShowDetails((open) => !open)}>
+          study {showDetails ? "▴" : "▾"}
+        </Btn>
+        {companies.length > 0 && (
+          <span style={{ color: "#6b7280", margin: "0 2px 0 6px" }}>company</span>
+        )}
+        {companies.map((c) => (
+          <Link
+            key={c.key}
+            href={`/lab/hex?company=${c.key}`}
+            style={{
+              padding: "4px 9px", borderRadius: 999, textDecoration: "none",
+              border: `1px solid ${c.current ? "#4f46e5" : "#e5e7eb"}`,
+              background: c.current ? "#4f46e5" : "#fff",
+              color: c.current ? "#fff" : "#374151",
+            }}
+          >
+            {c.label}
+          </Link>
+        ))}
+      </nav>
+
+      {/**
+        * **The readouts, folded away.** Everything here used to be a permanent
+        * card in the top-right corner. None of it is something you act on —
+        * it is the study telling you what the layout did — and a study that
+        * covers a quarter of the map it is measuring is arguing with itself.
+        *
+        * What did *not* come in here: the zoom ladder and the two map actions
+        * (now a permanent bar along the bottom), the ring read (now a callout
+        * beside the ring it is about), and the two red faults below, which are
+        * bug reports and would be worthless behind a click.
+        */}
+      {showDetails && (
+        <Sheet>
+          <Row>
+            <strong style={{ fontSize: 13 }}>Hex grid study</strong>
+          </Row>
+          {loaded && (moves.size > 0 || reparents.size > 0) && (
+            <>
+              <Row>
+                {/** **"held", not "moved", since 2026-10-30.** Making something
+                  * settles the whole map into the hand's layer — see `settle`
+                  * in `hand.ts` — so this counts what the hand is holding and
+                  * what tidy would hand back to the engine, not how many tiles
+                  * anybody has dragged. Saying "moved" of a map nobody had
+                  * dragged was the readout telling a small lie. */}
+                <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                  {moves.size} held · {reparents.size} reparented
+                </span>
+              </Row>
+              {tidyReport && (
+                <Small style={{ color: "#166534" }}>
+                  gathered {tidyReport.gathered}, turned {tidyReport.turned} ·
+                  {" "}cousin clashes {tidyReport.before.cousins} → {tidyReport.after.cousins}
+                  {tidyReport.spaced.full + tidyReport.spaced.squeezed > 0 && (
+                    <>
+                      {" "}· kept the layout&apos;s room for{" "}
+                      <b>{tidyReport.spaced.full}</b>, squeezed{" "}
+                      <b style={{ color: tidyReport.spaced.squeezed === 0 ? "#166534" : "#b45309" }}>
+                        {tidyReport.spaced.squeezed}
+                      </b>
+                    </>
+                  )}
+                </Small>
+              )}
+              <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
+            </>
+          )}
+          <Small suppressHydrationWarning>
+            {/**
+              * **Counted as people and places, not units and seats.** This read
+              * `{scene.units.length} units · {tree.seats.size} people` until
+              * 2026-11-06, and `seats` is nought on the people strata — every
+              * human is a unit now, so nothing is orbiting anything. With the
+              * teams strata gone that line said "0 people" about a map covered
+              * in them. *Place* is Greg's word, from the same day.
+              */}
+            {peopleIds.size} {peopleIds.size === 1 ? "person" : "people"} ·{" "}
+            {scene.units.length - peopleIds.size}
+            {scene.units.length - peopleIds.size === 1 ? " place" : " places"} ·
+            {" "}laid out in {ms.toFixed(0)}ms · painted in{" "}
+            <b ref={drawMsEl} suppressHydrationWarning>—</b>
+          </Small>
+          {stats ? (
+            <>
+              <Small suppressHydrationWarning>
+                <b style={{ color: "#166534" }}>
+                  {((100 * live.touchingFamily) / Math.max(1, live.children)).toFixed(0)}%
+                </b>{" "}of children touch their family ·{" "}
+                <b style={{ color: live.exclaves === 0 ? "#166534" : "#b91c1c" }}>{live.exclaves}</b>
+                {" "}do not
+              </Small>
+              <Small suppressHydrationWarning>
+                {live.wholeFamilies}/{live.families} families are one patch ·{" "}
+                {((100 * live.touchingParent) / Math.max(1, live.children)).toFixed(0)}% touch the
+                parent itself
+              </Small>
+              {/* Law 3. Counted from the arrangement on screen, like the rest. */}
+              <Small suppressHydrationWarning>
+                <b style={{ color: live.curled === 0 ? "#166534" : "#b91c1c" }}>
+                  {((100 * live.curled) / Math.max(1, live.children)).toFixed(0)}%
+                </b>{" "}sit nearer the centre than their parent
+                {live.curled > 0 ? <> · worst <b>{live.curlWorst}</b> tiles</> : null}
+              </Small>
+              {/* The one that shows a loopback. Curl-back alone reads nought on a
+                  clean load while chains still wind round the centre. */}
+              <Small suppressHydrationWarning>
+                <b style={{ color: live.level === 0 ? "#166534" : "#b45309" }}>
+                  {((100 * live.level) / Math.max(1, live.levelOf)).toFixed(0)}%
+                </b>{" "}of team-and-above rungs go round the centre, not away from it
+              </Small>
+            </>
+          ) : (
+            <Small>the layout that ships today, drawn by this same renderer</Small>
+          )}
+          <Small>
+            <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
+          </Small>
+          {/**
+            * **How big a cell is, which is the number the whole ladder reads.**
+            * In here because it is otherwise invisible, and because every
+            * threshold in `hexLod.ts` is written in it — so anybody arguing with
+            * where a rung sits can see the figure they are arguing about.
+            */}
+          <Small>
+            cell <b>{cellPx.toFixed(cellPx < 10 ? 1 : 0)}px</b> ·{" "}
+            {Math.round(size.width / Math.max(cellPx * 1.5, 0.01))} across
+          </Small>
+          {scatter && (
+            <>
+              <Small suppressHydrationWarning>
+                <b style={{ color: scatter.crowded === 0 ? "#166534" : scatter.crowded > scatter.people / 20 ? "#b91c1c" : "#a16207" }}>
+                  {scatter.crowded}
+                </b>{" "}of {scatter.people} people sit next to somebody from another team
+              </Small>
+              <Small suppressHydrationWarning>
+                <b style={{ color: scatter.touching === 0 ? "#166534" : "#b91c1c" }}>{scatter.touching}</b>
+                {" "}cells press against a different one of the {scatter.divisions} top-level
+                groups (rung {scatter.rung})
+              </Small>
+            </>
+          )}
+          <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
+          <Small style={{ color: "#94a3b8" }}>
+            {mode === "hex"
+              ? "drag a tile to move it and its branch · hold over another to merge"
+              : "drag to pan"}
+          </Small>
+          {SHOW_HEALTH_RINGS && peopleIds.size > 0 && (
+            <Small style={{ color: "#94a3b8" }}>
+              the three rings are <b>invented</b>{" "}— no health column, no
+              tracker. Health runs invented pressures through the signal
+              engine&apos;s real thresholds; sprint and delivery come from the
+              same mock boards the orbital demo uses. Point at a ring to read
+              it.
+            </Small>
+          )}
+        </Sheet>
+      )}
+
+      {/**
+        * **What the ring under the hand says, beside the ring.** Greg,
+        * 2026-11-09: *"team health indications on hovering on the health rings
+        * should appear as a nearby callout in a nice rounded rectangular
+        * shape."* It was a line at the bottom of a card in the far corner, so
+        * reading it meant looking away from the thing you were pointing at.
+        *
+        * It names what the figure speaks for, because a place's ring covers its
+        * whole branch and a person's covers only them — a number that does not
+        * say which is a number nobody can check.
+        *
+        * Not drawn while a branch is in the hand: the gesture owns the screen
+        * then, and a card under the cursor is the last thing it needs.
+        */}
+      {!drag && (ringRead || hovered) && (() => {
+        const subject = ringRead ? ringRead.id : hovered!.id;
+        const at = screenOf(subject);
+        if (!at) return null;
+        const wide = 248;
+        /**
+         * **Clear of the gauges, not a fixed distance from the middle.** The
+         * first version stood off the node's centre by a constant, which on a
+         * place — whose mark is its whole cell — put the card straight over
+         * the three rings it was reading out. `ringReach` is the same figure
+         * the hit test uses for the outermost ring, so the card lands just
+         * outside whatever the hand can actually point at.
+         */
+        const reach = ringReach(
+          sizes.markRadius(subject), sizes.hostRadius(subject),
+          peopleIds.has(subject), sizes.scale,
+        ) * camera.scale;
+        const stand = Math.max(CALLOUT_GAP, reach + CALLOUT_CLEAR);
+        // Beside the node, on whichever side has room, and never off the glass.
+        const right = at.x + stand + wide <= size.width - 8;
+        const left = right ? at.x + stand : Math.max(8, at.x - stand - wide);
+        const top = Math.min(Math.max(8, at.y + 14), Math.max(8, size.height - CALLOUT_ROOM));
+        const name = ringRead ? ringRead.name : hovered!.name;
+        return (
+          <Callout left={left} top={top} wide={wide}>
+            <div style={{ fontWeight: 600, fontSize: 12.5, color: "#0f172a" }}>{name}</div>
+            {ringRead ? (
+              <>
+                <div style={{ marginTop: 6, fontSize: 17, fontWeight: 650, color: ringRead.colour, lineHeight: 1.1 }}>
+                  {Math.round(ringRead.value * 100)}%{" "}
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{HEX_RING_LABELS[ringRead.slot]}</span>
+                </div>
+                <Small style={{ marginTop: 4 }}>
+                  {HEX_RING_MEANS[ringRead.slot]}, for{" "}
+                  {ringRead.person
+                    ? "them alone"
+                    : `the ${ringRead.people} ${ringRead.people === 1 ? "person" : "people"} under ${ringRead.name}`}
+                </Small>
+              </>
+            ) : (
+              <Small style={{ marginTop: 4 }}>
+                {/**
+                  * **`totalSeats` is gone from this line.** It read
+                  * "{n} in branch" and `n` was nought for every node on the
+                  * map: seats are how the orbital model counts people, and on
+                  * hex a person is a unit, so nothing is seated anywhere. It
+                  * was wrong in the old panel too and simply less visible
+                  * there. The branch size is in the health line below, where
+                  * it is counted from the signal rollup and is right.
+                  */}
+                CEO+{hovered!.depth}
+                {hexScene?.hex.exclaves.has(hovered!.id) ? " · exclave" : ""}
+                {(() => {
+                  const read = signal.get(hovered!.id);
+                  if (!read || read.health === null) return " · health not measured";
+                  return (
+                    <>
+                      {" · health "}
+                      <b style={{ color: ringColour("health", read.health) }}>
+                        {Math.round(read.health * 100)}%
+                      </b>
+                      {peopleIds.has(hovered!.id)
+                        ? ""
+                        : ` across ${read.people} ${read.people === 1 ? "person" : "people"}`}
+                    </>
+                  );
+                })()}
               </Small>
             )}
-          </>
-        )}
-        <hr style={{ border: 0, borderTop: "1px solid #f1f5f9", margin: "2px 0" }} />
-        <Small suppressHydrationWarning>
-          {/**
-            * **Counted as people and places, not units and seats.** This read
-            * `{scene.units.length} units · {tree.seats.size} people` until
-            * 2026-11-06, and `seats` is nought on the people strata — every
-            * human is a unit now, so nothing is orbiting anything. With the
-            * teams strata gone that line said "0 people" about a map covered
-            * in them. *Place* is Greg's word, from the same day.
-            */}
-          {peopleIds.size} {peopleIds.size === 1 ? "person" : "people"} ·{" "}
-          {scene.units.length - peopleIds.size}
-          {scene.units.length - peopleIds.size === 1 ? " place" : " places"} ·
-          {" "}laid out in {ms.toFixed(0)}ms · painted in{" "}
-          <b ref={drawMsEl} suppressHydrationWarning>—</b>
-        </Small>
-        {stats ? (
-          <>
-            <Small suppressHydrationWarning>
-              <b style={{ color: "#166534" }}>
-                {((100 * live.touchingFamily) / Math.max(1, live.children)).toFixed(0)}%
-              </b>{" "}of children touch their family ·{" "}
-              <b style={{ color: live.exclaves === 0 ? "#166534" : "#b91c1c" }}>{live.exclaves}</b>
-              {" "}do not
+          </Callout>
+        );
+      })()}
+
+      {/**
+        * **The two faults that are bug reports, not readouts.** They ask Greg
+        * to tell me what he just did, so they cannot live behind a click —
+        * nobody opens a dropdown to be told something has gone wrong. Both are
+        * nought on a clean load, so this strip is normally not drawn at all.
+        */}
+      {(missing > 0 || buried > 0) && (
+        <div style={{
+          position: "absolute", left: "50%", bottom: 70, transform: "translateX(-50%)",
+          zIndex: 6, maxWidth: 520, padding: "9px 13px", background: "#fff5f5",
+          border: "1px solid #fecaca", borderRadius: 12, boxShadow: "0 8px 24px rgba(15,23,42,0.1)",
+          fontFamily: "ui-sans-serif, system-ui",
+        }}>
+          {missing > 0 && (
+            <Small style={{ color: "#b91c1c" }}>
+              <b>{missing}</b> unit{missing === 1 ? " is" : "s are"} missing from the map
+              entirely — the layout gave {missing === 1 ? "it" : "them"} no cell. Please tell
+              Claude what you just did.
             </Small>
-            <Small suppressHydrationWarning>
-              {live.wholeFamilies}/{live.families} families are one patch ·{" "}
-              {((100 * live.touchingParent) / Math.max(1, live.children)).toFixed(0)}% touch the
-              parent itself
+          )}
+          {buried > 0 && (
+            <Small style={{ color: "#b91c1c" }}>
+              <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
+              they cannot be pointed at. Please tell Claude what you just did.
             </Small>
-            {/* Law 3. Counted from the arrangement on screen, like the rest. */}
-            <Small suppressHydrationWarning>
-              <b style={{ color: live.curled === 0 ? "#166534" : "#b91c1c" }}>
-                {((100 * live.curled) / Math.max(1, live.children)).toFixed(0)}%
-              </b>{" "}sit nearer the centre than their parent
-              {live.curled > 0 ? <> · worst <b>{live.curlWorst}</b> tiles</> : null}
-            </Small>
-            {/* The one that shows a loopback. Curl-back alone reads nought on a
-                clean load while chains still wind round the centre. */}
-            <Small suppressHydrationWarning>
-              <b style={{ color: live.level === 0 ? "#166534" : "#b45309" }}>
-                {((100 * live.level) / Math.max(1, live.levelOf)).toFixed(0)}%
-              </b>{" "}of team-and-above rungs go round the centre, not away from it
-            </Small>
-          </>
-        ) : (
-          <Small>the layout that ships today, drawn by this same renderer</Small>
+          )}
+        </div>
+      )}
+
+      {/**
+        * **The five-second offer, where you can see it.** It expires by itself,
+        * so it is the one hint on this page that is worthless a moment late —
+        * which rules out both the dropdown and the far corner.
+        */}
+      {mode === "hex" && justMoved && (
+        <div style={{
+          position: "absolute", left: "50%", bottom: missing > 0 || buried > 0 ? 120 : 70,
+          transform: "translateX(-50%)", zIndex: 6, padding: "7px 13px",
+          background: "rgba(15,23,42,0.86)", borderRadius: 999, color: "#f8fafc",
+          fontFamily: "ui-sans-serif, system-ui", fontSize: 11.5, whiteSpace: "nowrap",
+        }}>
+          pick that tile up again within 5s to tidy its branch
+        </div>
+      )}
+
+      {/**
+        * **The zoom ladder, nailed to the bottom of the window.** Greg,
+        * 2026-11-09: *"The zoom buttons should be permanent buttons at the
+        * bottom of the window, with the number (eg 0.38x) shown in line with
+        * them. This does not conflict with ordinary scroll, pan or zoom, it's
+        * just moving the zoom buttons into a permanent position."*
+        *
+        * So it is the same five buttons and the same `jumpTo`, in a strip that
+        * is always there. Two differences worth naming:
+        *
+        * - **It reads outward to inward**, left to right, which is the
+        *   opposite of `HEX_LADDER`'s own order. On a card stacked under a
+        *   heading the order barely registers; along the bottom of a window it
+        *   is a slider, and a slider whose left end is the most zoomed-*in*
+        *   rung is a slider pointing the wrong way.
+        * - **`fit` and `undo` came with it.** They were the only two things in
+        *   the old card that *did* something, and both are things Greg asked to
+        *   be permanently available (undo by name, 2026-10-20). Burying either
+        *   in a dropdown would be a loss dressed up as tidiness. `tidy up`
+        *   joins them when there is anything to tidy.
+        *
+        * Greg's own note that this does not conflict with scroll, pan or zoom
+        * is the thing to keep true: the bar is a shortcut to a rung, nothing
+        * about the wheel or the drag changed.
+        */}
+      <Bar>
+        <Btn small onClick={fit}>fit</Btn>
+        <span style={{ width: 1, height: 18, background: "#e5e7eb", margin: "0 2px" }} />
+        {LADDER_OUT_IN.map((rung) => (
+          <Btn
+            key={rung.name}
+            small
+            onClick={() => jumpTo(rung.name)}
+            active={level === rung.name}
+            disabled={!hexScene}
+          >
+            {rung.label}
+          </Btn>
+        ))}
+        {/** The number Greg asked to see in line with the buttons. Tabular
+          *  figures and a fixed width, so the bar does not twitch sideways
+          *  every frame of a wheel. */}
+        <span style={{
+          color: "#475569", fontVariantNumeric: "tabular-nums", minWidth: 46,
+          textAlign: "right", fontSize: 11.5,
+        }} suppressHydrationWarning>
+          {camera.scale.toFixed(2)}×
+        </span>
+        <span style={{ width: 1, height: 18, background: "#e5e7eb", margin: "0 2px" }} />
+        {/** Greg, 2026-10-20: *"a button in the interface **and** ctrl+z /
+          * cmd+z"*. Always here once there is something to go back to —
+          * including on a company nobody has made anything on, because a drag
+          * is a step too. */}
+        <Btn small onClick={undo} disabled={!canUndo}>undo</Btn>
+        {loaded && (moves.size > 0 || reparents.size > 0) && (
+          <Btn small onClick={tidy}>
+            {tidyStage === 0 ? "tidy up" : "tidy again — compress"}
+          </Btn>
         )}
-        <Small>
-          <b>{Math.round(b.maxX - b.minX).toLocaleString()} × {Math.round(b.maxY - b.minY).toLocaleString()}</b> world units across
-        </Small>
-        {/**
-          * **How big a cell is, which is the number the whole ladder reads.**
-          * On the panel because it is otherwise invisible, and because every
-          * threshold in `hexLod.ts` is written in it — so anybody arguing with
-          * where a rung sits can see the figure they are arguing about.
-          */}
-        <Small>
-          cell <b>{cellPx.toFixed(cellPx < 10 ? 1 : 0)}px</b> ·{" "}
-          {Math.round(size.width / Math.max(cellPx * 1.5, 0.01))} across
-        </Small>
-        {/**
-          * **What the branch in your hand is answering to**, while you hold it.
-          *
-          * The whole of the gesture is one number and there is no way to guess
-          * it from the screen, so it is on the panel: at 1.00 the branch is
-          * going back to the picture the master centre drew, and at nought it is
-          * an orderly chart pointing away from the centre. The chart's size is
-          * there too, because a chart of a large branch is *wide* — far wider
-          * than the radial picture it replaces — and that is the honest
-          * objection to dragging a division out to the edge.
-          */}
-        {drag?.deference !== null && drag?.deference !== undefined && (
-          <Small suppressHydrationWarning style={{ color: "#0f766e" }}>
-            deference <b>{drag.deference.toFixed(2)}</b> —{" "}
-            {drag.deference > 0.9
-              ? "going back to where the master centre had it"
-              : drag.deference > 0.4
-                ? "part way between the centre's picture and a chart"
-                : "an orderly chart, pointing away from the centre"}
-          </Small>
-        )}
-        {scatter && (
-          <>
-            <Small suppressHydrationWarning>
-              <b style={{ color: scatter.crowded === 0 ? "#166534" : scatter.crowded > scatter.people / 20 ? "#b91c1c" : "#a16207" }}>
-                {scatter.crowded}
-              </b>{" "}of {scatter.people} people sit next to somebody from another team
-            </Small>
-            <Small suppressHydrationWarning>
-              <b style={{ color: scatter.touching === 0 ? "#166534" : "#b91c1c" }}>{scatter.touching}</b>
-              {" "}cells press against a different one of the {scatter.divisions} top-level
-              groups (rung {scatter.rung})
-            </Small>
-          </>
-        )}
-        {missing > 0 && (
-          <Small style={{ color: "#b91c1c" }}>
-            <b>{missing}</b> unit{missing === 1 ? " is" : "s are"} missing from the map
-            entirely — the layout gave {missing === 1 ? "it" : "them"} no cell. Please tell
-            Claude what you just did.
-          </Small>
-        )}
-        {buried > 0 && (
-          <Small style={{ color: "#b91c1c" }}>
-            <b>{buried}</b> unit{buried === 1 ? "" : "s"} sharing a cell with another —
-            they cannot be pointed at. Please tell Claude what you just did.
-          </Small>
-        )}
-        <Small style={{ color: "#94a3b8" }}>
-          {mode === "hex"
-            ? justMoved
-              ? "pick that tile up again within 5s to tidy its branch — islands spaced by how closely related they are"
-              : "drag a tile to move it and its branch · hold over another to merge"
-            : "drag to pan"}
-        </Small>
-        {ringRead && (
-          /**
-           * **What the ring under the hand says.** The lift on the map is the
-           * answer to *which one am I on*; this is the answer to *and what
-           * does it say*. It names what the figure speaks for, because a
-           * place's ring covers its whole branch and a person's covers only
-           * them — a number that does not say which is a number nobody can
-           * check.
-           */
-          <Small style={{ color: "#0f172a" }}>
-            <b style={{ color: ringRead.colour }}>
-              {Math.round(ringRead.value * 100)}% {HEX_RING_LABELS[ringRead.slot]}
-            </b>
-            {" — "}{HEX_RING_MEANS[ringRead.slot]}, for{" "}
-            {ringRead.person
-              ? ringRead.name
-              : `the ${ringRead.people} ${ringRead.people === 1 ? "person" : "people"} under ${ringRead.name}`}
-          </Small>
-        )}
-        {hovered && (
-          <Small>
-            <b>{hovered.name}</b> — CEO+{hovered.depth} · {hovered.totalSeats} in branch
-            {hexScene?.hex.exclaves.has(hovered.id) ? " · exclave" : ""}
-            {(() => {
-              const read = signal.get(hovered.id);
-              if (!read || read.health === null) return " · health not measured";
-              return (
-                <>
-                  {" · health "}
-                  <b style={{ color: ringColour("health", read.health) }}>
-                    {Math.round(read.health * 100)}%
-                  </b>
-                  {peopleIds.has(hovered.id)
-                    ? ""
-                    : ` across ${read.people} ${read.people === 1 ? "person" : "people"}`}
-                </>
-              );
-            })()}
-          </Small>
-        )}
-        {SHOW_HEALTH_RINGS && peopleIds.size > 0 && (
-          <Small style={{ color: "#94a3b8" }}>
-            the three rings are <b>invented</b>{" "}— no health column, no
-            tracker. Health runs invented pressures through the signal
-            engine&apos;s real thresholds; sprint and delivery come from the
-            same mock boards the orbital demo uses. Point at a ring to read
-            it.
-          </Small>
-        )}
-      </Panel>
+      </Bar>
     </>
   );
 }
@@ -5548,13 +5764,50 @@ const Dialog = ({ children }: { children: React.ReactNode }) => (
   }}>{children}</div>
 );
 
-const Panel = ({ children }: { children: React.ReactNode }) => (
+/**
+ * **The readouts, hanging off the `study` button.** Same card the top-right
+ * corner used to hold permanently; it is now under the button that opens it,
+ * and it scrolls, because on a company with scatter figures there is more in
+ * it than a short window has room for.
+ */
+const Sheet = ({ children }: { children: React.ReactNode }) => (
   <div style={{
-    position: "absolute", right: 12, top: 12, width: 272, padding: "10px 12px",
-    background: "rgba(255,255,255,0.94)", border: "1px solid #e5e7eb", borderRadius: 12,
-    display: "flex", flexDirection: "column", gap: 6, zIndex: 5,
+    position: "absolute", left: 12, top: 46, width: 292, padding: "10px 12px",
+    maxHeight: "calc(100vh - 120px)", overflowY: "auto",
+    background: "rgba(255,255,255,0.97)", border: "1px solid #e5e7eb", borderRadius: 12,
+    display: "flex", flexDirection: "column", gap: 6, zIndex: 7,
     fontFamily: "ui-sans-serif, system-ui", fontSize: 12, color: "#374151",
-    boxShadow: "0 6px 20px rgba(15,23,42,0.06)",
+    boxShadow: "0 14px 36px rgba(15,23,42,0.12)",
+  }}>{children}</div>
+);
+
+/** The permanent strip along the bottom: zoom, the scale, and the two actions
+ *  that are always worth having to hand. */
+const Bar = ({ children }: { children: React.ReactNode }) => (
+  <div style={{
+    position: "absolute", left: "50%", bottom: 14, transform: "translateX(-50%)",
+    zIndex: 6, display: "flex", gap: 5, alignItems: "center", padding: "7px 10px",
+    background: "rgba(255,255,255,0.94)", border: "1px solid #e5e7eb", borderRadius: 999,
+    boxShadow: "0 8px 26px rgba(15,23,42,0.10)",
+    fontFamily: "ui-sans-serif, system-ui", fontSize: 12, color: "#374151",
+    backdropFilter: "blur(6px)",
+  }}>{children}</div>
+);
+
+/**
+ * **A card beside a node.** `pointerEvents: "none"` is the load-bearing line:
+ * the callout appears within a few dozen pixels of whatever the hand is
+ * pointing at, so anything it can intercept it will — the ring under it, the
+ * node's own double-click, the drag that starts the next gesture.
+ */
+const Callout = ({ left, top, wide, children }: {
+  left: number; top: number; wide: number; children: React.ReactNode;
+}) => (
+  <div style={{
+    position: "absolute", left, top, width: wide, zIndex: 8, padding: "9px 12px 10px",
+    background: "rgba(255,255,255,0.97)", border: "1px solid #e2e8f0", borderRadius: 14,
+    boxShadow: "0 12px 32px rgba(15,23,42,0.14)", pointerEvents: "none",
+    fontFamily: "ui-sans-serif, system-ui", fontSize: 12, color: "#374151",
   }}>{children}</div>
 );
 

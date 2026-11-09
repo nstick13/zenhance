@@ -4719,3 +4719,147 @@ while its two neighbours fade.
 
 **Not checked:** touch and tap, a real five-year-old iPad or the Lenovo, and
 the blank-paper grow path with a newly made person.
+
+## The corner card came off (2026-11-09)
+
+Greg, in one message:
+
+> *"Now let's collapse the persistent 'Hex grid study' callout on the top
+> right. Instead: team health indications on hovering on the health rings
+> should appear as a nearby callout in a nice rounded rectangular shape. The
+> zoom buttons should be permanent buttons at the bottom of the window, with
+> the number (eg 0.38x) shown in line with them. This does not conflict with
+> ordinary scroll, pan or zoom, it's just moving the zoom buttons into a
+> permanent position. Then minimise the other data in that callout into a
+> dropdown next to the different company options, to the top left, before
+> where it says 'company'."*
+
+One card in the top-right corner had been carrying four different jobs since
+the study started: a title, the zoom ladder, two or three things you press,
+and a dozen lines of measurement. It was 272px wide and as tall as the window
+on a company with scatter figures, so on a 1024px iPad it covered about a
+quarter of the map it was measuring. Worse, the two things on it that answer
+*while you are pointing at something* — the ring read and the node read — were
+the furthest from where you were pointing. You read a gauge by looking away
+from it.
+
+So the card is gone and its four jobs went four ways.
+
+### Where each piece went
+
+| Was | Is |
+|---|---|
+| "Hex grid study" + the scale | The heading inside the dropdown; the scale is on the bottom bar |
+| The zoom ladder | A permanent bar along the bottom |
+| `fit`, `undo`, `tidy up` | The same bar |
+| The tidy report, the layout statistics, world size, cell size, scatter | The `study ▾` dropdown, top-left |
+| The ring read, the node read | A callout beside the node |
+| `N units missing` / `N buried` | A red strip above the bar — see below |
+| "pick that tile up again within 5s" | A dark pill above the bar — see below |
+| "drag a tile to move it…", "the three rings are invented…" | The dropdown |
+
+### Three decisions worth arguing with
+
+**The ladder reads outward to inward.** `HEX_LADDER` is ordered most-zoomed-in
+first, which is right for the thresholds it exists to define. Along the bottom
+of a window the same five buttons read as a slider, and a slider whose left end
+is the most zoomed-*in* rung points the wrong way. `LADDER_OUT_IN` reverses it
+once, at the top of `HexLab.tsx`, so the ladder itself keeps one order.
+
+**`fit` and `undo` went to the bar, not the dropdown.** They were the only two
+things on the old card that *did* something, and Greg asked for undo to be
+permanently available by name on 2026-10-20 (*"a button in the interface **and**
+ctrl+z / cmd+z"*). Putting either behind a click would be a loss dressed up as
+tidiness. `tidy up` joins them when there is anything to tidy.
+
+**Two things did not go in the dropdown although they are text.** The
+`N units are missing from the map entirely` and `N units sharing a cell`
+lines are bug reports — they end *"Please tell Claude what you just did"* —
+and nobody opens a dropdown to be told something has gone wrong. The
+five-second "pick that tile up again" offer expires by itself, so it is the
+one hint on the page that is worthless a moment late. Both are now drawn above
+the bottom bar, and both are absent on a clean, still map.
+
+### The callout stands off the rings, not the centre
+
+The first version put the card a fixed 34px from the node's centre. On a
+person that is fine; on a place — whose mark *is* its cell — it landed
+straight on top of the three rings it was reading out. It now stands off by
+`ringReach(...)` — the same figure `ringAtPointer` uses for the outermost ring
+— plus 16px, with 34px as the floor for a node too small for any ring to be
+drawn. It flips to the other side of the node when there is no room on the
+right, and clamps so it cannot leave the glass.
+
+It is anchored to **the node**, not to the pointer, and that is a performance
+decision as much as a design one. A card that follows the mouse needs the
+pointer position in React state, and the note on `setHoverRing` in
+`onPointerMove` (2026-11-08) is about exactly what that costs on a page with a
+thousand-node canvas in it: a fresh value every move re-renders the lot. The
+node's position is already known at render time from the camera. The card
+therefore costs nothing per move, and it stops jittering while you read it.
+
+`pointerEvents: "none"` is load-bearing. The callout appears within a few dozen
+pixels of whatever the hand is pointing at, so anything it can intercept it
+will — the ring under it, the node's own double-click, the drag that starts the
+next gesture.
+
+### Two things fixed on the way past
+
+**`painted in —`.** The paint instrument writes its figure straight into a
+`<b>` element rather than through React state, because setting state from the
+draw would make the draw run again. That element now only exists while the
+dropdown is open, and the ordinary case is opening it on a map that is sitting
+still — so it read an em-dash until something made the canvas repaint.
+`drawMsEl` is now a callback ref that writes the last measurement in as the
+element mounts.
+
+**`0 in branch`.** The node read said `CEO+3 · 0 in branch` for every node on
+the map. `totalSeats` is how the *orbital* model counts people, and on hex a
+person is a unit, so nothing is seated anywhere and the figure was nought
+everywhere. It was wrong in the old panel too and simply less visible there.
+Dropped; the health line beside it already gives the branch size, counted from
+the signal roll-up, and that one is right.
+
+### The company switcher moved into `HexLab`
+
+It was a `<nav>` in `page.tsx`. Greg's "before where it says 'company'" puts
+the dropdown and the switcher on one row, and two components cannot share a
+row across the server/client line without one of them guessing the other's
+width — so the row belongs to the one that has to be a client component.
+`page.tsx` keeps the half that cannot move (`buildLabCompany` reaches the
+fixture generator, which uses Node's `randomUUID`) and hands across **labels
+only**: importing `./company` from the browser would pull the whole fixture
+generator into the bundle to read five strings out of it.
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint` clean on both touched files, 989 tests
+passing and 1 expected fail across 66 files. In a browser, on a fresh load with
+zero console errors:
+
+- **Digital Tailoring-ish** at the Person rung: swept a synthetic pointer out
+  from Trident Group's centre and read the callout at each step — three
+  distinct bands naming health (65%), sprint progress (49%) and delivery
+  progress (24%), each saying *"for the 96 people under Trident Group"*.
+- **Sparrow-ish** at the Team rung: the same sweep on **Mo Adeyemi** gives
+  health 80%, sprint 63%, delivery 20%, each saying *"for them alone"*. The
+  card's `left` did not change across the whole sweep, which is the
+  anchored-to-the-node claim above.
+- **1,000 · 8 rungs**: the dropdown opens showing `painted in 2.9ms`
+  immediately, on a map that had not moved — the callback-ref fix.
+- **Blank · grow one**: bottom bar and strip render, "Start here" unaffected.
+- A one-cell drag on Sparrow-ish put `tidy up` in the bar and the five-second
+  pill above it; `undo` removed both and restored the arrangement.
+- At **1024 × 768** — the iPad in AGENTS.md — the top strip is one row and the
+  bottom bar is 350px wide, both clear of the map.
+
+**Not checked:** touch and tap, a real five-year-old iPad or the Lenovo, and
+what the strip does below about 700px, where the nav wraps to two rows and the
+dropdown would open over the second one.
+
+**Known and left alone:** a wheel with the cursor over the bottom bar does not
+zoom the map, because the bar is a DOM element over the canvas and the wheel
+handler is on the canvas. That is how every toolbar behaves, the bar is about
+350 × 32px at the very bottom of the window, and Greg's *"does not conflict
+with ordinary scroll, pan or zoom"* is about the map, which is untouched.
+

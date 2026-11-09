@@ -1801,6 +1801,12 @@ is a path from `onPointerUp` (or `onPointerDown` for a touch pointer;
 a decision about when a lit ring goes out. Worth settling at the same time as
 the click state rather than twice.
 
+*Since 2026-11-09* the ring read is a rounded callout beside the node rather
+than a line in a corner panel (`Callout` in `HexLab.tsx`). That does not change
+the task — a finger still cannot make the callout appear — but it does mean
+the answer is already somewhere a tap would want it, which makes the tap state
+a smaller job than it was.
+
 ### ☐ Nothing checks our work automatically
 
 Most software projects have a robot that inspects every change the moment it
