@@ -4972,3 +4972,114 @@ pointer swept out from Trident Group's centre still finds its three bands at
 master centre's three-radius white tile reads on a company deeper than eight
 rungs (Northwind has no card on this page).
 
+## The company's own reading never leaves (2026-11-09, later still)
+
+Greg: *"make the health rings have the same zoom behaviour as /org — in master
+centre, they should be visible all the time, with the human and team rings
+visible on zoom."*
+
+What `/org` does is one function, `unitRingReveal` in `lib/map/camera/lod.ts`:
+the centre's gauges are on at every zoom, and each reporting layer below it
+lights up shortly after the one above. Until today the hex map had no
+equivalent at all — **one** figure, `reveal.names`, turned every ring on the
+lattice on and off together. Pull back past 42 pixels a cell and the map lost
+every gauge it had, including the company's own, at exactly the zoom where
+that one reading was the only thing left worth saying.
+
+### Why it could not be done by depth
+
+`/org` asks the question of **depth**, and here that does not work. The hex
+ladder elides itself (`docs/HEX-ZOOM.md`): a two-rung company and an
+eleven-rung one both span the same five rungs, so org rung N does not name a
+zoom. A depth staircase tuned to look right on Digital Tailoring would never
+reach the people on the eleven-rung shape, and one tuned for that shape would
+dump every layer of Sparrow Jam onto the glass at once.
+
+So it asks the question this map was built to ask instead — **how big is the
+thing on the glass** — of the node's own white tile:
+
+```
+hexRingReveal(hostPx, isRoot) = isRoot ? 1 : smoothstep(32, 52, hostPx)
+```
+
+That gives `/org`'s behaviour for free, because on this lattice **size is
+standing**. The tile sizes were settled on 2026-11-07 and have not moved: a
+person is 0.8 of a cell, a team is its cell, a place above a team is a cell
+and a half, the master centre is three. So the stack arrives outward-in
+without anything being told to, on a company of any depth, and no rung needs a
+number of its own:
+
+| | its tile | its gauges arrive | full by |
+|---|---|---|---|
+| the master centre | 3 cells | never leaves | — |
+| a place above a team | 1.5 cells | 21px a cell | 35px |
+| a team | its cell | 34px a cell | 54px — the Team rung |
+| a person | 0.8 of a cell | 42px a cell | 68px |
+
+### The person figure did not move
+
+The band is 32–52 **tile** pixels because that is 42–68 **cell** pixels for a
+person — `NAMES_AT_CELL_PX`, which is where their rings already were, and the
+one ring figure Greg has looked at and settled (2026-11-08: *"let's start with
+health rings becoming visible when human labels become visible too"*). Swept
+across the whole range, the largest difference between the old rule and the
+new one for a person is **0.018 of opacity**, at 54 pixels a cell. A test pins
+both ends of it.
+
+### Two things that had to follow
+
+**The root is exempt, and `ringBand` still refuses what will not fit.** At the
+outermost rung the master centre's tile is about twelve pixels across, and the
+third ring would reach past it, so two are drawn and the outer one is not.
+That is the honest answer rather than a gap — what fits is drawn, and the
+innermost ring, the one about the people, fits at every zoom the camera
+allows.
+
+**The hand had to be told the same thing as the eye.** `ringAtPointer` tested
+`reveal.names` once above its loop, which was the whole map's answer while
+every ring arrived at once. It now asks `hexRingReveal` per node, so the master
+centre is pointable at a zoom where nothing else wears a gauge, and a person's
+ring is not a target before it is a sight.
+
+The crowd batch is untouched and still nine strokes: every person on a lattice
+stands on exactly one cell, so `hexRingReveal` cannot give two of them
+different answers, and it is asked once for all of them.
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint` clean, **996 tests passing + 1 expected
+fail** across 66 files, five of them new in `lib/map/camera/__tests__/hexLod.test.ts`:
+the root reads 1 at every zoom from 0.5 to 2,000 cell-pixels; a person's band
+is still the names band; bigger tiles light before smaller ones at every zoom;
+the curve has no step in it; and the rungs carry what the table above says
+they carry.
+
+In a browser at 1280 × 820 with **zero console errors on all four companies**.
+Counted rather than eyeballed: a script reads the canvas back and counts
+pixels matching the five ring colours exactly, and buckets them into 60-pixel
+sites, so *how many things on screen are wearing a gauge* is a number rather
+than an impression.
+
+| sites wearing a gauge | outermost zoom | Function rung | Team rung | Person rung |
+|---|---|---|---|---|
+| 1,000 · 8 rungs | **1** | 2 | 9 | 35 |
+| Digital Tailoring-ish · 45 | **1** | 1 — its floor is the same place | 21 | 21 |
+| Sparrow-ish · 10 | **2** — one stack across two buckets | the same | 20 | 20 |
+
+A site is a 60-pixel bucket, so the counts are a floor on how many *things*
+are lit rather than a headcount; what matters is the first column, where the
+only lit thing on the whole glass is the master centre, and the climb after
+it. (The two small companies reach their camera floor before the Function
+rung, which is the ladder eliding itself as designed.)
+
+On Digital Tailoring at its outermost zoom the one site is centred at
+(571, 398) and reaches 15 pixels — the master centre and nothing else.
+Pointing there reads back *"a deep enterprise shape · 49% sprint progress ·
+how far the points have moved, for the 97 people under a deep enterprise
+shape"*, so the new reading is pointable as well as visible. Blank paper still
+starts empty.
+
+**Not checked:** touch, a real five-year-old iPad or the Lenovo; the paint cost
+was not re-measured, on the grounds that the change replaces one multiply with
+two and a smoothstep per node drawn and removes no work from any pass — if
+that is wrong it is wrong by a few microseconds.

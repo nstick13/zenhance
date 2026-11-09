@@ -614,6 +614,34 @@ building it turned up.
   far in, or it is right and it was the sentence that was loose. Worth thirty
   seconds with the map open and the `[` and `]` keys.
 
+## A sixth figure, asked per node (2026-11-09)
+
+The ladder gained one reveal that is not a field of `HexReveal`:
+`hexRingReveal`, which decides whether a node is wearing its health rings.
+
+It is here because it is a zoom figure, and it is shaped differently because
+it is a *per-node* zoom figure — the root is exempt, and everything else is a
+`smoothstep` over **the node's own tile in screen pixels** rather than over
+cell-pixels. The reasoning is `docs/HEX-LAYOUT.md` § *The company's own reading
+never leaves*; the part that belongs to this document is why it could not be
+written the way `/org` writes it.
+
+`/org` reveals rings by **depth** (`unitRingReveal` in `lib/map/camera/lod.ts`:
+depth 0 always, each level starting `0.13` of scale after the one above).
+That works there because the orbital map has one geometry for every company.
+Here the ladder elides itself — the whole argument at the top of this file —
+so org rung N does not name a zoom: a staircase tuned on Digital Tailoring
+would never reach the people on the eleven-rung shape, and one tuned for that
+shape would light all of Sparrow Jam at once.
+
+Asking the size question instead gives `/org`'s *behaviour* without `/org`'s
+*mechanism*, because on this lattice size already carries standing: the four
+tile sizes settled on 2026-11-07 (0.8 of a cell, a cell, 1.5 cells, 3 cells)
+put the four kinds of node in hierarchy order with nothing said about
+hierarchy. That is the same move `placePresence` makes one section up, and it
+is probably the general shape of the answer whenever this map wants something
+`/org` does by depth.
+
 ## Verified, and not
 
 **Checked:** `npx tsc --noEmit` clean, lint clean on everything touched, the

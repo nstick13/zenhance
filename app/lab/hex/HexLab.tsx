@@ -78,6 +78,7 @@ import {
   HEX_LADDER,
   cellPxOf,
   hexRevealAt,
+  hexRingReveal,
   levelAt,
   placePresence,
   placeTaken,
@@ -3095,17 +3096,34 @@ export default function HexLab({
      * Two things could not come across. **Where they sit** is `ringBand` in
      * `./health.ts`, because on a lattice a team *is* its cell and a place
      * overflows it, so there is no wide empty orbit to step into. **When they
-     * appear** is `ringAlpha` below: `reveal.names`, so a ring and a name
-     * arrive together — Greg: *"let's start with health rings becoming
-     * visible when human labels become visible too."* Unlike a label a ring
-     * can cross-fade, so it uses the band as a curve rather than as a switch,
-     * which puts it half-arrived exactly where the names flip on.
+     * appear** is `ringAlphaOf` below.
      *
      * **The hand is read through the same `ringBand`** the painter draws
      * with, which is the orbital map's rule for this and the reason it is
      * worth stating twice: what you can point at is exactly what you can see.
      */
-    const ringAlpha = SHOW_HEALTH_RINGS ? reveal.names : 0;
+
+    /**
+     * **How much of *this* node's stack is here** — one figure per node since
+     * 2026-11-09, when Greg asked for *"the same zoom behaviour as /org — in
+     * master centre, they should be visible all the time, with the human and
+     * team rings visible on zoom."*
+     *
+     * It was `reveal.names` for every node on the map until then, so a ring
+     * and a name arrived together and the company's own reading disappeared
+     * at exactly the zoom where it was the only reading left. The rule now is
+     * `hexRingReveal`, which reads the one thing that tells a person from a
+     * team from a place from the master centre on this map: how much glass
+     * the ground it stands on covers. A person's figure lands where it always
+     * did — see `RINGS_AT_HOST_PX` — and everything bigger than a person
+     * arrives sooner, the master centre never leaving at all.
+     *
+     * Cheap enough to ask per node: two multiplications and a smoothstep, and
+     * the crowd asks it once for all of them because every person on a
+     * lattice stands on the same amount of ground.
+     */
+    const ringAlphaOf = (id: string): number =>
+      SHOW_HEALTH_RINGS ? hexRingReveal(hostRadius(id) * scale, id === tree.rootId) : 0;
     const TAU = Math.PI * 2;
     const FROM = -Math.PI / 2;
     /** An arc as its own sub-path, so many of them can share one stroke. */
@@ -3139,6 +3157,8 @@ export default function HexLab({
      * does not share the crowd's weight and colour.
      */
     const paintRings = (cell: Cell, id: string) => {
+      const ringAlpha = ringAlphaOf(id);
+      if (ringAlpha <= 0.02) return;
       const stack = stackOf(id);
       if (!stack) return;
       const centre = cellToWorld(cell, hexSize);
@@ -3209,6 +3229,11 @@ export default function HexLab({
      */
     const paintCrowdRings = (folk: typeof visible) => {
       if (folk.length === 0) return;
+      /** One figure for the whole crowd, for the same reason one geometry
+       *  serves it: every person on a lattice stands on exactly one cell, so
+       *  `hexRingReveal` cannot give two of them different answers. */
+      const ringAlpha = ringAlphaOf(folk[0].id);
+      if (ringAlpha <= 0.02) return;
       const sample = stackOf(folk[0].id);
       if (!sample) return;
       const lone = hoverRing?.unitId ?? null;
@@ -3677,8 +3702,9 @@ export default function HexLab({
         nodePath(cell, unit.id);
         ctx.fillStyle = css(hueFor(unit.id), unit.depth, maxDepth, moving ? 0.22 : 0.97);
         ctx.fill();
-        // Its gauges, a third of the way out from its tile's centre.
-        if (ringAlpha > 0.02 && !moving) paintRings(cell, unit.id);
+        // Its gauges, a third of the way out from its tile's centre. When
+        // they are here is each node's own answer now — `ringAlphaOf`.
+        if (!moving) paintRings(cell, unit.id);
       }
     }
 
@@ -3737,13 +3763,11 @@ export default function HexLab({
        * edges above — and after the marks, so that nothing a neighbour draws
        * can cut across a gauge.
        */
-      if (ringAlpha > 0.02) {
-        paintCrowdRings(folk);
-        // And the one the hand is on, over the rest and on its own terms.
-        const lone = hoverRing && peopleIds.has(hoverRing.unitId)
-          ? hexScene.hex.cells.get(hoverRing.unitId) : null;
-        if (lone && !drag?.members.has(hoverRing!.unitId)) paintRings(lone, hoverRing!.unitId);
-      }
+      paintCrowdRings(folk);
+      // And the one the hand is on, over the rest and on its own terms.
+      const lone = hoverRing && peopleIds.has(hoverRing.unitId)
+        ? hexScene.hex.cells.get(hoverRing.unitId) : null;
+      if (lone && !drag?.members.has(hoverRing!.unitId)) paintRings(lone, hoverRing!.unitId);
     }
 
     // 3. Where a dragged branch would land. Greg: *"make the nearest hexagon
@@ -4219,8 +4243,6 @@ export default function HexLab({
    */
   const ringAtPointer = useCallback((world: Point): { unitId: string; slot: number } | null => {
     if (!hexScene || !SHOW_HEALTH_RINGS) return null;
-    const px = cellPxOf(hexScene.hex.size, camera.scale);
-    if (hexRevealAt(px).names <= 0.02) return null;
     let best: { unitId: string; slot: number } | null = null;
     let bestD = Infinity;
     for (const unit of scene.units) {
@@ -4229,6 +4251,15 @@ export default function HexLab({
       const person = peopleIds.has(unit.id);
       const mark = sizes.markRadius(unit.id);
       const host = sizes.hostRadius(unit.id);
+      /**
+       * **Asked per node, because it is answered per node.** It used to be
+       * one test above the loop against `reveal.names`, which was the whole
+       * map's answer while every ring arrived at once. Now the master centre
+       * can be read at a zoom where nothing else wears a gauge, and a team's
+       * arrives before a person's, so the hand has to be told the same thing
+       * the eye is.
+       */
+      if (hexRingReveal(host * camera.scale, unit.id === tree.rootId) <= 0.02) continue;
       if (d > ringReach(mark, host, person, camera.scale)) continue;
       const slot = ringAtDistance(mark, host, person, camera.scale, d);
       if (slot === null) continue;
@@ -4237,7 +4268,7 @@ export default function HexLab({
       best = { unitId: unit.id, slot };
     }
     return best;
-  }, [hexScene, camera.scale, scene, peopleIds, sizes, signal]);
+  }, [hexScene, camera.scale, scene, peopleIds, sizes, signal, tree.rootId]);
 
   /**
    * **The hand is down, and nothing has been decided yet.**

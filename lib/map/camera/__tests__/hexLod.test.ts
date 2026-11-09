@@ -12,11 +12,13 @@ import {
   HEX_LADDER,
   NAMES_AT_CELL_PX,
   PEOPLE_AT_CELL_PX,
+  RINGS_AT_HOST_PX,
   SOFTEN_FROM_CELL_PX,
   SOFTEN_MAX,
   SOFTEN_STEPS,
   cellPxOf,
   hexRevealAt,
+  hexRingReveal,
   levelAt,
   placePresence,
   placeTaken,
@@ -102,6 +104,101 @@ describe("nothing pops", () => {
       expect(r.tiles).toBeGreaterThanOrEqual(r.names - 1e-9);
       expect(r.names).toBeGreaterThanOrEqual(r.work - 1e-9);
     }
+  });
+});
+
+/**
+ * **The gauges, which arrive by size rather than by depth** (2026-11-09).
+ *
+ * The promise is the orbital map's — the centre reads at every zoom, and each
+ * layer below it lights up as you come down to it — kept by asking how much
+ * glass a node's own ground covers. These tests hold the two halves of that:
+ * the ordering is the hierarchy's, and a person's gauges did not move when the
+ * rule changed out from under them.
+ */
+describe("a node's gauges arrive when its own ground does", () => {
+  /**
+   * **The four tile rules in `HexLab.tsx`, written here in cell-pixels.** A
+   * copy, deliberately: this file cannot import a client component, and the
+   * property being tested is precisely that those four sizes land in the right
+   * order and at the right zooms. If a tile rule moves and these do not, the
+   * test below stops describing the map — which is why each one names the
+   * constant it mirrors.
+   */
+  // `activeInset` — `ACTIVE_GAP` 0.04 of a cell, floored at `ACTIVE_GAP_PX` 3
+  // screen pixels of gap between two neighbours, capped at `ACTIVE_GAP_MAX`.
+  const insetPx = (cellPx: number) =>
+    Math.min(cellPx * 0.12, Math.max(cellPx * 0.04, 3 / Math.sqrt(3)));
+  /** `PERSON_TILE` — four fifths of the cell the person keeps clear. */
+  const personHost = (cellPx: number) => (cellPx - insetPx(cellPx)) * 0.8;
+  /** A team fills its cell, less the same clear ground. */
+  const teamHost = (cellPx: number) => cellPx - insetPx(cellPx);
+  /** `PLACE_SPAN` — the cell and half a radius more. */
+  const placeHost = (cellPx: number) => cellPx * 1.5;
+  /** `MASTER_SPAN` — three cell radii. */
+  const masterHost = (cellPx: number) => cellPx * 3;
+
+  it("keeps the master centre's rings at every zoom there is", () => {
+    // Including below the outermost rung, where the company has stopped
+    // shrinking because it already fits the window.
+    for (const cellPx of logSweep(0.5, 2000)) {
+      expect(hexRingReveal(masterHost(cellPx), true)).toBe(1);
+    }
+  });
+
+  it("leaves a person's rings exactly where the names band put them", () => {
+    // The rule they arrived under until 2026-11-09 was `reveal.names`, and
+    // this is the whole claim that the change did not disturb them: 32 and 52
+    // pixels of a person's own tile *are* 42 and 68 pixels of cell.
+    const [from, to] = NAMES_AT_CELL_PX;
+    expect(personHost(from)).toBeCloseTo(RINGS_AT_HOST_PX[0], 0);
+    expect(personHost(to)).toBeCloseTo(RINGS_AT_HOST_PX[1], 0);
+    expect(hexRingReveal(personHost(from), false)).toBeLessThan(0.01);
+    expect(hexRingReveal(personHost(to), false)).toBe(1);
+    // And halfway along the names band is halfway along the gauges.
+    expect(hexRingReveal(personHost((from + to) / 2), false)).toBeCloseTo(0.5, 1);
+  });
+
+  it("lights a bigger node's gauges before a smaller one's, at every zoom", () => {
+    // The hierarchy's own order, and it falls out of the tile sizes rather
+    // than being stated anywhere: master, then a place above a team, then a
+    // team, then the people standing on it.
+    for (const cellPx of logSweep(0.5, 2000)) {
+      const master = hexRingReveal(masterHost(cellPx), true);
+      const place = hexRingReveal(placeHost(cellPx), false);
+      const team = hexRingReveal(teamHost(cellPx), false);
+      const person = hexRingReveal(personHost(cellPx), false);
+      expect(master).toBeGreaterThanOrEqual(place - 1e-9);
+      expect(place).toBeGreaterThanOrEqual(team - 1e-9);
+      expect(team).toBeGreaterThanOrEqual(person - 1e-9);
+    }
+  });
+
+  it("gives every node but the root a band with no step in it", () => {
+    const xs = sweep(0, 200, 20_000);
+    let previous = hexRingReveal(xs[0], false);
+    for (const x of xs.slice(1)) {
+      const now = hexRingReveal(x, false);
+      expect(now).toBeGreaterThanOrEqual(0);
+      expect(now).toBeLessThanOrEqual(1);
+      expect(now).toBeGreaterThanOrEqual(previous - 1e-9);
+      expect(now - previous).toBeLessThan(0.05);
+      previous = now;
+    }
+  });
+
+  it("has a team's gauges on by the Team rung and a person's by the Person rung", () => {
+    // The rungs are what Greg reads off the bottom bar, so the claim is worth
+    // making in his units rather than in tile pixels.
+    const rung = (name: HexLevel) =>
+      HEX_LADDER.find((r) => r.name === name)!.cellPx;
+    expect(hexRingReveal(teamHost(rung("team")), false)).toBeGreaterThan(0.9);
+    expect(hexRingReveal(personHost(rung("person")), false)).toBe(1);
+    // And at the Function rung, where a team is 14px across, only the places
+    // above it and the company are wearing anything.
+    expect(hexRingReveal(teamHost(rung("function")), false)).toBe(0);
+    expect(hexRingReveal(personHost(rung("function")), false)).toBe(0);
+    expect(hexRingReveal(masterHost(rung("function")), true)).toBe(1);
   });
 });
 

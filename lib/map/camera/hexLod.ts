@@ -157,6 +157,57 @@ export function hexRevealAt(cellPx: CellPx): HexReveal {
 }
 
 /**
+ * **When a node's gauges arrive**, in screen pixels across the ground the node
+ * stands on — its host tile, which is also the figure `ringBand` weights a
+ * ring by, so one number decides both how heavy a gauge is and whether it is
+ * there at all.
+ *
+ * Greg, 2026-11-09: *"make the health rings have the same zoom behaviour as
+ * /org — in master centre, they should be visible all the time, with the human
+ * and team rings visible on zoom."* That is the orbital map's
+ * `unitRingReveal`: the centre always summarizes the company, and each layer
+ * below it lights up as you come down to it.
+ *
+ * **The orbital map asks that of depth, and here it cannot be.** The ladder
+ * elides itself — a two-rung company and an eleven-rung one span the same five
+ * rungs — so depth N does not name a zoom, and a per-depth staircase would
+ * either never reach the people on a deep company or arrive all at once on a
+ * shallow one. The hex map's own question is the one this file opens with: how
+ * big is the thing on the glass. It gives the same answer, because on this
+ * lattice **size is standing**: a person's tile is four fifths of a cell, a
+ * team's is its cell, a place above a team overflows it by half a radius and
+ * the master centre by three (`hostRadius` in `HexLab.tsx`). So the stack
+ * arrives outward-in without anything being told to, on a company of any
+ * depth, and no rung needs a number of its own.
+ *
+ * **The band is 32–52px because that is where the person rings already were.**
+ * A person's tile is `PERSON_TILE` of their cell less the active gap, so these
+ * two numbers put a person's gauges at 42–68 cell-pixels — `NAMES_AT_CELL_PX`,
+ * the one ring figure Greg has looked at and settled (2026-11-08: *"let's
+ * start with health rings becoming visible when human labels become visible
+ * too"*). Nothing about a person's rings changed; what changed is what happens
+ * to everything bigger than a person.
+ */
+export const RINGS_AT_HOST_PX: readonly [number, number] = [32, 52];
+
+/**
+ * **How much of this node's ring stack is here.**
+ *
+ * The root is exempt, exactly as depth 0 is on the orbital map: the company's
+ * own reading is the one that is true at every zoom, and at the outermost rung
+ * it is the only thing on the glass still saying anything.
+ *
+ * Its three rings are not all *drawable* there — `ringBand` refuses a ring
+ * that would reach past the tile holding it, which on a four-pixel cell is the
+ * outermost one — and that is the honest answer rather than a gap: what fits
+ * is drawn, and the innermost ring, the one about the people, fits at every
+ * zoom the camera allows.
+ */
+export function hexRingReveal(hostPx: number, isRoot: boolean): number {
+  return isRoot ? 1 : band(RINGS_AT_HOST_PX, hostPx);
+}
+
+/**
  * **How big a place has to be before it reads as one**, in screen pixels
  * across its longest side.
  *
