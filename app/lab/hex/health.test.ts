@@ -12,12 +12,12 @@ import { describe, expect, it } from "vitest";
 import { strainOf, unitProgress } from "@/lib/map/signal/progress";
 import type { MockTask } from "@/lib/mock/personTasks";
 import {
-  INSCRIBED,
-  NODE_RING_SHARE,
-  PERSON_RING_SPREAD,
-  RING_CLEAR_PX,
+  PERSON_RING_ROOM,
+  RING_GAP_MIN_PX,
+  RING_GAP_RATIO,
   RING_WIDTH_MAX_PX,
   RING_WIDTH_MIN_PX,
+  RING_WIDTH_SHARE,
   HEX_RING_LABELS,
   HEX_RING_SLOTS,
   healthColour,
@@ -191,62 +191,58 @@ describe("ringBand", () => {
   const PLACE = { mark: 110, host: 546 };
   const MASTER = { mark: 165, host: 1050 };
 
-  it("anchors a person's stack outside their mark, with Greg's 15% on it", () => {
-    const band = ringBand(PERSON.mark, PERSON.host, true, 0, 1)!;
-    const bare = PERSON.mark + RING_CLEAR_PX + band.width / 2;
-    expect(band.radius).toBeCloseTo(bare * PERSON_RING_SPREAD, 6);
-    expect(band.radius).toBeGreaterThan(PERSON.mark);
-  });
+  /** The weight and the spacing at a given zoom, worked out the way
+   *  `ringBand` works them out — so a test can say where a ring *should* be
+   *  without restating the implementation line for line. */
+  const weight = (mark: number, scale: number) => {
+    const w = Math.min(RING_WIDTH_MAX_PX, Math.max(RING_WIDTH_MIN_PX, mark * scale * RING_WIDTH_SHARE));
+    return { w, gap: Math.max(RING_GAP_MIN_PX, w * RING_GAP_RATIO) };
+  };
 
-  it("keeps a person's whole stack inside their own tile", () => {
-    for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
-      const band = ringBand(PERSON.mark, PERSON.host, true, slot, 1)!;
-      expect(band.radius + band.width / 2).toBeLessThanOrEqual(PERSON.host * INSCRIBED);
-    }
-  });
-
-  it("anchors a structural node's stack at a third of its tile", () => {
-    for (const node of [TEAM, PLACE, MASTER]) {
-      expect(ringBand(node.mark, node.host, false, 0, 1)!.radius)
-        .toBeCloseTo(node.host * NODE_RING_SHARE, 6);
-    }
-  });
-
-  /**
-   * **The gauges did not move on 2026-11-09**, though the thing they are drawn
-   * around shrank to a dot. A structural node anchored at a third of its
-   * *mark* while its mark and its tile were the same shape; it now anchors at
-   * a third of its *tile*, and the tile is that same figure. This pins that
-   * equivalence, so the day the two drift apart it is a decision somebody took
-   * rather than an accident.
-   */
-  it("puts a team's rings exactly where the old mark-anchored rule did", () => {
-    // The old call was ringBand(350, 350, …) — mark and tile the same figure,
-    // because a team's mark *was* its cell. The new one hands in a dot of 110
-    // and the same 350 tile, and must land on the same three circles.
-    for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
-      expect(ringBand(TEAM.mark, TEAM.host, false, slot, 1))
-        .toEqual(ringBand(TEAM.host, TEAM.host, false, slot, 1));
-    }
-  });
-
-  it("keeps a structural node's whole stack inside its own tile", () => {
-    for (const node of [TEAM, PLACE, MASTER]) {
-      for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
-        const band = ringBand(node.mark, node.host, false, slot, 1)!;
-        expect(band.radius + band.width / 2).toBeLessThanOrEqual(node.host * INSCRIBED);
+  it("stands the innermost ring off by one whole empty slot", () => {
+    // Greg, 2026-11-10: "the offset equal to one ring-width plus whatever
+    // spacing exists between the rings already (as if there is a missing
+    // ring)". So the first ring drawn sits where a *second* ring would, had
+    // one been drawn against the node's own edge.
+    for (const node of [PERSON, TEAM, PLACE, MASTER]) {
+      for (const scale of [0.1, 1, 3]) {
+        const { w, gap } = weight(node.mark, scale);
+        const band = ringBand(node.mark, node.host, node === PERSON, 0, scale);
+        if (!band) continue;
+        expect((band.radius - node.mark) * scale).toBeCloseTo(w + gap + w / 2, 6);
       }
     }
   });
 
-  /** A dot two or three people wide must not be swallowed by the ring that
-   *  hugs it — the innermost band starts a third of the way out, and that
-   *  third is measured on a tile far bigger than the dot. */
-  it("leaves every structural dot clear of its innermost ring", () => {
-    for (const node of [TEAM, PLACE, MASTER]) {
-      const band = ringBand(node.mark, node.host, false, 0, 1)!;
-      expect(band.radius - band.width / 2).toBeGreaterThan(node.mark);
+  it("hugs the node at every zoom, which is the whole of the /org model", () => {
+    // The failure this replaces: the stack used to be anchored at a third of
+    // the node's *tile*, a world distance, so it ballooned on the glass as
+    // you zoomed in while the line capped out — "the rings themselves become
+    // very skinny". Every gap is in screen pixels now, so the distance from
+    // the dot to its outermost ring is bounded however far in you go.
+    const reaches = [0.1, 0.5, 1, 4, 16].map((scale) => {
+      const band = ringBand(MASTER.mark, MASTER.host, false, HEX_RING_SLOTS.length - 1, scale)!;
+      return (band.radius - MASTER.mark) * scale;
+    });
+    for (const px of reaches) expect(px).toBeLessThan(120);
+    // And it never collapses onto the node either.
+    for (const px of reaches) expect(px).toBeGreaterThan(RING_WIDTH_MIN_PX);
+  });
+
+  it("spaces the stack evenly, one ring plus one gap at a time", () => {
+    for (const scale of [0.2, 1, 5]) {
+      const { w, gap } = weight(TEAM.mark, scale);
+      const steps = HEX_RING_SLOTS.map((_, i) => ringBand(TEAM.mark, TEAM.host, false, i, scale)!.radius);
+      for (let i = 1; i < steps.length; i++) {
+        expect((steps[i] - steps[i - 1]) * scale).toBeCloseTo(w + gap, 6);
+      }
     }
+  });
+
+  it("is twice the weight it was before 2026-11-10", () => {
+    // The old range was 2.2–8 screen pixels; Greg asked for "2x thicker".
+    expect(RING_WIDTH_MIN_PX).toBeCloseTo(2 * 2.2, 6);
+    expect(RING_WIDTH_MAX_PX).toBeCloseTo(2 * 8, 6);
   });
 
   it("holds its weight in screen pixels, so one zoom does not fatten it", () => {
@@ -258,9 +254,47 @@ describe("ringBand", () => {
     }
   });
 
-  it("refuses a ring it cannot pay for rather than drawing a thin one", () => {
-    expect(ringBand(0.4, 0.4, false, 2, 1)).toBeNull();
+  it("leaves every dot clear of the ring that hugs it", () => {
+    for (const node of [PERSON, TEAM, PLACE, MASTER]) {
+      const band = ringBand(node.mark, node.host, node === PERSON, 0, 1);
+      if (!band) continue;
+      expect(band.radius - band.width / 2).toBeGreaterThan(node.mark);
+    }
+  });
+
+  /**
+   * **The one ceiling left is the crowd batch's.** A thousand people's rings
+   * are merged into nine strokes, which is only safe while no two stacks
+   * overlap; a structural node has no neighbour close enough to collide with
+   * and is allowed to overflow, exactly as its tile does.
+   */
+  it("refuses a person's ring that would reach into the next cell", () => {
+    for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
+      const band = ringBand(PERSON.mark, PERSON.host, true, slot, 1);
+      if (!band) continue;
+      expect(band.radius + band.width / 2).toBeLessThanOrEqual(PERSON.host * PERSON_RING_ROOM);
+    }
+    // Squeeze the room and the outermost one goes rather than being drawn thin.
+    expect(ringBand(PERSON.mark, PERSON.mark * 1.2, true, 2, 1)).toBeNull();
+  });
+
+  it("lets the master centre keep all three rings at the outermost zoom", () => {
+    // What the old tile-measured ceiling took away: at four pixels a cell the
+    // company's dial is the only reading on the glass, and it used to lose
+    // its outer ring exactly there.
+    for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
+      expect(ringBand(MASTER.mark, MASTER.host, false, slot, 4 / 364)).not.toBeNull();
+    }
+  });
+
+  it("refuses a node with no size rather than inventing one", () => {
     expect(ringBand(0, 350, true, 0, 1)).toBeNull();
+    expect(ringBand(55, 0, true, 0, 1)).toBeNull();
+    expect(ringBand(55, 280, true, -1, 1)).toBeNull();
+    // A structural node with no room is *not* refused: it has no neighbour to
+    // collide with, and at the outermost zoom its dial should be the biggest
+    // thing on the glass.
+    expect(ringBand(0.4, 0.4, false, 2, 1)).not.toBeNull();
   });
 });
 

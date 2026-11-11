@@ -5201,3 +5201,112 @@ worthless. `touch` the files and hard-reload after a stash.
 **Not checked:** touch, a real five-year-old iPad or the Lenovo, and
 `prefers-reduced-motion` on the glass — the branch that skips the clock is one
 line and is not exercised by a test.
+
+## The rings stopped drifting off their nodes (2026-11-10)
+
+Greg: *"there's a point where the radius about the central node becomes fixed
+and then the rings themselves become very skinny… refer back to /org — the
+health rings and their mapping to the zoom level, and how they appear to
+change size as we zoom in is the model we're after. The health rings should
+also hug the relevant node more tightly — let's have the offset equal to one
+ring-width plus whatever spacing exists between the rings already (as if there
+is a missing ring). And overall, make them 2x thicker."*
+
+### What was wrong
+
+A structural node's stack was anchored at a third of its **white tile** — a
+distance in *world* units. A world distance grows on the glass as you zoom in,
+while a ring's weight was pinned in screen pixels and capped at eight. So the
+master centre's gauges were a circle a third of a cell wide drawn with an
+eight-pixel line, and every step further in made them thinner relative to what
+they surrounded. At the Person rung that was a 230-pixel circle with an
+8-pixel stroke.
+
+The giveaway in Greg's words is *"the radius … becomes fixed"*: it was fixed —
+in the world, which is precisely the wrong frame for something whose weight is
+measured on the glass.
+
+### What `/org` does, which is now what this does
+
+`ringGeometry` in `components/viz/orbital/render.ts` makes **everything except
+the node's own radius a screen-pixel quantity**:
+
+```
+widthPx = clamp(nodeRadiusOnScreen × share, min, max)
+gapPx   = max(gapFloor, widthPx × ratio)
+radius  = nodeRadius + (inset + widthPx/2 + slot × (widthPx + gapPx)) / scale
+```
+
+The stack hugs the node and keeps hugging it at every zoom. Ring and gap are
+the same number of pixels whatever the camera does; the weight follows how big
+the node reads; nothing can drift away from the thing it is a gauge for.
+
+On this map it hugs the **mark** — the coloured dot — because since 2026-11-09
+that is the node. The tile is now used for one thing only, measuring the room
+a person has (below).
+
+The numbers are `/org`'s with Greg's two changes:
+
+| | /org | hex before | hex now |
+|---|---|---|---|
+| weight | 4.5–7.5px at 0.13× the node | 2.2–8px at 0.05× the **tile** | **4.4–16px at 0.26× the mark** |
+| gap | max(2.4, 0.46 × width) | max(1.6, 0.5 × width) | max(2.4, 0.46 × width) |
+| stand-off | max(3.5, 0.7 × width) | a third of the tile, or +15% outside the mark | **one whole empty slot** |
+
+Twice the weight is literal — both of this map's own numbers doubled — and the
+gap follows by the same ratio wherever the ratio binds, which is *"adjust
+spacing accordingly"*. The stand-off is `width + gap`: the innermost ring sits
+where a *second* ring would, had one been drawn against the node's edge.
+
+### The one ceiling left, and why the other went
+
+A ring that will not fit is still not drawn — but only for **people**. That
+guard is the crowd batch's: `paintCrowdRings` merges a thousand people's rings
+into nine strokes, which is safe only while no two stacks overlap. Two cells
+are `√3 · size` apart, so half of that is all the room a person has; their
+tile is `PERSON_TILE` of the cell, which makes the room a little over `1.08`
+of the host, and `PERSON_RING_ROOM` keeps a margin at 1.05. Checked against
+the reveal band: a person's stack reaches 31px of an available 36px at the
+zoom where their gauges start arriving, and the ratio only improves from
+there, so nothing pops.
+
+**Structural nodes have no ceiling now**, and that is a fix rather than a
+loosening. The old tile-measured one took the master centre's outermost ring
+away at the outermost zoom — exactly where the company's dial is the only
+reading on the glass. A place's tile already overflows its cell by half a
+radius and the master's by three; they are drawn largest-first with the people
+over them; letting their gauges overflow too is the same decision made twice.
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint` clean, **997 tests + 1 expected fail**
+across 66 files. `health.test.ts` was rewritten around the new rule: the
+stand-off is one whole slot at every zoom and for all four node sizes; the
+spacing between consecutive rings is one ring plus one gap; the distance from
+the master's dot to its outermost ring stays under 120 screen pixels from
+0.1× to 16×, which is the property that failed before; the weight is twice
+what it was; a person's ring that would reach the next cell is refused; and
+the master keeps all three rings at four pixels a cell.
+
+On the glass at 1280 × 820, no console errors on any of the four companies.
+At the outermost zoom of the 1,000-person company the master's dial is now
+three readable rings reaching 18px from its centre — it was two hairlines, the
+third refused. Sweeping a pointer out from the master on Digital Tailoring at
+the Team rung reads health, then sprint, then delivery, in three clean bands
+at 22–34, 36–44 and 46–58 screen pixels, so the hand still agrees with the eye.
+At the Person rung a team now looks like an `/org` node: a chunky stack sitting
+one empty slot off a solid dot.
+
+**Costs nothing**, bracketed reload-for-reload in one sitting (stash, rebuild,
+measure, restore, rebuild, measure):
+
+| | before | after |
+|---|---|---|
+| Team rung (cell 52px, 16 across) | 2.4ms | 2.3ms |
+| Function rung (cell 14px, 61 across) | 16.5ms | 15.9ms |
+
+**Not checked:** touch, a real five-year-old iPad or the Lenovo. **Worth an
+eye:** a team's stack can now reach a little past its own cell at the bottom
+of the people band — people are drawn over it so nothing is hidden, but two
+adjacent *teams* with no people between them would overlap, which this map
+does not currently produce and does not currently prevent.

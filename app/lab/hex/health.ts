@@ -305,48 +305,79 @@ export function signalRollup(
 // --- where a ring sits on a lattice ----------------------------------------
 
 /**
- * **A circle inside a hexagon.** A regular hexagon's inscribed circle is
- * `√3/2` of its circumradius — it touches the middle of every edge. Every
- * *active* hexagon on this map is already rounded by `NODE_CORNER`, which cuts
- * the corners the circle was never going to reach, which is exactly why Greg's
- * *"now we can port the circular health rings"* holds: at that rounding a
- * circle just inside the shape no longer looks like a circle that missed.
- */
-export const INSCRIBED = Math.sqrt(3) / 2;
-
-/** Ring weight on the glass. A pixel range, not a share of the node, so one
- *  ring reads the same on a person and on a company — the same reason every
- *  connection line on this map has a pixel floor. */
-export const RING_WIDTH_MIN_PX = 2.2;
-export const RING_WIDTH_MAX_PX = 8;
-/** How far the innermost ring stands off a person's mark, on the glass. */
-export const RING_CLEAR_PX = 3;
-
-/**
- * **A person's rings sit fifteen per cent further out than the mark alone
- * would put them** — Greg, 2026-11-08: *"the sizing on the human health rings
- * can be a bit bigger — make the radius +15%."* A person's mark is a small
- * circle in a tile that is five times its radius, so the air is there to
- * spend, and the stack reads as a gauge around somebody rather than as a
- * thick edge on them.
- */
-export const PERSON_RING_SPREAD = 1.15;
-
-/**
- * **A structural node's rings sit at a third of its own radius** — Greg,
- * 2026-11-08: *"the sizing on the non-human nodes seems to be driven by the
- * radius of the entire area it occupies. Let's make the health ring on the
- * non-human nodes radius as 33% the node radius."*
+ * **Where a ring sits: the orbital map's rule, brought over whole.**
  *
- * He is describing the rule this replaces. Until now a structural node's rings
- * were read *inward* from its inscribed circle, which made them a rim: on a
- * team that is the edge of its cell, and on the master centre a circle nearly
- * three cells wide thrown across everything standing on it. A third of the
- * radius puts the stack near the middle of the node instead, where it reads as
- * a gauge belonging to that node — and it makes the rule the same shape as the
- * person rule, since both now anchor somewhere and step outward.
+ * Greg, 2026-11-10: *"refer back to /org — the health rings and their mapping
+ * to the zoom level, and how they appear to change size as we zoom in is the
+ * model we're after … the health rings should also hug the relevant node more
+ * tightly … and overall, make them 2x thicker."*
+ *
+ * **What was wrong.** Until today a structural node's stack was anchored at a
+ * third of its *white tile*, which is a distance in **world** units. A world
+ * distance grows on the glass as you zoom in, while the ring's weight was
+ * pinned in screen pixels and capped — so the master centre's gauges became a
+ * circle a third of a cell wide drawn with an eight-pixel line, and the
+ * further in you went the thinner they read. Greg: *"there's a point where
+ * the radius about the central node becomes fixed and then the rings
+ * themselves become very skinny."*
+ *
+ * **What `/org` does instead** (`ringGeometry` in `components/viz/orbital/render.ts`)
+ * is to make *everything but the node's own radius* a screen-pixel quantity:
+ *
+ * ```
+ * widthPx = clamp(nodeRadiusOnScreen × share, min, max)
+ * gapPx   = max(gapFloor, widthPx × ratio)
+ * radius  = nodeRadius + (inset + widthPx / 2 + slot × (widthPx + gapPx)) / scale
+ * ```
+ *
+ * So the stack *hugs the node* and keeps hugging it at every zoom: the ring
+ * and the gap are the same number of pixels whatever the camera is doing, the
+ * weight follows how big the node reads, and nothing can drift away from what
+ * it is a gauge for. That is the whole of the model, and it is now this map's
+ * too — against the **mark**, the coloured dot, because that is the node.
+ *
+ * The numbers are `/org`'s with the two Greg asked for changed:
+ *
+ * - **Twice the weight.** `/org` runs 4.5–7.5 screen pixels at `0.13` of the
+ *   node; this map ran 2.2–8. Both doubled here, and the gap follows by the
+ *   same ratio wherever the ratio is binding, which is Greg's *"adjust spacing
+ *   accordingly"*.
+ * - **One empty slot of stand-off.** *"Let's have the offset equal to one
+ *   ring-width plus whatever spacing exists between the rings already (as if
+ *   there is a missing ring)."* So `RING_INSET` is a whole slot rather than
+ *   `/org`'s smaller `max(3.5, width × 0.7)`: the innermost ring sits where a
+ *   second ring would sit if one were drawn against the node's edge.
  */
-export const NODE_RING_SHARE = 1 / 3;
+
+/** A ring's weight, as a share of how big the node reads on the glass. */
+export const RING_WIDTH_SHARE = 0.26;
+/** Ring weight on the glass. A pixel range, not a share of the node, so a
+ *  gauge reads at a weight the eye can judge at every zoom. */
+export const RING_WIDTH_MIN_PX = 4.4;
+export const RING_WIDTH_MAX_PX = 16;
+/** The air between two rings, as a share of a ring, and its floor. */
+export const RING_GAP_RATIO = 0.46;
+export const RING_GAP_MIN_PX = 2.4;
+
+/**
+ * **How far from a person's own stack the next person's may not come.**
+ *
+ * The one guard left, and it is the crowd batch's: `paintCrowdRings` merges a
+ * thousand people's rings into nine strokes, which is only safe while no two
+ * stacks overlap. Two neighbouring cells are `√3 · size` apart centre to
+ * centre, so half of that — `0.866 · size` — is all the room a person has.
+ * Their tile is `PERSON_TILE` (0.8) of the cell less the active gap, so that
+ * room is a little over `1.08` of the host handed in here; 1.05 keeps a
+ * margin for the gap this does not measure.
+ *
+ * **Structural nodes have no such guard**, and deliberately. A place's tile
+ * already overflows its cell by half a radius and the master centre's by
+ * three, they are drawn largest-first with the people over them, and at the
+ * outermost zoom the company's dial *should* be the biggest thing on the
+ * glass — it is the only reading left there. A ceiling measured off the tile
+ * is what used to drop the master's outermost ring at that zoom.
+ */
+export const PERSON_RING_ROOM = 1.05;
 
 /** How far from a ring's centreline still counts as pointing at it. Generous
  *  on purpose: a 2px arc is not a 2px target, and touch is a first-class input
@@ -356,84 +387,46 @@ export const RING_HIT_SLOP_PX = 5;
 export type RingBand = { radius: number; width: number };
 
 /**
- * **Where ring `slot` sits, in world units.**
+ * **Where ring `slot` sits, in world units.** See above for the rule and
+ * whose it is.
  *
- * One rule — *every ring steps outward from an anchor, and what the node is
- * decides the anchor*:
- *
- * - A **person** anchors just outside their own mark, plus `PERSON_RING_SPREAD`.
- *   They fill about a fifth of their host tile, so the room is there, and the
- *   rest of the white glass stays free — which is where work will want to go.
- * - **Everything else** anchors at `NODE_RING_SHARE` of its **host tile**. A
- *   place's tile overflows its cell and the master centre's overflows it by
- *   three radii, so there is no room outside it; a third of the way out is
- *   inside every one of them by construction, whatever size rule they are
- *   drawn by.
- *
- * **It was a third of the *mark* until 2026-11-09**, which was the same number
- * while a structural node's mark *was* its tile. On that day Greg shrank every
- * structural mark to a small coloured dot on a white spacer tile — a person's
- * format, at two or three times a person's size — and the host became the only
- * thing that still describes the ground a ring has to fit inside. The
- * arithmetic is unchanged for every node: the figure this now reads was
- * previously handed in as `mark`.
- *
- * Returns null when the stack cannot be paid for — a ring that would reach
- * past the shape holding it. A ring that does not fit is not drawn thin, it is
- * not drawn.
+ * Returns null when a person's stack would reach into the next cell — the
+ * only case that is refused, because a person's gauges are drawn as one
+ * batch with everybody else's and two stacks crossing would make nonsense of
+ * both. A ring that does not fit is not drawn thin, it is not drawn.
  */
 export function ringBand(
-  /** The node's own drawn radius, in world units. */
+  /** The node's own drawn radius — the coloured dot — in world units. */
   mark: number,
-  /**
-   * The radius of the white tile the node stands on, in world units. It both
-   * weights the ring — so that every ring on the lattice reads at the same
-   * weight at a given zoom whatever it is drawn around — and, for everything
-   * that is not a person, decides where the stack starts and how far it may
-   * reach.
-   */
+  /** The radius of the white tile the node stands on, in world units. Used
+   *  only to measure the room a person has before the next cell. */
   host: number,
-  /** True for a human node, which anchors outside its mark rather than inside. */
+  /** True for a human node, which is the one kind that has a neighbour close
+   *  enough to collide with. */
   person: boolean,
   /** 0 is the innermost ring; each step is one ring further out. */
   slot: number,
-  /** The camera scale, so weights can be held in screen pixels. */
+  /** The camera scale, so weights and spacing can be held in screen pixels. */
   scale: number,
 ): RingBand | null {
   const live = Math.max(scale, 1e-6);
   if (!(mark > 0) || !(host > 0) || slot < 0) return null;
-  // Weighted by the ground, not by the mark: every cell on a lattice is the
-  // same size, so this is the one input that makes a person's gauge and a
-  // division's read as the same instrument.
+
   const widthPx = Math.min(
     RING_WIDTH_MAX_PX,
-    Math.max(RING_WIDTH_MIN_PX, host * live * 0.05),
+    Math.max(RING_WIDTH_MIN_PX, mark * live * RING_WIDTH_SHARE),
   );
-  const gapPx = Math.max(1.6, widthPx * 0.5);
+  const gapPx = Math.max(RING_GAP_MIN_PX, widthPx * RING_GAP_RATIO);
+  const stepPx = widthPx + gapPx;
+
+  // One empty slot of stand-off, then the stack: Greg's "as if there is a
+  // missing ring".
+  const radius = mark + (stepPx + widthPx / 2 + slot * stepPx) / live;
   const width = widthPx / live;
-
-  const anchor = person
-    ? (mark + (RING_CLEAR_PX + widthPx / 2) / live) * PERSON_RING_SPREAD
-    : host * NODE_RING_SHARE;
-  const radius = anchor + (slot * (widthPx + gapPx)) / live;
-
-  // Every stack lives inside the tile the node stands on. A person's starts
-  // outside their mark and everything else's a third of the way out, but both
-  // are bounded by the same white hexagon.
-  const ceiling = host * INSCRIBED;
-  if (radius + width / 2 > ceiling) return null;
-  if (radius - width / 2 <= 0) return null;
+  if (person && radius + width / 2 > host * PERSON_RING_ROOM) return null;
   return { radius, width };
 }
 
-/**
- * **Which ring the hand is on**, given how far the pointer is from the node's
- * centre. The hit test and the painter read the same `ringBand`, deliberately:
- * what you can point at is exactly what you can see, which is the one number
- * both sides have to agree on (the orbital map's own rule, `hitTest` there).
- *
- * Returns the slot index, or null when the hand is between rings or past them.
- */
 export function ringAtDistance(
   mark: number,
   host: number,
