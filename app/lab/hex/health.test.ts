@@ -22,11 +22,15 @@ import {
   HEX_RING_SLOTS,
   healthColour,
   illustrativeWellbeing,
+  RING_SUMMARY_WEIGHT,
+  SUMMARY_SLOT,
   ringAtDistance,
   ringBand,
   ringColour,
   ringReach,
+  ringSummary,
   signalRollup,
+  summaryBand,
   STRAIN_COLOUR,
   WORK_RING_COLOUR,
 } from "./health";
@@ -298,35 +302,121 @@ describe("ringBand", () => {
   });
 });
 
+/**
+ * The one ring that stands in for the three while there is no room to read
+ * them — Greg, 2026-11-11. What matters is that it *is* a summary rather than
+ * a fourth number, that it lies exactly on the innermost of the three so the
+ * handover reads as a dissolve, and that it ends the handover indistinguishable
+ * from the health ring.
+ */
+describe("ringSummary and summaryBand", () => {
+  const PERSON = { mark: 55, host: 280 };
+  const read = (health: number | null, sprint: number | null, delivery: number | null) =>
+    ({ health, sprint, delivery, people: 1, done: 0, total: 0 });
+
+  it("sweeps the mean of the three figures, not a fourth number", () => {
+    expect(ringSummary(read(0.3, 0.6, 0.9))!.value).toBeCloseTo(0.6, 6);
+    // And the mean of whichever exist, so a node with no work still reads.
+    expect(ringSummary(read(0.4, null, null))!.value).toBeCloseTo(0.4, 6);
+    expect(ringSummary(read(null, 0.2, 0.8))!.value).toBeCloseTo(0.5, 6);
+  });
+
+  it("takes its colour from the health verdict, which is the only judgement", () => {
+    // Work nearly finished does not make a struggling team green.
+    expect(ringSummary(read(0.2, 1, 1))!.colour).toBe(healthColour(0.2));
+    expect(ringSummary(read(0.9, 0, 0))!.colour).toBe(healthColour(0.9));
+    // With no health figure it colours itself by its own sweep instead.
+    expect(ringSummary(read(null, 0.1, 0.1))!.colour).toBe(healthColour(0.1));
+  });
+
+  it("says nothing when there is nothing to say", () => {
+    expect(ringSummary(read(null, null, null))).toBeNull();
+  });
+
+  it("sits exactly where the innermost of the three sits, at every zoom", () => {
+    for (const scale of [0.05, 0.14, 0.3, 0.5, 1, 4]) {
+      const inner = ringBand(PERSON.mark, PERSON.host, true, 0, scale)!;
+      const one = summaryBand(PERSON.mark, PERSON.host, true, scale, 0)!;
+      expect(one.radius).toBeCloseTo(inner.radius, 9);
+    }
+  });
+
+  it("is heavier while it is alone and one ring's weight once the three are in", () => {
+    const inner = ringBand(PERSON.mark, PERSON.host, true, 0, 0.3)!;
+    const alone = summaryBand(PERSON.mark, PERSON.host, true, 0.3, 0)!;
+    const given = summaryBand(PERSON.mark, PERSON.host, true, 0.3, 1)!;
+    expect(alone.width).toBeCloseTo(inner.width * RING_SUMMARY_WEIGHT, 9);
+    expect(given.width).toBeCloseTo(inner.width, 9);
+    // And it eases, rather than stepping, between the two.
+    const half = summaryBand(PERSON.mark, PERSON.host, true, 0.3, 0.5)!;
+    expect(half.width).toBeGreaterThan(given.width);
+    expect(half.width).toBeLessThan(alone.width);
+  });
+});
+
 describe("ringAtDistance", () => {
   const TEAM = { mark: 110, host: 350 };
   const PERSON = { mark: 55, host: 280 };
+  /** Past the handover, where the three rings are what is drawn. */
+  const THREE = 1;
+  /** Before it, where one summary ring is. */
+  const ONE = 0;
 
   it("points at exactly what it draws, on every slot and both kinds of node", () => {
     for (const [node, person] of [[TEAM, false], [PERSON, true]] as const) {
       for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
         const band = ringBand(node.mark, node.host, person, slot, 1)!;
-        expect(ringAtDistance(node.mark, node.host, person, 1, band.radius)).toBe(slot);
+        expect(ringAtDistance(node.mark, node.host, person, 1, band.radius, THREE)).toBe(slot);
       }
     }
   });
 
   it("finds nothing in the empty middle or out past the stack", () => {
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, 2)).toBeNull();
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, TEAM.host * 2)).toBeNull();
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, 2, THREE)).toBeNull();
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, TEAM.host * 2, THREE)).toBeNull();
   });
 
   it("picks the nearer of two rings when the hand is between them", () => {
     const a = ringBand(TEAM.mark, TEAM.host, false, 0, 1)!;
     const b = ringBand(TEAM.mark, TEAM.host, false, 1, 1)!;
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, a.radius + 0.1)).toBe(0);
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, b.radius - 0.1)).toBe(1);
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, a.radius + 0.1, THREE)).toBe(0);
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, b.radius - 0.1, THREE)).toBe(1);
   });
 
   it("reaches no further than the stack it is told to skip for", () => {
-    const reach = ringReach(TEAM.mark, TEAM.host, false, 1);
+    const reach = ringReach(TEAM.mark, TEAM.host, false, 1, THREE);
     const outer = ringBand(TEAM.mark, TEAM.host, false, HEX_RING_SLOTS.length - 1, 1)!;
     expect(reach).toBeGreaterThanOrEqual(outer.radius + outer.width / 2);
-    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, reach + 1)).toBeNull();
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, reach + 1, THREE)).toBeNull();
+  });
+
+  /**
+   * **The whole point of threading the handover through the hand.** While one
+   * ring is drawn, the two outer bands are not there — and a hover that claimed
+   * a sprint figure out in empty glass would break the rule this file exists to
+   * keep.
+   */
+  it("offers the summary, and only the summary, while one ring is what is drawn", () => {
+    const one = summaryBand(TEAM.mark, TEAM.host, false, 1, ONE)!;
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, one.radius, ONE)).toBe(SUMMARY_SLOT);
+    for (const slot of [1, 2]) {
+      const band = ringBand(TEAM.mark, TEAM.host, false, slot, 1)!;
+      expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, band.radius, ONE)).toBeNull();
+    }
+  });
+
+  it("stops offering the summary once the three have taken over", () => {
+    const one = summaryBand(TEAM.mark, TEAM.host, false, 1, THREE)!;
+    // It is still pointable — it is lying on the health ring — but it answers
+    // as that ring, because that is what the eye is reading by then.
+    expect(ringAtDistance(TEAM.mark, TEAM.host, false, 1, one.radius, THREE)).toBe(0);
+  });
+
+  it("reaches only as far as the one ring while the one ring is alone", () => {
+    const near = ringReach(TEAM.mark, TEAM.host, false, 1, ONE);
+    const far = ringReach(TEAM.mark, TEAM.host, false, 1, THREE);
+    expect(near).toBeLessThan(far);
+    const one = summaryBand(TEAM.mark, TEAM.host, false, 1, ONE)!;
+    expect(near).toBeGreaterThanOrEqual(one.radius + one.width / 2);
   });
 });

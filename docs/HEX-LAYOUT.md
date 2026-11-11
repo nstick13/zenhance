@@ -5310,3 +5310,259 @@ eye:** a team's stack can now reach a little past its own cell at the bottom
 of the people band — people are drawn over it so nothing is hidden, but two
 adjacent *teams* with no people between them would overlap, which this map
 does not currently produce and does not currently prevent.
+
+---
+
+## What each zoom is *for* (2026-11-11)
+
+Greg, after looking at the rings above, asked for four changes in one message.
+Taken separately they are small; taken together they are one idea, and he said
+what the idea was: *"the purpose here is to bring some intentionality to how
+the scales feel at different zoom levels. What should reasonably look like a
+mass of frogspawn at one zoom should gracefully give way to clear, relational
+data at another."*
+
+So this is not four tweaks. It is the map agreeing to mean a different thing at
+each distance instead of being the same picture at several sizes.
+
+### One reading far out, three close in
+
+*"The human health rings appear at around zoom level 0.14x. At that level,
+let's have a simplified single-ring that is a summary of the three. An 'overall
+health' icon that gives way to the three-ring version at a zoom of 0.5x.
+Animate/blend between them smoothly."*
+
+**What the one ring says.** One ring cannot say three things, so it says the
+one thing all three are versions of — *how is this going* — and each figure
+gets the channel it suits. The **sweep** is the mean of whichever of the three
+figures exist, so it is literally a summary and not a fourth number from
+somewhere else. The **colour** is the health verdict, because health is the
+only one of the three that carries a judgement (there is no good or bad amount
+of sprint) and a judgement is what you want at a glance when the node is six
+pixels across. The thresholds are still `strainOf` in the signal engine, so
+amber means on this ring exactly what it means on the three and on `/org`.
+`ringSummary` in `app/lab/hex/health.ts`.
+
+**Where it sits, and why that matters more than it sounds.** Exactly where the
+innermost of the three sits — `summaryBand` returns slot 0's radius — and it
+eases from 1.6 of a ring's weight down to exactly one ring's weight as the
+three arrive. So by the end of the handover it is lying precisely on top of the
+health ring and stops existing as a separate object. Nothing slides and nothing
+jumps: the two rings that were not there simply grow outward into the air the
+stand-off already left for them.
+
+**When it gives way** is `hexStackBlend`, a band of 110–182 cell-pixels, which
+on the roomy lattice is 0.30× to 0.50×. That leaves the single ring a plateau
+of its own, which is the point of it rather than an accident: a person's gauges
+finish fading in at 0.19×, the one ring then holds alone to 0.30×, and it has
+given way by the 0.50× Greg named.
+
+**It is a human-only rule**, which it was not in the first build. Greg sent
+that back the same day: *"we applied the changes to the non-human nodes too —
+those nodes should retain the three-ring system exactly as it was before we
+made this change."* A team, a place and the master centre are never in the
+handover at any zoom, so the three-ring master centre that fell out of the
+2026-11-10 change above is untouched, and so is everything else above a person.
+
+He is right, and the reason is in his own first sentence: *"the human health
+rings appear at around zoom level 0.14x. At that level …"*. The problem is a
+person's, because a person's tile is the smallest thing on the lattice and the
+only one whose three rings are hairlines when they arrive. Everything above a
+person is already big enough to read three when it first wears any — that is
+the whole of `hexRingReveal` — and the company's three-colour dial at four
+pixels a cell is a reading nothing else on the glass is giving.
+
+**Measured against the cell for the people it does apply to** — unlike every
+other figure about a gauge, which is asked per node because *which* nodes wear
+one is a question about standing. Here the size of the thing asking is already
+settled: it is a person, and every person on a lattice is the same size. What
+is left is how much room there is on the glass, which Greg named in camera
+scale — and one number for every person in the frame is also what keeps the
+crowd batch cheap.
+
+### Lines stop getting thicker at 0.15×
+
+*"Line weights for connection lines and outlines, but not health rings, should
+scale with the viewport after zoom of 0.15x — that is, they should remain a
+fixed thickness after that."*
+
+Two kinds of weight were on this canvas and both were wrong in the same
+direction.
+
+A **chain** is a weight in the world — a share of a cell — so on the glass it
+grew with every zoom step, and by 1× a connection line between two people was
+fifteen pixels of ink. That is right pulled back, where the lines *are* the
+structure and have to survive being drawn a cell apart, and wrong close in,
+where they are scaffolding around the thing you came to read. `hexPenPin` lets
+it grow until a cell covers 55 pixels (0.15×) and holds it still from there.
+
+Every **outline** was already a screen-pixel weight — `px / scale` — wearing a
+world floor: `Math.max(0.6, 1.6 / scale)` and thirteen more like it. That floor
+only ever binds past about 2.7×, and from there it does exactly what Greg is
+asking to stop. They are now one helper, `penPx`, with no floor.
+
+The gauges are excluded, by his sentence and by not calling either helper: a
+ring's weight is already a screen-pixel figure with a floor and a ceiling of
+its own, and a gauge is a reading rather than a line.
+
+### Air opens around every node between 0.15× and 1×
+
+*"At zoom 0.15x, we should gradually shrink the size of the nodes (foreground
+and background) within their zoned area hexagon — which is the hexagon grid not
+the host tile — and track that size proportionally to the zoom — until a zoom
+of 1x, thereafter the size relationships between items on the canvas returns to
+being fixed. This is intended to make human nodes appear as if they have their
+own space at this scale — lots of whitespace around humans."*
+
+*Proportionally to the zoom* is the inverse law, and it is the one reading that
+makes the rest of the sentence come true. `hexNodeRoom` multiplies a node's
+world size by `55 / cellPx`, which means its size **on the glass stops
+changing**: from 0.15× to 1× a person is the same chip of glass however far in
+you come — the same tile, the same dot, the same gauges at the same weights —
+and what the zoom buys is the distance between them. The frogspawn at 0.15×,
+where the tiles touch, has opened into chips on a wide white field by 1×, and
+the chains are then the only thing joining them. That is the relational
+reading, and it is also why the two changes above belong in the same commit:
+thinning the lines is what stops the scaffolding filling the space the shrink
+just made.
+
+The cell is untouched, per Greg's parenthesis — the lattice is the frame all of
+this happens inside, and it is why the map stays navigable while the nodes
+empty out. Past 1× the factor holds at its floor and sizes resume growing with
+the camera, so diving into a person still works as it did.
+
+**The tile has a shorter ramp than the dot, and that was the correction.** The
+first build put both on `hexNodeRoom`, and Greg sent it back: *"the white host
+cell behind each node — the one that's a bit transparent and has a white
+outline — should fix its size relationship with its surroundings at zoom
+0.2x."* So the tile now takes the same ramp and then **stops reading the camera
+at 73 cell-pixels** (`hexTileRoom`): from 0.2× inward it keeps whatever share
+of its cell it had there — about three quarters — and grows with the lattice
+like everything else.
+
+The two are different things and this is what tells them apart. The **dot** is
+the node, so holding it still on the glass is what empties the map out and
+leaves the chains carrying the structure. The **tile** is not a node at all: it
+is the ground that node stands on, and its whole job is to say *this much of
+the lattice is theirs*. A tile that goes on shrinking stops saying that — it
+becomes a chip floating in a cell it no longer has any stated relationship to.
+Freezing the ratio keeps the sentence true at every zoom past 0.2×, and it is
+also what gives the gauges somewhere to sit: a compact ring cluster in the
+middle of a generous white disc, rather than a ring cluster that *is* the node.
+
+One thing downstream had to be checked rather than assumed. `ringBand` refuses
+a person's ring that would reach past `host × PERSON_RING_ROOM`, a guard that
+exists to stop two people's stacks crossing inside the crowd batch — and a
+bigger tile loosens it. Worked through and now pinned by a test: at the tile's
+held share the limit is about 0.61 of a cell radius, against the 0.866 that is
+half the step to the next cell, so the guard is still strictly inside the thing
+it is guarding.
+
+**One thing it broke, and the fix.** Anything gated on how big a node *looks*
+would freeze with it. `hexRingReveal` is exactly that: a person's gauges would
+have stuck half-arrived at 0.15× and never finished. `sizes` in `HexLab.tsx`
+therefore splits in two — `footRadius`, the standing the lattice gives a node,
+which only the reveal reads, and `hostRadius`, what is actually drawn, which
+everything else reads.
+
+### A team's ground is a flat #f3f3f3
+
+*"The default background colour for all teams should now be #f3f3f3, but the
+connection line colour and dot colour should not change."*
+
+Done literally: the fill is that grey and nothing else, not a tint and not an
+opacity ramp. What this gives up is written down because it was deliberate — a
+team's ground used to be its own node's colour and **darkened toward 90% of it
+as you pulled out**, so that the colour carried the people once their tiles had
+gone (the 2026-10-28 handover, above). A grey cannot carry anything. What still
+reaches the fill is `groundOf`, the handover, because a team must still fade
+out from under the region that takes over from it.
+
+So pulled right out, colour now comes from the **regions**, not from the teams.
+On a deep company that is unchanged, because a division blob is drawn over the
+teams there anyway. On a shallow one with no region above the teams, the
+far-out view is greyer than it was.
+
+**The edge keeps the team's colour**, which is a decision rather than an
+oversight: with a near-white fill the outline is the only thing left saying
+*these cells are one team*, and it is where the colour identity now lives at a
+distance. One line to make it grey too.
+
+### Verified
+
+`npx tsc --noEmit` clean, `npx eslint app/lab/hex lib/map/camera` clean,
+**1016 tests + 1 expected fail** across 66 files — 20 of them new, in
+`hexLod.test.ts` and `health.test.ts`, and they check the numbers Greg actually
+said: that the handover has finished by 0.50×, that it has not started at
+0.19×, that a world weight times the pin times the scale is a constant number
+of pixels at every zoom past 0.15×, that a node's size on the glass is the same
+at 0.152×, 0.2×, 0.3×, 0.5×, 0.75× and 1×, and that all three curves are
+continuous so that no frame can show a jump.
+
+On the glass at 1280 × 820, no console errors on any of the four companies.
+
+- At 0.12× on Digital Tailoring every **person** wears one thick ring while
+  every team, place and the master centre wear their three, which is the
+  human-only rule on the glass. By 0.40× the people have their three too. At
+  0.69× a pointer swept out from a person reads health at 11–20px, sprint at
+  23–29 and delivery at 32–38, symmetrically on both sides — so the hand still
+  agrees with the eye on the other side of the handover.
+- At 0.30×, where a person's single ring is alone, the readout card says
+  **"46% overall"** across the whole band and never claims a sprint figure out
+  in empty glass. That is `ringAtDistance` being told which handover it is in.
+- At 2.58× a person has grown again and the chains are still hairlines, which
+  is the two rules meeting where Greg said they should.
+- The tile's share of its cell measured off the canvas at 0.6× and at 0.99×
+  comes out at 0.915 and 0.913 — the same relationship, held, which is what
+  was asked for. (A pixel scan for this is unreliable at zooms where the walk
+  can land on a chain's white continuation instead of a tile, so the invariant
+  itself is pinned in `hexLod.test.ts` and the canvas figures are the sanity
+  check rather than the proof.)
+
+**Costs nothing.** On the 1,108-person company, bracketed reload-for-reload in
+one sitting (median of seven frames, every run starting from `fit`):
+
+| | before | after |
+|---|---|---|
+| Function rung (cell 14px) | 10.7 / 11.4ms | 11.1ms |
+| Team rung (cell 52px) | 1.3ms | 1.3ms |
+| Person rung (cell 230px) | 1.0 / 1.1ms | 1.0–1.1ms |
+| mid-handover, 0.40× | — | 1.0ms |
+
+It should be cheaper rather than equal while the single ring is alone — three
+`ringBand` calls a head become one, and nine strokes become three — and the
+crowd batch survives the handover because `hexStackBlend` is one number for the
+whole frame, so every person is wearing the same mixture at the same instant
+and the two groups are two batches rather than two thousand.
+
+*A warning worth repeating: a first attempt at this A/B read 8.5ms against
+1.3ms at the Team rung and was entirely an artefact of measuring in a browser
+session that had already had several hundred synthetic events dispatched into
+it. Only a figure taken after a fresh reload means anything on this machine.*
+
+**Not checked:** touch, a real five-year-old iPad or the Lenovo,
+`prefers-reduced-motion` with the setting actually on.
+
+**One thing that bit, worth knowing.** Declaring a plain arrow function in
+render scope — `const stackFor = (id) => …` — made the React Compiler bail out
+of memoising `areaPaths`, reporting an unrelated dependency as "may be modified
+later". Inlining the one call site fixed it. Same failure mode as the
+`softeningAt` bail recorded in [HEX-ZOOM.md](HEX-ZOOM.md): when `npx eslint`
+suddenly complains about a memo nobody touched, look for a new function
+declared in the component body.
+
+**Worth an eye.** Two consequences that are honest results of what was asked
+for rather than bugs, and both are one constant to change:
+
+1. **The gauges stop getting heavier.** A ring's weight is a share of how big
+   the mark reads, and the mark now stops growing at 0.15× — so from there to
+   1× every ring sits at the 4.4px floor instead of climbing toward 16px. It is
+   still twice what it was before 2026-11-10, but it is no longer the chunky
+   `/org` stack at the Person rung.
+2. **The dot keeps shrinking after the tile stops.** From 0.2× to 1× a
+   person's coloured mark and their gauges hold still on the glass while the
+   white tile around them grows with the lattice, so the reading sits in an
+   increasingly generous field of its own. That is the two rules doing exactly
+   what they say, and it is what Greg's correction asked for — but if the dot
+   ever looks lost in its tile, the number is `NODE_ROOM_FLOOR`, and giving the
+   dot the tile's shorter ramp is one call site.

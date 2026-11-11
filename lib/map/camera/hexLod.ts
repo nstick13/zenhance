@@ -219,14 +219,173 @@ export const RINGS_AT_HOST_PX: readonly [number, number] = [32, 52];
  * own reading is the one that is true at every zoom, and at the outermost rung
  * it is the only thing on the glass still saying anything.
  *
- * Its three rings are not all *drawable* there — `ringBand` refuses a ring
- * that would reach past the tile holding it, which on a four-pixel cell is the
- * outermost one — and that is the honest answer rather than a gap: what fits
- * is drawn, and the innermost ring, the one about the people, fits at every
- * zoom the camera allows.
+ * All three are drawable there. They were not until 2026-11-10, when the
+ * stack stopped being measured off the tile and started hugging the mark in
+ * screen pixels — see `ringBand` — so the company's dial now keeps every
+ * reading it has at the outermost rung. What it does *not* keep there is three
+ * separate readings, and that is `hexStackBlend` below rather than this.
+ *
+ * **Read from the node's footprint, not from what is drawn.** Since
+ * 2026-11-11 a node shrinks inside its cell as you come in (`hexNodeRoom`),
+ * which holds its drawn size still on the glass — so a gauge gated on the
+ * drawn size would freeze half-arrived and never finish. `footRadius` in
+ * `HexLab.tsx` is the unshrunk figure, and it is what belongs here: whether a
+ * node is big enough to wear a reading is a question about the standing the
+ * lattice gives it, not about how much air has been opened around it.
  */
 export function hexRingReveal(hostPx: number, isRoot: boolean): number {
   return isRoot ? 1 : band(RINGS_AT_HOST_PX, hostPx);
+}
+
+/**
+ * **One reading, or three.**
+ *
+ * Greg, 2026-11-11: *"the human health rings appear at around zoom level
+ * 0.14x. At that level, let's have a simplified single-ring that is a summary
+ * of the three. An 'overall health' icon that gives way to the three-ring
+ * version at a zoom of 0.5x. Animate/blend between them smoothly."*
+ *
+ * `0` is the one summary ring, `1` is the three, and in between both are drawn
+ * at complementary weights so that one dissolves into the other. What the
+ * single ring says is `ringSummary` in `app/lab/hex/health.ts`; where it sits
+ * is `summaryBand` beside it, which puts it on the innermost of the three so
+ * that nothing moves across the handover — the other two simply grow out of
+ * it.
+ *
+ * **People only.** The first build applied this to every node and Greg sent it
+ * back the same day: *"we applied the changes to the non-human nodes too —
+ * those nodes should retain the three-ring system exactly as it was before we
+ * made this change."* So a team, a place and the master centre always wear
+ * their three, and `isPerson` is false for them.
+ *
+ * He is right, and the reason is in his own first sentence: *"the human health
+ * rings appear at around zoom level 0.14x. At that level …"*. The problem he
+ * was solving is a person's, because a person's tile is the smallest thing on
+ * the lattice and the only one whose three rings are hairlines when they
+ * arrive. Everything above a person is already big enough to read three when
+ * it first wears any, which is the whole of `hexRingReveal` — and the master
+ * centre's three-colour dial at the outermost rung is a reading of the company
+ * that nothing else on the glass is giving.
+ *
+ * **Measured against the cell for the people it does apply to.** Every other
+ * figure about a gauge in this file is asked per node, because *which* nodes
+ * wear one is a question about standing. The size of the thing asking here is
+ * already settled — it is a person, and every person on a lattice is the same
+ * size — so what is left is how much room there is on the glass, which Greg
+ * named in camera scale. 110 and 182 cell-pixels are 0.30x and 0.50x on the
+ * roomy lattice, whose cell is 364 world units to a corner. One number for
+ * every person in the frame is also what keeps the crowd batch cheap.
+ *
+ * That leaves the single ring a plateau of its own, which is the point of it:
+ * a person's gauges finish fading in at 0.19x, the one ring then holds alone
+ * until 0.30x, and it has given way by the 0.50x Greg asked for.
+ */
+export const STACK_AT_CELL_PX: readonly [number, number] = [110, 182];
+
+export function hexStackBlend(cellPx: CellPx, isPerson: boolean): number {
+  return isPerson ? band(STACK_AT_CELL_PX, cellPx) : 1;
+}
+
+/**
+ * **Where a line stops getting thicker.**
+ *
+ * Greg, 2026-11-11: *"line weights for connection lines and outlines, but not
+ * health rings, should scale with the viewport after zoom of 0.15x — that is,
+ * they should remain a fixed thickness after that."*
+ *
+ * A chain on this map is a weight in the **world** — a share of a cell — so on
+ * the glass it grows with every zoom step, and by 1x a connection line between
+ * two people is fifteen pixels of ink. That is right pulled back, where the
+ * lines *are* the structure and have to survive being drawn a cell apart, and
+ * wrong close in, where they are scaffolding around the thing you came to
+ * read.
+ *
+ * What comes back is the factor a world weight is multiplied by: `1` until a
+ * cell covers `WEIGHT_PINS_AT_CELL_PX`, and past that whatever holds the
+ * weight still on the glass. 55 cell-pixels is 0.15x on the roomy lattice.
+ *
+ * **Not the gauges**, by Greg's own sentence. A ring's weight is already a
+ * screen-pixel figure with a floor and a ceiling of its own (`ringBand`), and
+ * a gauge is a reading rather than a line. It is excluded by not calling this.
+ */
+export const WEIGHT_PINS_AT_CELL_PX = 55;
+
+export function hexPenPin(cellPx: CellPx): number {
+  return Math.min(1, WEIGHT_PINS_AT_CELL_PX / Math.max(cellPx, 1e-6));
+}
+
+/**
+ * **The air that opens around a node as you come in.**
+ *
+ * Greg, 2026-11-11: *"at zoom 0.15x, we should gradually shrink the size of
+ * the nodes (foreground and background) within their zoned area hexagon —
+ * which is the hexagon grid not the host tile — and track that size
+ * proportionally to the zoom, until a zoom of 1x, thereafter the size
+ * relationships between items on the canvas returns to being fixed. This is
+ * intended to make human nodes appear as if they have their own space at this
+ * scale — lots of whitespace around humans … what should reasonably look like
+ * a mass of frogspawn at one zoom should gracefully give way to clear,
+ * relational data at another."*
+ *
+ * *Proportionally to the zoom* is the inverse law, and it is the one reading
+ * that makes the rest of that sentence come true. Multiply a node's world size
+ * by `pin / cellPx` and its size **on the glass** stops changing: from 0.15x
+ * to 1x a person is the same chip of glass however far in you come — the same
+ * tile, the same dot, the same gauges at the same weights — and what the zoom
+ * buys is the distance between them. The frogspawn at 0.15x, where the tiles
+ * touch, has opened out into dots on a wide white field by 1x, and the chains
+ * are then the only thing joining them, which is the relational reading.
+ *
+ * The cell is untouched, per Greg's parenthesis. The lattice is the frame all
+ * of this happens inside, and it is also why the map stays navigable while the
+ * nodes empty out: the hexagons are still where they were.
+ *
+ * Past 1x the factor holds at its floor and node sizes resume growing with the
+ * camera — *"thereafter the size relationships … returns to being fixed"* — so
+ * zooming past the plateau dives into a person the way it always did.
+ */
+export const ROOM_OPENS_AT_CELL_PX = 55;
+export const ROOM_OPEN_BY_CELL_PX = 364;
+/** What is left of a node once the air is fully open: 0.15x of a cell's worth
+ *  of standing, held from 1x inward. */
+export const NODE_ROOM_FLOOR = ROOM_OPENS_AT_CELL_PX / ROOM_OPEN_BY_CELL_PX;
+
+export function hexNodeRoom(cellPx: CellPx): number {
+  return Math.min(
+    1,
+    Math.max(NODE_ROOM_FLOOR, ROOM_OPENS_AT_CELL_PX / Math.max(cellPx, 1e-6)),
+  );
+}
+
+/**
+ * **The white tile stops opening out long before the dot does.**
+ *
+ * Greg, 2026-11-11, after seeing the above: *"the white host cell behind each
+ * node — the one that's a bit transparent and has a white outline — should fix
+ * its size relationship with its surroundings at zoom 0.2x."*
+ *
+ * So the tile takes the same ramp, and then **stops reading the camera at 73
+ * cell-pixels**: from 0.2x inward it keeps whatever share of its cell it had
+ * there — about three quarters — and grows with the lattice like everything
+ * else. The dot inside it carries on to 1x.
+ *
+ * The two are different things and this is what tells them apart. The **dot**
+ * is the node, so holding it still on the glass is what empties the map out
+ * and leaves the chains carrying the structure. The **tile** is not a node at
+ * all: it is the ground that node stands on, and its whole job is to say *this
+ * much of the lattice is theirs*. A tile that goes on shrinking stops saying
+ * that — it becomes a chip floating in a cell it no longer has any stated
+ * relationship to, which is exactly what Greg saw. Freezing the ratio keeps
+ * the sentence true at every zoom past 0.2x.
+ *
+ * Nothing is gated on this: `hexRingReveal` reads the node's **footprint**,
+ * the standing the lattice gives it, which neither this nor `hexNodeRoom`
+ * touches.
+ */
+export const TILE_ROOM_HOLDS_AT_CELL_PX = 73;
+
+export function hexTileRoom(cellPx: CellPx): number {
+  return hexNodeRoom(Math.min(cellPx, TILE_ROOM_HOLDS_AT_CELL_PX));
 }
 
 /**

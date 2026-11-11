@@ -427,6 +427,104 @@ export function ringBand(
   return { radius, width };
 }
 
+// --- one ring, for when three cannot be read -------------------------------
+
+/**
+ * **The overall reading, for when there is only room for one.**
+ *
+ * Greg, 2026-11-11: *"at that level, let's have a simplified single-ring that
+ * is a summary of the three. An 'overall health' icon that gives way to the
+ * three-ring version at a zoom of 0.5x."*
+ *
+ * One ring cannot say three things, so it says the one thing all three are
+ * versions of: **how is this going**. Each figure gets the channel it suits.
+ *
+ * - The **sweep** is the mean of whichever of the three figures exist, so it
+ *   is literally a summary of them and not a fourth number from somewhere
+ *   else. A node with two thirds of its work done, its points two thirds moved
+ *   and its people two thirds of the way up the wellbeing scale shows two
+ *   thirds of a ring, which is what anybody would expect of it.
+ * - The **colour** is the health verdict, because health is the only one of
+ *   the three that carries a judgement — there is no good or bad amount of
+ *   sprint — and a judgement is what you actually want at a glance when the
+ *   node is a few pixels across. The thresholds are still the signal engine's
+ *   (`strainOf`), so amber means on this ring exactly what it means on the
+ *   three and on `/org`.
+ *
+ * A node with no health figure falls back to colouring the summary by its own
+ * sweep. That is the honest reading of *"overall health"* when the only
+ * figures present are about work: it says how far along, in the one language
+ * this map has for saying whether something is all right.
+ *
+ * Where it sits is `summaryBand`; when it gives way is `hexStackBlend`.
+ */
+export function ringSummary(read: NodeSignal): { value: number; colour: string } | null {
+  let total = 0;
+  let count = 0;
+  for (const slot of HEX_RING_SLOTS) {
+    const measured = read[slot];
+    if (measured == null) continue;
+    total += Math.min(1, Math.max(0, measured));
+    count += 1;
+  }
+  if (count === 0) return null;
+  const value = total / count;
+  return { value, colour: healthColour(read.health ?? value) };
+}
+
+/**
+ * **How much heavier the one ring is than one of the three.**
+ *
+ * It is carrying three readings, so it is drawn as a heavier band — and it
+ * eases back to exactly one ring's weight as the three arrive, so that by the
+ * end of the handover it is lying precisely on top of the health ring and
+ * stops existing as a separate object. That is what makes the dissolve
+ * invisible: nothing slides, nothing jumps, and the two rings that were not
+ * there grow outward into the air the stand-off already left for them.
+ */
+export const RING_SUMMARY_WEIGHT = 1.6;
+
+/** The slot number the summary ring answers to. Negative so it cannot be
+ *  confused with an index into `HEX_RING_SLOTS`. */
+export const SUMMARY_SLOT = -1;
+
+/** What the readout card calls it, in the same voice as the three. */
+export const RING_SUMMARY_LABEL = "overall";
+export const RING_SUMMARY_MEANS = "health, sprint and delivery together";
+
+/**
+ * **Where the one ring sits: exactly where the innermost of the three does.**
+ *
+ * Deliberate, and the whole reason the handover reads as a dissolve rather
+ * than a change of mind. See `RING_SUMMARY_WEIGHT` for the weight it eases
+ * through.
+ */
+export function summaryBand(
+  mark: number,
+  host: number,
+  person: boolean,
+  scale: number,
+  /** `hexStackBlend` — 0 while the one ring is alone, 1 once the three are. */
+  stack: number,
+): RingBand | null {
+  const inner = ringBand(mark, host, person, 0, scale);
+  if (!inner) return null;
+  const held = Math.min(1, Math.max(0, stack));
+  return {
+    radius: inner.radius,
+    width: inner.width * (RING_SUMMARY_WEIGHT + (1 - RING_SUMMARY_WEIGHT) * held),
+  };
+}
+
+/**
+ * **Which band the hand is on, counting only the bands that are drawn.**
+ *
+ * `stack` is `hexStackBlend`, and the threshold is a half: whichever of the
+ * two readings is the more present is the one that answers. Through the middle
+ * of the handover both are faint and the dominant one wins, which keeps the
+ * map's own rule — what you can point at is exactly what you can see — true
+ * without claiming a sprint figure is there when what is drawn is one ring.
+ */
 export function ringAtDistance(
   mark: number,
   host: number,
@@ -434,9 +532,15 @@ export function ringAtDistance(
   scale: number,
   /** Distance from the node's centre to the pointer, in world units. */
   distance: number,
+  stack: number,
 ): number | null {
   const live = Math.max(scale, 1e-6);
   const slop = RING_HIT_SLOP_PX / live;
+  if (stack < 0.5) {
+    const band = summaryBand(mark, host, person, scale, stack);
+    if (!band) return null;
+    return Math.abs(distance - band.radius) <= band.width / 2 + slop ? SUMMARY_SLOT : null;
+  }
   let best: number | null = null;
   let bestOff = Infinity;
   for (let slot = 0; slot < HEX_RING_SLOTS.length; slot++) {
@@ -448,12 +552,24 @@ export function ringAtDistance(
   return best;
 }
 
-/** How far out the whole stack reaches, so a hit test can skip a node the hand
- *  is nowhere near without measuring each of its rings. */
-export function ringReach(mark: number, host: number, person: boolean, scale: number): number {
+/** How far out whatever is drawn reaches, so a hit test can skip a node the
+ *  hand is nowhere near without measuring each of its rings — and so the
+ *  readout card can stand clear of it. */
+export function ringReach(
+  mark: number,
+  host: number,
+  person: boolean,
+  scale: number,
+  stack: number,
+): number {
+  const slop = RING_HIT_SLOP_PX / Math.max(scale, 1e-6);
+  if (stack < 0.5) {
+    const band = summaryBand(mark, host, person, scale, stack);
+    return band ? band.radius + band.width / 2 + slop : 0;
+  }
   for (let slot = HEX_RING_SLOTS.length - 1; slot >= 0; slot--) {
     const band = ringBand(mark, host, person, slot, scale);
-    if (band) return band.radius + band.width / 2 + RING_HIT_SLOP_PX / Math.max(scale, 1e-6);
+    if (band) return band.radius + band.width / 2 + slop;
   }
   return 0;
 }

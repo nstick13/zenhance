@@ -11,14 +11,24 @@ import { describe, expect, it } from "vitest";
 import {
   HEX_LADDER,
   NAMES_AT_CELL_PX,
+  NODE_ROOM_FLOOR,
   PEOPLE_AT_CELL_PX,
   RINGS_AT_HOST_PX,
+  ROOM_OPENS_AT_CELL_PX,
+  ROOM_OPEN_BY_CELL_PX,
+  TILE_ROOM_HOLDS_AT_CELL_PX,
+  STACK_AT_CELL_PX,
+  WEIGHT_PINS_AT_CELL_PX,
   SOFTEN_FROM_CELL_PX,
   SOFTEN_MAX,
   SOFTEN_STEPS,
   cellPxOf,
+  hexNodeRoom,
+  hexPenPin,
   hexRevealAt,
   hexRingReveal,
+  hexStackBlend,
+  hexTileRoom,
   levelAt,
   placePresence,
   placeTaken,
@@ -435,6 +445,212 @@ describe("the boundary softening", () => {
     expect(seen.size).toBeLessThanOrEqual(SOFTEN_STEPS * (SOFTEN_MAX - 1) + 3);
     for (const value of seen) {
       expect(Math.abs(value * SOFTEN_STEPS - Math.round(value * SOFTEN_STEPS))).toBeLessThan(1e-9);
+    }
+  });
+});
+
+/**
+ * **The three rules Greg asked for on 2026-11-11**, which together are one
+ * idea: that the map should mean something different at each distance rather
+ * than being the same picture at several sizes. His own summary — *"what
+ * should reasonably look like a mass of frogspawn at one zoom should
+ * gracefully give way to clear, relational data at another."*
+ *
+ * The lattice is roomy everywhere this ships, so a cell is 364 world units to
+ * a corner and camera scale × 364 is the cell-pixel figure these bands are
+ * written in. That conversion is what lets a test check the numbers Greg
+ * actually said.
+ */
+const CELL = 364;
+const at = (zoom: number) => zoom * CELL;
+
+describe("one reading, or three", () => {
+  /** The handover is a human-only rule, so every figure here is a person's. */
+  const person = (cellPx: number) => hexStackBlend(cellPx, true);
+
+  it("has given way to the three rings by the 0.5x Greg named", () => {
+    expect(person(at(0.5))).toBeCloseTo(1, 2);
+    expect(person(at(1))).toBe(1);
+    expect(person(at(4))).toBe(1);
+  });
+
+  it("is the one summary ring where a person's gauges first arrive", () => {
+    // 0.14x is where he saw them appear; they finish fading in by 0.19x.
+    expect(person(at(0.14))).toBe(0);
+    expect(person(at(0.19))).toBe(0);
+    // And it holds alone for a stretch after that, which is what makes it a
+    // reading of its own rather than a flicker on the way to the three.
+    expect(person(at(0.25))).toBe(0);
+  });
+
+  /**
+   * Greg, 2026-11-11, on the first build: *"we applied the changes to the
+   * non-human nodes too — those nodes should retain the three-ring system
+   * exactly as it was before we made this change."* A team, a place and the
+   * master centre are never in the handover at any zoom, which is also what
+   * keeps the company's three-colour dial at the outermost rung.
+   */
+  it("never touches a node that is not a person, at any zoom at all", () => {
+    for (const cellPx of logSweep(0.01, 5000, 2000)) {
+      expect(hexStackBlend(cellPx, false)).toBe(1);
+    }
+  });
+
+  it("blends rather than switching, so a frame can never show a jump", () => {
+    let previous = person(0.1);
+    for (const cellPx of logSweep(0.1, 2000, 4000)) {
+      const now = person(cellPx);
+      expect(now).toBeGreaterThanOrEqual(previous - 1e-9);
+      expect(now).toBeGreaterThanOrEqual(0);
+      expect(now).toBeLessThanOrEqual(1);
+      // No step anywhere is big enough to see.
+      expect(now - previous).toBeLessThan(0.02);
+      previous = now;
+    }
+  });
+
+  it("leaves the single ring a plateau between arriving and giving way", () => {
+    const [from] = STACK_AT_CELL_PX;
+    // A person's rings are fully on at 68 cell-pixels (`RINGS_AT_HOST_PX`),
+    // and the handover does not start until well past that.
+    expect(from).toBeGreaterThan(68 * 1.4);
+  });
+});
+
+describe("the pen weights", () => {
+  it("lets a world weight grow until a cell covers 0.15x, then holds it", () => {
+    expect(hexPenPin(at(0.05))).toBe(1);
+    expect(hexPenPin(at(0.15))).toBeCloseTo(1, 2);
+    // Past there the factor is exactly what cancels the camera: a weight times
+    // the factor times the scale is a constant number of pixels.
+    for (const zoom of [0.2, 0.5, 1, 4, 16]) {
+      expect(hexPenPin(at(zoom)) * at(zoom)).toBeCloseTo(WEIGHT_PINS_AT_CELL_PX, 6);
+    }
+  });
+
+  it("never thickens a line, whichever way the camera moves", () => {
+    let previous = hexPenPin(0.01);
+    for (const cellPx of logSweep(0.01, 5000, 3000)) {
+      const now = hexPenPin(cellPx);
+      expect(now).toBeLessThanOrEqual(previous + 1e-12);
+      expect(now).toBeGreaterThan(0);
+      expect(now).toBeLessThanOrEqual(1);
+      previous = now;
+    }
+  });
+});
+
+describe("the air around a node", () => {
+  it("does nothing until 0.15x, which is where Greg asked it to start", () => {
+    expect(hexNodeRoom(at(0.02))).toBe(1);
+    expect(hexNodeRoom(at(0.1))).toBe(1);
+    expect(hexNodeRoom(at(0.15))).toBeCloseTo(1, 2);
+  });
+
+  it("holds a node still on the glass from 0.15x to 1x", () => {
+    // The property the whole change rests on: world size × factor × scale is
+    // the same number of pixels at every zoom across the ramp, so a person is
+    // one chip of glass and only the distance between them grows.
+    const screen = (zoom: number) => hexNodeRoom(at(zoom)) * at(zoom);
+    for (const zoom of [0.152, 0.2, 0.3, 0.5, 0.75, 1]) {
+      expect(screen(zoom)).toBeCloseTo(ROOM_OPENS_AT_CELL_PX, 6);
+    }
+    // 0.15x itself is a rounding hair below the 55-pixel pin, so the ramp
+    // starts a thousandth of a zoom step later than the number Greg said. That
+    // is the honest consequence of writing the band in cell-pixels, which is
+    // the currency every other figure in this file is in.
+    expect(screen(0.15)).toBeLessThan(ROOM_OPENS_AT_CELL_PX);
+    expect(screen(0.15)).toBeCloseTo(ROOM_OPENS_AT_CELL_PX, 0);
+  });
+
+  it("stops at 1x and leaves sizes to the camera again after it", () => {
+    expect(hexNodeRoom(at(1))).toBeCloseTo(NODE_ROOM_FLOOR, 6);
+    expect(hexNodeRoom(at(4))).toBe(NODE_ROOM_FLOOR);
+    expect(hexNodeRoom(at(40))).toBe(NODE_ROOM_FLOOR);
+    // Which means a node does start growing on the glass again past 1x.
+    expect(hexNodeRoom(at(4)) * at(4)).toBeGreaterThan(hexNodeRoom(at(1)) * at(1));
+  });
+
+  it("is the two zooms Greg named, and nothing tuned in between", () => {
+    expect(ROOM_OPENS_AT_CELL_PX / CELL).toBeCloseTo(0.15, 2);
+    expect(ROOM_OPEN_BY_CELL_PX / CELL).toBeCloseTo(1, 2);
+  });
+
+  it("opens continuously, so nothing on the canvas resizes in a step", () => {
+    let previous = hexNodeRoom(0.01);
+    for (const cellPx of logSweep(0.01, 5000, 4000)) {
+      const now = hexNodeRoom(cellPx);
+      expect(now).toBeLessThanOrEqual(previous + 1e-12);
+      expect(now).toBeGreaterThanOrEqual(NODE_ROOM_FLOOR - 1e-12);
+      expect(now).toBeLessThanOrEqual(1);
+      previous = now;
+    }
+  });
+});
+
+/**
+ * **The white tile has a shorter ramp than the dot it carries** — Greg,
+ * 2026-11-11: *"the white host cell behind each node … should fix its size
+ * relationship with its surroundings at zoom 0.2x."* The dot is the node and
+ * holding it still on the glass is what empties the map out; the tile is the
+ * ground the node stands on, and one that kept shrinking would stop saying how
+ * much of the lattice is theirs.
+ */
+describe("the white tile's own ramp", () => {
+  it("opens with the dot until 0.2x and not one step further", () => {
+    for (const zoom of [0.02, 0.1, 0.15, 0.18, 0.2]) {
+      expect(hexTileRoom(at(zoom))).toBeCloseTo(hexNodeRoom(at(zoom)), 9);
+    }
+  });
+
+  it("holds its share of the cell at every zoom past 0.2x", () => {
+    // 0.2x itself is the same rounding hair below the 73-pixel hold that 0.15x
+    // is below the 55-pixel one: the bands are written in cell-pixels, which
+    // is the currency every other figure in this file is in.
+    const held = ROOM_OPENS_AT_CELL_PX / TILE_ROOM_HOLDS_AT_CELL_PX;
+    for (const zoom of [0.201, 0.3, 0.5, 1, 4, 16]) {
+      expect(hexTileRoom(at(zoom))).toBeCloseTo(held, 9);
+    }
+    expect(hexTileRoom(at(0.2))).toBeCloseTo(held, 2);
+    // Which is about three quarters of what the lattice gives it: visible air
+    // between two neighbours, and still plainly a tile rather than a chip.
+    expect(held).toBeCloseTo(0.755, 2);
+  });
+
+  it("is the zoom Greg named", () => {
+    expect(TILE_ROOM_HOLDS_AT_CELL_PX / CELL).toBeCloseTo(0.2, 2);
+  });
+
+  it("leaves the tile larger than the dot at every zoom, never smaller", () => {
+    for (const cellPx of logSweep(0.01, 5000, 3000)) {
+      expect(hexTileRoom(cellPx)).toBeGreaterThanOrEqual(hexNodeRoom(cellPx) - 1e-12);
+      expect(hexTileRoom(cellPx)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("opens continuously, so no frame shows the tile jump", () => {
+    let previous = hexTileRoom(0.01);
+    for (const cellPx of logSweep(0.01, 5000, 4000)) {
+      const now = hexTileRoom(cellPx);
+      expect(now).toBeLessThanOrEqual(previous + 1e-12);
+      previous = now;
+    }
+  });
+
+  /**
+   * The one thing downstream that could have broken. `ringBand` refuses a
+   * person's ring that would reach past `host × PERSON_RING_ROOM`, and that
+   * guard exists to keep two people's stacks from crossing — so the tile
+   * getting bigger must not let the limit past half the distance to the next
+   * cell, which is `√3 / 2` of a cell radius.
+   */
+  it("keeps a person's ring guard inside half the step to the next cell", () => {
+    const PERSON_TILE = 0.8;
+    const ACTIVE_SHRINK_FLOOR = 1 - 0.12; // ACTIVE_GAP_MAX, the worst case
+    const PERSON_RING_ROOM = 1.05;
+    for (const cellPx of logSweep(1, 5000, 2000)) {
+      const host = PERSON_TILE * ACTIVE_SHRINK_FLOOR * hexTileRoom(cellPx);
+      expect(host * PERSON_RING_ROOM).toBeLessThan(Math.sqrt(3) / 2);
     }
   });
 });
